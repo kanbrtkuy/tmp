@@ -14,7 +14,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
+import shutil
+import time
+import zipfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -66,9 +70,124 @@ def set_seed(seed: int) -> None:
         pass
 
 
+def npz_has_compressed_members(path: Path) -> bool:
+    try:
+        with zipfile.ZipFile(path) as zf:
+            return any(info.compress_type != zipfile.ZIP_STORED for info in zf.infolist())
+    except zipfile.BadZipFile:
+        return True
+
+
+def valid_npz_cache(cache_path: Path, source_path: Path) -> bool:
+    if not cache_path.exists() or cache_path.stat().st_size <= 0:
+        return False
+    if cache_path.stat().st_mtime_ns < source_path.stat().st_mtime_ns:
+        return False
+    return not npz_has_compressed_members(cache_path)
+
+
+def source_fingerprint(path: Path) -> dict[str, int]:
+    stat = path.stat()
+    return {"size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+
+
+def npy_cache_dir(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.npy_cache")
+
+
+def npy_cache_manifest(cache_dir: Path) -> Path:
+    return cache_dir / "manifest.json"
+
+
+def valid_npy_cache(cache_dir: Path, source_path: Path) -> bool:
+    manifest_path = npy_cache_manifest(cache_dir)
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if manifest.get("source") != source_fingerprint(source_path):
+        return False
+    keys = manifest.get("keys")
+    if not isinstance(keys, list) or not keys:
+        return False
+    return all((cache_dir / f"{key}.npy").exists() for key in keys)
+
+
+def load_npy_array(path: Path) -> np.ndarray:
+    try:
+        return np.load(path, allow_pickle=True, mmap_mode="r")
+    except (TypeError, ValueError):
+        return np.load(path, allow_pickle=True)
+
+
+def load_npy_cache(cache_dir: Path) -> dict[str, Any]:
+    manifest = json.loads(npy_cache_manifest(cache_dir).read_text(encoding="utf-8"))
+    return {key: load_npy_array(cache_dir / f"{key}.npy") for key in manifest["keys"]}
+
+
+def load_npz_arrays(path: Path) -> dict[str, Any]:
+    with np.load(path, allow_pickle=True) as data:
+        return {key: data[key] for key in data.files}
+
+
+def write_npy_cache(source_path: Path, cache_dir: Path) -> None:
+    tmp_dir = cache_dir.with_name(f"{cache_dir.name}.tmp.{os.getpid()}")
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    tmp_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        arrays = load_npz_arrays(source_path)
+        print(f"creating NPY mmap cache: {cache_dir}", flush=True)
+        for key, value in arrays.items():
+            np.save(tmp_dir / f"{key}.npy", value, allow_pickle=True)
+        manifest = {
+            "source": source_fingerprint(source_path),
+            "keys": list(arrays),
+        }
+        (tmp_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        if cache_dir.exists():
+            if valid_npy_cache(cache_dir, source_path):
+                return
+            shutil.rmtree(cache_dir)
+        os.replace(tmp_dir, cache_dir)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def load_npz(path: Path) -> dict[str, Any]:
-    data = np.load(path, allow_pickle=True)
-    return {key: data[key] for key in data.files}
+    path = Path(path)
+    mmap_cache_enabled = os.environ.get("PAUSEPROBE_NPY_MMAP_CACHE", "1") != "0"
+    if not mmap_cache_enabled:
+        return load_npz_arrays(path)
+
+    cache_dir = npy_cache_dir(path)
+    if valid_npy_cache(cache_dir, path):
+        return load_npy_cache(cache_dir)
+
+    lock_path = cache_dir.with_name(f"{cache_dir.name}.lock")
+    while True:
+        try:
+            os.mkdir(lock_path)
+            break
+        except FileExistsError:
+            if valid_npy_cache(cache_dir, path):
+                return load_npy_cache(cache_dir)
+            try:
+                lock_age = time.time() - lock_path.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            if lock_age > 6 * 3600:
+                shutil.rmtree(lock_path, ignore_errors=True)
+                continue
+            time.sleep(1.0)
+
+    try:
+        if not valid_npy_cache(cache_dir, path):
+            write_npy_cache(path, cache_dir)
+        return load_npy_cache(cache_dir)
+    finally:
+        shutil.rmtree(lock_path, ignore_errors=True)
 
 
 def split_train_val(data: dict[str, Any], val_ratio: float, seed: int) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -146,6 +265,22 @@ def select_layer_indices(layer_ids: np.ndarray, selected: list[int] | None) -> l
     return [layer_list.index(layer) for layer in selected]
 
 
+def select_feature_block(
+    features: np.ndarray,
+    kept_indices: np.ndarray,
+    layer_idx: list[int],
+    pos_idx: list[int],
+) -> np.ndarray:
+    hidden_idx = np.arange(features.shape[-1], dtype=np.int64)
+    index = np.ix_(
+        kept_indices.astype(np.int64, copy=False),
+        np.asarray(layer_idx, dtype=np.int64),
+        np.asarray(pos_idx, dtype=np.int64),
+        hidden_idx,
+    )
+    return np.asarray(features[index], dtype=np.float32)
+
+
 def make_matrix(
     data: dict[str, Any],
     position_names: list[str] | None,
@@ -154,7 +289,7 @@ def make_matrix(
     position_pool: str,
     require_all_positions: bool,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any], np.ndarray]:
-    features = np.asarray(data["features"], dtype=np.float32)
+    features = np.asarray(data["features"])
     valid_mask = np.asarray(data["valid_mask"], dtype=bool)
     labels = np.asarray(data["labels"], dtype=np.int64)
     pos_idx = select_indices(data["position_names"], position_names, "positions")
@@ -175,9 +310,9 @@ def make_matrix(
     keep &= labels >= 0
     kept_indices = np.flatnonzero(keep).astype(np.int64)
 
-    x = features[keep][:, layer_idx][:, :, pos_idx, :]
-    y = labels[keep]
-    selected_valid = selected_valid[keep]
+    x = select_feature_block(features, kept_indices, layer_idx, pos_idx)
+    y = labels[kept_indices]
+    selected_valid = selected_valid[kept_indices]
 
     if not require_all_positions and position_pool == "mean":
         x = x.copy()
@@ -220,7 +355,7 @@ def make_matrix(
     }
     if y.shape[0] == 0:
         raise ValueError("No rows left after feature/label filtering.")
-    return x.astype(np.float32), y.astype(np.float32), meta, kept_indices
+    return np.ascontiguousarray(x, dtype=np.float32), y.astype(np.float32), meta, kept_indices
 
 
 def standardize_train_val_test(
@@ -232,8 +367,17 @@ def standardize_train_val_test(
     mean = train_x.mean(axis=0, keepdims=True)
     std = train_x.std(axis=0, keepdims=True)
     std = np.maximum(std, eps)
-    out_test = None if test_x is None else (test_x - mean) / std
-    return (train_x - mean) / std, (val_x - mean) / std, out_test, {"mean": mean, "std": std}
+    train_x = np.asarray(train_x, dtype=np.float32)
+    val_x = np.asarray(val_x, dtype=np.float32)
+    train_x -= mean
+    train_x /= std
+    val_x -= mean
+    val_x /= std
+    if test_x is not None:
+        test_x = np.asarray(test_x, dtype=np.float32)
+        test_x -= mean
+        test_x /= std
+    return train_x, val_x, test_x, {"mean": mean, "std": std}
 
 
 def binary_metrics(y_true: np.ndarray, scores: np.ndarray, threshold: float) -> dict[str, float]:
@@ -487,6 +631,28 @@ def parse_hidden_sizes(value: str | None, input_dim: int) -> list[int]:
     return [int(piece.strip()) for piece in value.split(",") if piece.strip()]
 
 
+def configure_cpu_runtime(cpu_threads: int) -> None:
+    threads = max(1, int(cpu_threads))
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ.setdefault(name, str(threads))
+    try:
+        import torch
+
+        torch.set_num_threads(threads)
+        torch.set_num_interop_threads(max(1, min(2, threads)))
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = True
+    except (ImportError, RuntimeError):
+        pass
+
+
+def use_gpu_resident_tensors(device: Any) -> bool:
+    return (
+        getattr(device, "type", "") == "cuda"
+        and os.environ.get("PAUSEPROBE_GPU_TENSORS", "1") != "0"
+    )
+
+
 class ProbeMLP:
     """Factory wrapper so torch is imported only inside training."""
 
@@ -535,13 +701,24 @@ def train_probe(
         train_weights = np.ones_like(train_y, dtype=np.float32)
     if train_pair_codes is None:
         train_pair_codes = np.full(train_y.shape[0], -1, dtype=np.int64)
+    gpu_tensors = use_gpu_resident_tensors(device)
+
+    def tensor(array: np.ndarray) -> Any:
+        out = torch.from_numpy(array)
+        return out.to(device) if gpu_tensors else out
+
     train_ds = TensorDataset(
-        torch.from_numpy(train_x),
-        torch.from_numpy(train_y),
-        torch.from_numpy(train_weights),
-        torch.from_numpy(train_pair_codes),
+        tensor(train_x),
+        tensor(train_y),
+        tensor(train_weights),
+        tensor(train_pair_codes),
     )
-    loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+    loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        pin_memory=(device.type == "cuda" and not gpu_tensors),
+    )
 
     best_state = None
     best_val = -1.0
@@ -552,10 +729,11 @@ def train_probe(
         model.train()
         running = 0.0
         for batch_x, batch_y, batch_w, batch_pair_codes in loader:
-            batch_x = batch_x.to(device)
-            batch_y = batch_y.to(device)
-            batch_w = batch_w.to(device)
-            batch_pair_codes = batch_pair_codes.to(device)
+            if not gpu_tensors:
+                batch_x = batch_x.to(device, non_blocking=True)
+                batch_y = batch_y.to(device, non_blocking=True)
+                batch_w = batch_w.to(device, non_blocking=True)
+                batch_pair_codes = batch_pair_codes.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             logits = model(batch_x).squeeze(-1)
             loss = (criterion(logits, batch_y) * batch_w).mean()
@@ -614,13 +792,19 @@ def predict_scores(model: Any, x: np.ndarray, batch_size: int, device: Any) -> n
     from torch.utils.data import DataLoader, TensorDataset
 
     model.eval()
-    ds = TensorDataset(torch.from_numpy(x))
-    loader = DataLoader(ds, batch_size=batch_size, shuffle=False)
     scores = []
     with torch.no_grad():
-        for (batch_x,) in loader:
-            logits = model(batch_x.to(device)).squeeze(-1)
-            scores.append(torch.sigmoid(logits).detach().cpu().numpy())
+        if use_gpu_resident_tensors(device):
+            x_tensor = torch.from_numpy(x).to(device)
+            for start in range(0, x_tensor.shape[0], batch_size):
+                logits = model(x_tensor[start : start + batch_size]).squeeze(-1)
+                scores.append(torch.sigmoid(logits).detach().cpu().numpy())
+        else:
+            ds = TensorDataset(torch.from_numpy(x))
+            loader = DataLoader(ds, batch_size=batch_size, shuffle=False, pin_memory=getattr(device, "type", "") == "cuda")
+            for (batch_x,) in loader:
+                logits = model(batch_x.to(device, non_blocking=True)).squeeze(-1)
+                scores.append(torch.sigmoid(logits).detach().cpu().numpy())
     return np.concatenate(scores, axis=0)
 
 
@@ -735,6 +919,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--standardize", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--seed", type=int, default=260610)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--cpu_threads",
+        type=int,
+        default=int(os.environ.get("PAUSEPROBE_CPU_THREADS", "4")),
+        help="CPU threads per probe subprocess for Torch/BLAS preprocessing.",
+    )
     args = parser.parse_args(argv)
     if args.epochs <= 0:
         parser.error("--epochs must be positive.")
@@ -746,11 +936,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--val_ratio must be in (0, 1).")
     if args.threshold_max_fpr is not None and not 0 <= args.threshold_max_fpr <= 1:
         parser.error("--threshold_max_fpr must be in [0, 1].")
+    if args.cpu_threads < 1:
+        parser.error("--cpu_threads must be >= 1.")
     return args
 
 
 def main() -> None:
     args = parse_args()
+    configure_cpu_runtime(args.cpu_threads)
     set_seed(args.seed)
 
     try:

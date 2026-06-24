@@ -9,5 +9,5 @@ model:
   tokenizer: null
   trust_remote_code: false
   max_length: 4096
-  # Verify and adjust after the first 8B hidden-state smoke test.
-  default_layers: [8, 16, 20, 24, 28, 32]
+  # Combines 1.5B exact scan layers with 8B relative-depth checkpoints.
+  default_layers: [7, 8, 14, 16, 17, 20, 21, 22, 24, 25, 28, 32]

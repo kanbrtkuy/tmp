@@ -171,7 +171,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--single_scan_out_root", default="runs/probes/intra_pause_probe_single")
     parser.add_argument("--pooled_out_root", default="runs/probes/intra_pause_probe_pooled")
     parser.add_argument("--sources", nargs="+", default=list(DEFAULT_SOURCES))
-    parser.add_argument("--heldout_source", action="append", default=list(DEFAULT_HELDOUT_SOURCES))
+    parser.add_argument("--heldout_source", action="append", default=None)
     parser.add_argument("--recipe", choices=("pilot", "full", "full_1to1"), default="pilot")
     parser.add_argument("--seed", type=int, default=260610)
     parser.add_argument("--star_min_score", type=float, default=8.0)
@@ -191,6 +191,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--extract_devices", default="cuda")
     parser.add_argument("--torch_dtype", choices=("auto", "float32", "float16", "bfloat16"), default="bfloat16")
     parser.add_argument("--save_dtype", choices=("float16", "float32"), default="float16")
+    parser.add_argument(
+        "--hidden_compression",
+        choices=("compressed", "uncompressed"),
+        default="compressed",
+        help="Use uncompressed NPZ for faster hidden-state saves and later probe loads when disk is plentiful.",
+    )
     parser.add_argument("--scan_jobs", type=int, default=12)
     parser.add_argument("--pooled_jobs", type=int, default=6)
     parser.add_argument("--scan_epochs", type=int, default=30)
@@ -202,6 +208,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threshold_max_fpr", type=float, default=0.05)
     parser.add_argument("--sample_weight_mode", choices=("none", "label", "source", "source_label"), default="source_label")
     parser.add_argument("--probe_device", default="cuda")
+    parser.add_argument(
+        "--probe_devices",
+        default=None,
+        help="Comma-separated probe devices. Example: cuda:0,cuda:1,cuda:2,cuda:3. Probe jobs are assigned round-robin.",
+    )
     parser.add_argument("--skip_base_data_prep", action="store_true")
     parser.add_argument("--skip_intra_data_prep", action="store_true")
     parser.add_argument("--skip_hidden_extraction", action="store_true")
@@ -216,6 +227,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--scan_jobs must be >= 1")
     if args.pooled_jobs < 1:
         parser.error("--pooled_jobs must be >= 1")
+    if args.heldout_source is None:
+        args.heldout_source = list(DEFAULT_HELDOUT_SOURCES)
     return args
 
 
@@ -322,7 +335,7 @@ def run_intra_data_prep(args: argparse.Namespace) -> None:
 
 def extraction_cmd(args: argparse.Namespace, spec: SplitSpec, layers: list[int], device: str) -> list[str]:
     tokenizer = args.tokenizer or args.model
-    return [
+    cmd = [
         args.python,
         "scripts/probe/extract_hidden_states.py",
         "--model",
@@ -360,8 +373,10 @@ def extraction_cmd(args: argparse.Namespace, spec: SplitSpec, layers: list[int],
         "--save_dtype",
         args.save_dtype,
         "--trust_remote_code",
-        "--compressed",
     ]
+    if args.hidden_compression == "compressed":
+        cmd.append("--compressed")
+    return cmd
 
 
 def run_extraction_one(args: argparse.Namespace, spec: SplitSpec, layers: list[int], device: str) -> str:
@@ -452,6 +467,8 @@ def run_single_scan(args: argparse.Namespace, specs: dict[str, SplitSpec], posit
         "--python",
         args.python,
     ]
+    if args.probe_devices:
+        cmd.extend(["--devices", args.probe_devices])
     if args.skip_existing:
         cmd.append("--skip_existing")
     run_logged(cmd, Path(args.log_dir) / "intra_pause_single_scan.log", args.dry_run)
@@ -483,7 +500,7 @@ def pooled_specs(layers: list[int]) -> list[PooledSpec]:
     return specs
 
 
-def train_pooled_cmd(args: argparse.Namespace, spec: PooledSpec, out_dir: Path, splits: dict[str, SplitSpec]) -> list[str]:
+def train_pooled_cmd(args: argparse.Namespace, spec: PooledSpec, out_dir: Path, splits: dict[str, SplitSpec], device: str) -> list[str]:
     return [
         args.python,
         "scripts/probe/train_probe.py",
@@ -520,11 +537,11 @@ def train_pooled_cmd(args: argparse.Namespace, spec: PooledSpec, out_dir: Path, 
         "--patience",
         str(args.scan_patience),
         "--device",
-        args.probe_device,
+        device,
     ]
 
 
-def eval_pooled_cmd(args: argparse.Namespace, probe_pt: Path, input_npz: Path, out_dir: Path) -> list[str]:
+def eval_pooled_cmd(args: argparse.Namespace, probe_pt: Path, input_npz: Path, out_dir: Path, device: str) -> list[str]:
     return [
         args.python,
         "scripts/probe/evaluate_probe.py",
@@ -537,16 +554,16 @@ def eval_pooled_cmd(args: argparse.Namespace, probe_pt: Path, input_npz: Path, o
         "--batch_size",
         str(args.scan_eval_batch_size),
         "--device",
-        args.probe_device,
+        device,
     ]
 
 
-def run_pooled_one(args: argparse.Namespace, spec: PooledSpec, splits: dict[str, SplitSpec]) -> str:
+def run_pooled_one(args: argparse.Namespace, spec: PooledSpec, splits: dict[str, SplitSpec], device: str) -> str:
     root = Path(args.pooled_out_root)
     run_dir = root / spec.name
     log_path = Path(args.log_dir) / f"intra_pause_pooled_{spec.name}.log"
     if not (args.skip_existing and (run_dir / "metrics.json").exists() and (run_dir / "probe.pt").exists()):
-        run_logged(train_pooled_cmd(args, spec, run_dir, splits), log_path, args.dry_run)
+        run_logged(train_pooled_cmd(args, spec, run_dir, splits, device), log_path, args.dry_run)
     probe_pt = run_dir / "probe.pt"
     if not args.dry_run:
         require_file(probe_pt)
@@ -557,7 +574,7 @@ def run_pooled_one(args: argparse.Namespace, spec: PooledSpec, splits: dict[str,
         eval_dir = root / f"eval_{eval_name}_{spec.name}"
         if args.skip_existing and (eval_dir / "metrics.json").exists():
             continue
-        run_logged(eval_pooled_cmd(args, probe_pt, split.output_npz, eval_dir), log_path, args.dry_run)
+        run_logged(eval_pooled_cmd(args, probe_pt, split.output_npz, eval_dir, device), log_path, args.dry_run)
     return spec.name
 
 
@@ -614,12 +631,21 @@ def run_pooled(args: argparse.Namespace, splits: dict[str, SplitSpec], layers: l
         for name in ("train", "val", "test"):
             require_file(splits[name].output_npz)
     jobs = pooled_specs(layers)
+    probe_devices = parse_csv(args.probe_devices) if args.probe_devices else [args.probe_device]
+    if not probe_devices:
+        probe_devices = [args.probe_device]
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.pooled_jobs, len(jobs))) as executor:
-        futures = {executor.submit(run_pooled_one, args, spec, splits): spec for spec in jobs}
+        futures = {
+            executor.submit(run_pooled_one, args, spec, splits, probe_devices[idx % len(probe_devices)]): (
+                spec,
+                probe_devices[idx % len(probe_devices)],
+            )
+            for idx, spec in enumerate(jobs)
+        }
         for future in concurrent.futures.as_completed(futures):
-            spec = futures[future]
+            spec, device = futures[future]
             run_name = future.result()
-            print(f"finished pooled {run_name} ({','.join(spec.positions)})")
+            print(f"finished pooled {run_name} ({','.join(spec.positions)}, {device})")
 
     if args.dry_run:
         return

@@ -15,6 +15,8 @@ hf_token
 
 # Large experiment artifacts
 data/
+!legacy/PauseProbe/scripts/data/
+!legacy/PauseProbe/scripts/data/*.py
 outputs/
 runs/
 logs/

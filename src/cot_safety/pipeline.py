@@ -28,8 +28,6 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
     probe = config.get("probe", {})
     sft = config.get("sft", {})
     steering = config.get("steering", {})
-    data = config.get("data", {})
-
     if config.get("pipeline", {}).get("stages"):
         return [
             PipelineStep(
@@ -44,28 +42,19 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
     if probe.get("task") == "positionscan_trajprobe":
         return [
             PipelineStep(
-                name="prepare_trajectory_data",
-                stage="stage1",
-                action="data_prepare",
-                command=[
-                    "python",
-                    "legacy/PauseProbe/scripts/data/prepare_external_trajectories.py",
-                    "--recipe",
-                    str(data.get("recipe_name", "stage1_positionscan_sources")),
-                ],
-                notes="Use config values for source caps, labels, and heldout sources.",
-            ),
-            PipelineStep(
-                name="run_position_scan",
+                name="run_stage1_positionscan",
                 stage="stage1",
                 action="probe_scan",
                 command=[
                     "python",
-                    "legacy/PauseProbe/scripts/probe/run_position_scan_full.py",
-                    "--config-backed-run",
-                    run_name,
+                    "scripts/run_stage1_positionscan.py",
+                    "--config",
+                    "<config>",
                 ],
-                notes="Compatibility entrypoint until the native scan runner is fully ported.",
+                notes=(
+                    "Runs data prep, hidden extraction, single-layer scan, and "
+                    "multilayer ablations using model/runtime/probe settings from config."
+                ),
             ),
         ]
 

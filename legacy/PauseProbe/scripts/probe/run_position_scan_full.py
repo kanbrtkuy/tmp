@@ -18,6 +18,7 @@ import argparse
 import concurrent.futures
 import json
 import math
+import os
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -121,19 +122,115 @@ def write_rows(rows: list[dict[str, Any]], path_prefix: Path) -> None:
             f.write("\t".join(fmt(row.get(key)) for key in keys) + "\n")
 
 
-def run_logged(cmd: list[str], log_path: Path, dry_run: bool = False) -> None:
+def run_logged(
+    cmd: list[str],
+    log_path: Path,
+    dry_run: bool = False,
+    env: dict[str, str] | None = None,
+    timeout_seconds: int | None = None,
+) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     rendered = "$ " + " ".join(cmd)
     print(rendered)
     with log_path.open("a", encoding="utf-8") as log:
         log.write(rendered + "\n")
+        if timeout_seconds:
+            log.write(f"[timeout_seconds] {timeout_seconds}\n")
         log.flush()
         if dry_run:
             log.write("[dry-run] skipped\n")
             return
-        proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, text=True)
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            log.write(f"[timeout] command exceeded {timeout_seconds} seconds\n")
+            log.flush()
+            raise
     if proc.returncode != 0:
         raise subprocess.CalledProcessError(proc.returncode, cmd)
+
+
+def effective_cpu_threads(requested: int, jobs: int) -> int:
+    if requested > 0:
+        return requested
+    cpus = os.cpu_count() or 1
+    return max(1, min(4, cpus // max(1, jobs)))
+
+
+def probe_subprocess_env(cpu_threads: int, gpu_tensors: bool = True) -> dict[str, str]:
+    env = os.environ.copy()
+    threads = str(max(1, cpu_threads))
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        env.setdefault(name, threads)
+    env.setdefault("PAUSEPROBE_CPU_THREADS", threads)
+    if gpu_tensors:
+        env.setdefault("PAUSEPROBE_GPU_TENSORS", "1")
+    else:
+        env["PAUSEPROBE_GPU_TENSORS"] = "0"
+    return env
+
+
+def probe_timeout(args: argparse.Namespace) -> int | None:
+    timeout_seconds = int(getattr(args, "probe_timeout_seconds", 0) or 0)
+    return timeout_seconds if timeout_seconds > 0 else None
+
+
+def device_uses_cuda(device: str) -> bool:
+    return str(device).startswith("cuda")
+
+
+def command_with_device(cmd: list[str], device: str) -> list[str]:
+    adjusted = list(cmd)
+    for idx in range(len(adjusted) - 2, -1, -1):
+        if adjusted[idx] == "--device":
+            adjusted[idx + 1] = device
+            return adjusted
+    raise ValueError("Cannot replace device: command has no --device argument")
+
+
+def run_probe_logged(
+    cmd: list[str],
+    log_path: Path,
+    args: argparse.Namespace,
+    device: str,
+    *,
+    allow_fallback: bool = False,
+) -> None:
+    try:
+        run_logged(
+            cmd,
+            log_path,
+            args.dry_run,
+            env=probe_subprocess_env(args.probe_cpu_threads, gpu_tensors=device_uses_cuda(device)),
+            timeout_seconds=probe_timeout(args),
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        fallback_device = str(getattr(args, "multilayer_fallback_device", "") or "").strip()
+        if not allow_fallback or not fallback_device or fallback_device == device:
+            raise
+        fallback_cmd = command_with_device(cmd, fallback_device)
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(
+                f"[fallback] {type(exc).__name__} on {device}; "
+                f"retrying on {fallback_device}\n"
+            )
+        run_logged(
+            fallback_cmd,
+            log_path,
+            args.dry_run,
+            env=probe_subprocess_env(
+                args.probe_cpu_threads,
+                gpu_tensors=device_uses_cuda(fallback_device),
+            ),
+            timeout_seconds=probe_timeout(args),
+        )
 
 
 def require_file(path: Path) -> None:
@@ -161,7 +258,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--single_scan_out_root", default="runs/probes/position_scan_full_external_linear")
     parser.add_argument("--multilayer_out_root", default="runs/probes/position_scan_full_external_multilayer")
     parser.add_argument("--sources", nargs="+", default=list(DEFAULT_SOURCES))
-    parser.add_argument("--heldout_source", action="append", default=list(DEFAULT_HELDOUT_SOURCES))
+    parser.add_argument("--heldout_source", action="append", default=None)
     parser.add_argument("--star_min_score", type=float, default=8.0)
     parser.add_argument("--max_per_source", type=int, default=None)
     parser.add_argument("--max_prompt_words", type=int, default=800)
@@ -174,6 +271,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--positions", default=",".join(DEFAULT_POSITIONS))
     parser.add_argument("--layers", default=",".join(str(x) for x in DEFAULT_LAYERS))
     parser.add_argument("--cot_offsets", default="0,1,2,3,4,5,6,7,8,9,10,12,16,24,32,48,64,96,128")
+    parser.add_argument("--pause_token", default="<|pause|>")
+    parser.add_argument("--n_pause_tokens", type=int, default=3)
+    parser.add_argument(
+        "--pause_layout",
+        choices=("none", "pre_think", "intra_cot", "auto"),
+        default="pre_think",
+        help="Use none for base-model Stage 1 rows without pause tokens.",
+    )
     parser.add_argument("--extract_batch_size", type=int, default=2)
     parser.add_argument("--extract_max_length", type=int, default=4096)
     parser.add_argument("--extract_jobs", type=int, default=1)
@@ -184,6 +289,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--torch_dtype", choices=("auto", "float32", "float16", "bfloat16"), default="bfloat16")
     parser.add_argument("--save_dtype", choices=("float16", "float32"), default="float16")
+    parser.add_argument(
+        "--hidden_compression",
+        choices=("compressed", "uncompressed"),
+        default="compressed",
+        help="Use uncompressed NPZ for faster hidden-state saves and later probe loads when disk is plentiful.",
+    )
     parser.add_argument("--scan_jobs", type=int, default=6)
     parser.add_argument("--scan_epochs", type=int, default=30)
     parser.add_argument("--scan_patience", type=int, default=8)
@@ -194,10 +305,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threshold_max_fpr", type=float, default=0.05)
     parser.add_argument("--sample_weight_mode", choices=("none", "label", "source", "source_label"), default="source_label")
     parser.add_argument("--probe_device", default="cuda")
+    parser.add_argument(
+        "--probe_devices",
+        default=None,
+        help="Comma-separated probe devices. Example: cuda:0,cuda:1,cuda:2,cuda:3. Probe jobs are assigned round-robin.",
+    )
     parser.add_argument("--multilayer_positions", default=",".join(DEFAULT_MULTILAYER_POSITIONS))
     parser.add_argument("--multilayer_layer_combines", default=",".join(DEFAULT_LAYER_COMBINES))
     parser.add_argument("--multilayer_model_kinds", default="linear")
     parser.add_argument("--multilayer_jobs", type=int, default=4)
+    parser.add_argument(
+        "--probe_cpu_threads",
+        type=int,
+        default=0,
+        help="CPU threads per probe subprocess. 0 auto-scales from CPU count and probe job count.",
+    )
+    parser.add_argument(
+        "--multilayer_fallback_device",
+        default="",
+        help="Optional fallback device for multilayer probe train/eval after failure, for example cpu.",
+    )
+    parser.add_argument(
+        "--probe_timeout_seconds",
+        type=int,
+        default=0,
+        help="Timeout per direct probe subprocess. 0 disables timeouts.",
+    )
     parser.add_argument("--skip_data_prep", action="store_true")
     parser.add_argument("--skip_hidden_extraction", action="store_true")
     parser.add_argument("--skip_single_scan", action="store_true")
@@ -211,6 +344,19 @@ def parse_args() -> argparse.Namespace:
         parser.error("--scan_jobs must be >= 1")
     if args.multilayer_jobs < 1:
         parser.error("--multilayer_jobs must be >= 1")
+    if args.probe_cpu_threads < 0:
+        parser.error("--probe_cpu_threads must be >= 0")
+    if args.probe_timeout_seconds < 0:
+        parser.error("--probe_timeout_seconds must be >= 0")
+    if args.n_pause_tokens < 0:
+        parser.error("--n_pause_tokens must be non-negative")
+    args.multilayer_fallback_device = args.multilayer_fallback_device.strip()
+    args.probe_cpu_threads = effective_cpu_threads(
+        args.probe_cpu_threads,
+        max(args.scan_jobs, args.multilayer_jobs),
+    )
+    if args.heldout_source is None:
+        args.heldout_source = list(DEFAULT_HELDOUT_SOURCES)
     return args
 
 
@@ -277,6 +423,10 @@ def run_data_prep(args: argparse.Namespace) -> None:
         str(args.max_final_words),
         "--seed",
         str(args.seed),
+        "--pause_token",
+        args.pause_token,
+        "--n_pause_tokens",
+        str(args.n_pause_tokens),
     ]
     for source in args.heldout_source:
         cmd.extend(["--heldout_source", source])
@@ -287,7 +437,7 @@ def run_data_prep(args: argparse.Namespace) -> None:
 
 def extraction_cmd(args: argparse.Namespace, spec: SplitSpec, layers: list[int], device: str) -> list[str]:
     tokenizer = args.tokenizer or args.model
-    return [
+    cmd = [
         args.python,
         "scripts/probe/extract_hidden_states.py",
         "--model",
@@ -308,6 +458,12 @@ def extraction_cmd(args: argparse.Namespace, spec: SplitSpec, layers: list[int],
         ",".join(str(x) for x in layers),
         "--cot_offsets",
         args.cot_offsets,
+        "--pause_token",
+        args.pause_token,
+        "--n_pause_tokens",
+        str(args.n_pause_tokens),
+        "--pause_layout",
+        args.pause_layout,
         "--batch_size",
         str(args.extract_batch_size),
         "--max_length",
@@ -319,8 +475,10 @@ def extraction_cmd(args: argparse.Namespace, spec: SplitSpec, layers: list[int],
         "--save_dtype",
         args.save_dtype,
         "--trust_remote_code",
-        "--compressed",
     ]
+    if args.hidden_compression == "compressed":
+        cmd.append("--compressed")
+    return cmd
 
 
 def run_extraction_one(
@@ -410,9 +568,13 @@ def run_single_scan(args: argparse.Namespace, specs: dict[str, SplitSpec], posit
         args.sample_weight_mode,
         "--device",
         args.probe_device,
+        "--cpu_threads",
+        str(args.probe_cpu_threads),
         "--python",
         args.python,
     ]
+    if args.probe_devices:
+        cmd.extend(["--devices", args.probe_devices])
     if args.skip_existing:
         cmd.append("--skip_existing")
     run_logged(cmd, Path(args.log_dir) / "position_scan_full_single_scan.log", args.dry_run)
@@ -426,6 +588,7 @@ def train_multilayer_cmd(
     layers: list[int],
     out_dir: Path,
     specs: dict[str, SplitSpec],
+    device: str,
 ) -> list[str]:
     return [
         args.python,
@@ -463,7 +626,9 @@ def train_multilayer_cmd(
         "--patience",
         str(args.scan_patience),
         "--device",
-        args.probe_device,
+        device,
+        "--cpu_threads",
+        str(args.probe_cpu_threads),
     ]
 
 
@@ -473,6 +638,7 @@ def eval_multilayer_cmd(
     eval_name: str,
     input_npz: Path,
     out_dir: Path,
+    device: str,
 ) -> list[str]:
     return [
         args.python,
@@ -486,7 +652,7 @@ def eval_multilayer_cmd(
         "--batch_size",
         str(args.scan_eval_batch_size),
         "--device",
-        args.probe_device,
+        device,
     ]
 
 
@@ -501,14 +667,15 @@ def run_multilayer_one(
     model_kind: str,
     layers: list[int],
     specs: dict[str, SplitSpec],
+    device: str,
 ) -> str:
     run_name = multilayer_run_name(model_kind, layer_combine, position, layers)
     root = Path(args.multilayer_out_root)
     run_dir = root / run_name
     log_path = Path(args.log_dir) / f"position_scan_full_multilayer_{run_name}.log"
     if not (args.skip_existing and (run_dir / "metrics.json").exists() and (run_dir / "probe.pt").exists()):
-        cmd = train_multilayer_cmd(args, position, layer_combine, model_kind, layers, run_dir, specs)
-        run_logged(cmd, log_path, args.dry_run)
+        cmd = train_multilayer_cmd(args, position, layer_combine, model_kind, layers, run_dir, specs, device)
+        run_probe_logged(cmd, log_path, args, device, allow_fallback=True)
     probe_pt = run_dir / "probe.pt"
     if not args.dry_run:
         require_file(probe_pt)
@@ -519,8 +686,8 @@ def run_multilayer_one(
         eval_dir = root / f"eval_{eval_name}_{run_name}"
         if args.skip_existing and (eval_dir / "metrics.json").exists():
             continue
-        cmd = eval_multilayer_cmd(args, probe_pt, eval_name, spec.output_npz, eval_dir)
-        run_logged(cmd, log_path, args.dry_run)
+        cmd = eval_multilayer_cmd(args, probe_pt, eval_name, spec.output_npz, eval_dir, device)
+        run_probe_logged(cmd, log_path, args, device, allow_fallback=True)
     return run_name
 
 
@@ -593,19 +760,32 @@ def run_multilayer(
         for name in ("train", "val", "test"):
             require_file(specs[name].output_npz)
     jobs = [(position, layer_combine, model_kind) for model_kind in model_kinds for layer_combine in layer_combines for position in positions]
+    probe_devices = parse_csv(args.probe_devices) if args.probe_devices else [args.probe_device]
+    if not probe_devices:
+        probe_devices = [args.probe_device]
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.multilayer_jobs, len(jobs))) as executor:
         futures = {
-            executor.submit(run_multilayer_one, args, position, layer_combine, model_kind, layers, specs): (
+            executor.submit(
+                run_multilayer_one,
+                args,
                 position,
                 layer_combine,
                 model_kind,
+                layers,
+                specs,
+                probe_devices[idx % len(probe_devices)],
+            ): (
+                position,
+                layer_combine,
+                model_kind,
+                probe_devices[idx % len(probe_devices)],
             )
-            for position, layer_combine, model_kind in jobs
+            for idx, (position, layer_combine, model_kind) in enumerate(jobs)
         }
         for future in concurrent.futures.as_completed(futures):
-            position, layer_combine, model_kind = futures[future]
+            position, layer_combine, model_kind, device = futures[future]
             run_name = future.result()
-            print(f"finished multilayer {run_name} ({model_kind}, {layer_combine}, {position})")
+            print(f"finished multilayer {run_name} ({model_kind}, {layer_combine}, {position}, {device})")
 
     if args.dry_run:
         return

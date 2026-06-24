@@ -1,0 +1,8 @@
+defaults:
+  - stage2_intra_pause_sft.yaml
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage2_intra_pause_sft_deepseek_8b_4xa100
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot3_trusted_cot_18k

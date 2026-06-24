@@ -13,6 +13,7 @@ import argparse
 import concurrent.futures
 import json
 import math
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +47,54 @@ def run_logged(cmd: list[str], log_path: Path) -> None:
         log.write("$ " + " ".join(cmd) + "\n")
         log.flush()
         proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, text=True)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd)
+
+
+def device_to_visible_device(device: str) -> str | None:
+    if not device.startswith("cuda:"):
+        return None
+    gpu_id = device.split(":", 1)[1].strip()
+    return gpu_id or None
+
+
+def effective_cpu_threads(requested: int, jobs: int) -> int:
+    if requested > 0:
+        return requested
+    cpus = os.cpu_count() or 1
+    return max(1, min(4, cpus // max(1, jobs)))
+
+
+def apply_probe_cpu_env(env: dict[str, str], cpu_threads: int) -> None:
+    threads = str(max(1, cpu_threads))
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        env.setdefault(name, threads)
+    env.setdefault("PAUSEPROBE_CPU_THREADS", threads)
+    env.setdefault("PAUSEPROBE_GPU_TENSORS", "1")
+
+
+def run_logged_on_device(cmd: list[str], log_path: Path, device: str, cpu_threads: int) -> None:
+    """Run one probe subprocess with an optional single-GPU visibility mask."""
+
+    env = os.environ.copy()
+    apply_probe_cpu_env(env, cpu_threads)
+    visible = device_to_visible_device(device)
+    subprocess_device = device
+    if visible is not None:
+        env["CUDA_VISIBLE_DEVICES"] = visible
+        subprocess_device = "cuda"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(f"# assigned_device={device}")
+        if visible is not None:
+            log.write(f" CUDA_VISIBLE_DEVICES={visible}")
+        log.write(f" cpu_threads={cpu_threads}")
+        log.write("\n")
+        rendered = ["cuda" if item == device else item for item in cmd]
+        log.write("$ " + " ".join(rendered) + "\n")
+        log.flush()
+        adjusted = [subprocess_device if item == device else item for item in cmd]
+        proc = subprocess.run(adjusted, stdout=log, stderr=subprocess.STDOUT, text=True, env=env)
     if proc.returncode != 0:
         raise subprocess.CalledProcessError(proc.returncode, cmd)
 
@@ -89,6 +138,7 @@ def run_one(
     model_kind: str,
     position: str,
     layer: int,
+    device: str,
     args: argparse.Namespace,
     eval_npz: dict[str, Path],
 ) -> str:
@@ -135,9 +185,11 @@ def run_one(
             "--patience",
             str(args.patience),
             "--device",
-            args.device,
+            device,
+            "--cpu_threads",
+            str(args.cpu_threads),
         ]
-        run_logged(cmd, log_path)
+        run_logged_on_device(cmd, log_path, device, args.cpu_threads)
 
     probe_pt = run_dir / "probe.pt"
     require_file(probe_pt)
@@ -158,9 +210,9 @@ def run_one(
             "--batch_size",
             str(args.eval_batch_size),
             "--device",
-            args.device,
+            device,
         ]
-        run_logged(cmd, log_path)
+        run_logged_on_device(cmd, log_path, device, args.cpu_threads)
     return run_name
 
 
@@ -243,12 +295,26 @@ def main() -> None:
     parser.add_argument("--sample_weight_mode", choices=("none", "label", "source", "source_label"), default="source_label")
     parser.add_argument("--threshold_max_fpr", type=float, default=0.05)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--devices",
+        default=None,
+        help="Comma-separated probe devices. Example: cuda:0,cuda:1,cuda:2,cuda:3. Jobs are assigned round-robin.",
+    )
     parser.add_argument("--skip_existing", action="store_true")
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument(
+        "--cpu_threads",
+        type=int,
+        default=0,
+        help="CPU threads per probe subprocess. 0 auto-scales from CPU count and --jobs.",
+    )
     args = parser.parse_args()
 
     if args.jobs < 1:
         raise ValueError("--jobs must be >= 1")
+    if args.cpu_threads < 0:
+        raise ValueError("--cpu_threads must be >= 0")
+    args.cpu_threads = effective_cpu_threads(args.cpu_threads, args.jobs)
     for path in (Path(args.train_npz), Path(args.val_npz), Path(args.test_npz)):
         require_file(path)
     eval_npz = parse_eval_npz(args.eval_npz)
@@ -259,16 +325,27 @@ def main() -> None:
     layers = parse_layers(args.layers)
     model_kinds = parse_csv(args.model_kinds)
     jobs = [(model_kind, position, layer) for model_kind in model_kinds for position in positions for layer in layers]
+    devices = parse_csv(args.devices) if args.devices else [args.device]
+    if not devices:
+        devices = [args.device]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.jobs, len(jobs))) as executor:
         futures = {
-            executor.submit(run_one, model_kind, position, layer, args, eval_npz): (model_kind, position, layer)
-            for model_kind, position, layer in jobs
+            executor.submit(
+                run_one,
+                model_kind,
+                position,
+                layer,
+                devices[idx % len(devices)],
+                args,
+                eval_npz,
+            ): (model_kind, position, layer, devices[idx % len(devices)])
+            for idx, (model_kind, position, layer) in enumerate(jobs)
         }
         for future in concurrent.futures.as_completed(futures):
-            model_kind, position, layer = futures[future]
+            model_kind, position, layer, device = futures[future]
             run_name = future.result()
-            print(f"finished {run_name} ({model_kind}, {position}, layer {layer})")
+            print(f"finished {run_name} ({model_kind}, {position}, layer {layer}, {device})")
 
     rows = build_summary(model_kinds, positions, layers, Path(args.out_root), list(eval_npz))
     ranked = sorted(rows, key=lambda row: float(row.get("test_auroc") or float("nan")), reverse=True)

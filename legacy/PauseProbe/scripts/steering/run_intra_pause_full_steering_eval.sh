@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Full intra-pause steering evaluation launcher.
 #
-# This launcher is designed for two independent A6000 GPUs.  It shards work by
+# This launcher is designed for independent GPUs.  It shards work by
 # dataset x seed x alpha, applies interventions only on pause_0/1/2 via
 # run_intra_pause_steered_generation.py, runs open judges, and then summarizes
 # all shards.  It never modifies pre_pause_* or post_pause_* positions.

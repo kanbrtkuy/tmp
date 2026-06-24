@@ -9,6 +9,9 @@ run:
 
 probe:
   task: positionscan_trajprobe
+  # Stage 1 scans natural base-model CoT positions before pause-token SFT.
+  pause_layout: none
+  n_pause_tokens: 0
   layers: [7, 14, 17, 21, 22, 28]
   positions: [cot_0, cot_1, cot_2, cot_3, cot_4, cot_5, cot_6, cot_7, cot_8, cot_9, cot_10, cot_12, cot_16, cot_24, cot_32, cot_48, cot_64, cot_96, cot_128]
   model_kinds: [linear, mlp]

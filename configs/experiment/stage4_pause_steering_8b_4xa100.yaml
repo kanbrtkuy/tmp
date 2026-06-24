@@ -1,0 +1,11 @@
+defaults:
+  - stage4_pause_steering.yaml
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage4_pause_only_steering_deepseek_8b_4xa100
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_pause_only_steering_deepseek_8b_4xa100
+
+steering:
+  layer: 16

@@ -255,7 +255,7 @@ def locate_positions(
         info["reasoning_token_len"] = 0
         return positions, info
 
-    if pause_layout not in {"pre_think", "intra_cot", "auto"}:
+    if pause_layout not in {"none", "pre_think", "intra_cot", "auto"}:
         info["parse_status"] = f"bad_pause_layout:{pause_layout}"
         return positions, info
 
@@ -263,14 +263,16 @@ def locate_positions(
     think_start_candidate = find_subsequence(input_ids, think_ids, start=assistant_end)
     if pause_layout == "auto":
         if first_pause_positions is None:
-            info["parse_status"] = "missing_pause_run"
-            return positions, info
-        if think_start_candidate is not None and first_pause_positions[0] > think_start_candidate:
+            pause_layout = "none" if think_start_candidate is not None else "pre_think"
+        elif think_start_candidate is not None and first_pause_positions[0] > think_start_candidate:
             pause_layout = "intra_cot"
         else:
             pause_layout = "pre_think"
 
-    if pause_layout == "pre_think":
+    if pause_layout == "none":
+        think_start = think_start_candidate
+        info["pause_layout"] = "none"
+    elif pause_layout == "pre_think":
         pause_positions = first_pause_positions
         if pause_positions is None:
             info["parse_status"] = "missing_pause_run"
@@ -409,9 +411,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n_pause_tokens", type=int, default=3)
     parser.add_argument(
         "--pause_layout",
-        choices=("pre_think", "intra_cot", "auto"),
+        choices=("none", "pre_think", "intra_cot", "auto"),
         default="pre_think",
-        help="Where the pause run is expected. Use intra_cot for pauses inside <think> before cot_3.",
+        help="Where the pause run is expected. Use none for base-model Stage 1 rows without pause tokens.",
     )
     parser.add_argument("--pre_pause_window", type=int, default=3)
     parser.add_argument("--post_pause_window", type=int, default=3)
@@ -449,8 +451,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--batch_size must be positive.")
     if args.max_length <= 0:
         parser.error("--max_length must be positive.")
-    if args.n_pause_tokens <= 0:
-        parser.error("--n_pause_tokens must be positive.")
+    if args.n_pause_tokens < 0:
+        parser.error("--n_pause_tokens must be non-negative.")
     if args.pre_pause_window < 0 or args.post_pause_window < 0:
         parser.error("--pre_pause_window and --post_pause_window must be non-negative.")
     return args
@@ -478,7 +480,8 @@ def main() -> None:
         raise SystemExit(f"Could not tokenize pause token: {args.pause_token!r}")
     if not assistant_ids:
         raise SystemExit(f"Could not tokenize assistant marker: {DEEPSEEK_ASSISTANT_TEMPLATE!r}")
-    if len(pause_ids) != 1:
+    needs_pause_token = args.n_pause_tokens > 0 and args.pause_layout != "none"
+    if needs_pause_token and len(pause_ids) != 1:
         raise SystemExit(
             f"Expected pause token to be one token id, got {pause_ids}. "
             "Use the pause3 SFT tokenizer with the added special token."
@@ -511,7 +514,9 @@ def main() -> None:
     dropped = Counter()
     label_counts = Counter()
     parse_counts = Counter()
-    position_names = [f"pause_{i}" for i in range(args.n_pause_tokens)]
+    position_names = []
+    if args.n_pause_tokens > 0 and args.pause_layout != "none":
+        position_names.extend(f"pause_{i}" for i in range(args.n_pause_tokens))
     if require_explicit_think:
         position_names.append("think_last")
         if args.pause_layout in {"intra_cot", "auto"}:
@@ -562,7 +567,9 @@ def main() -> None:
             post_pause_window=args.post_pause_window,
         )
         parse_counts[parse_info.get("parse_status", "unknown")] += 1
-        if not all(name in positions for name in [f"pause_{i}" for i in range(args.n_pause_tokens)]):
+        if needs_pause_token and not all(
+            name in positions for name in [f"pause_{i}" for i in range(args.n_pause_tokens)]
+        ):
             dropped["missing_required_pause_positions"] += 1
             continue
         if require_explicit_think and parse_info.get("parse_status") != "explicit_think":
