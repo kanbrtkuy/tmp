@@ -1,0 +1,28 @@
+runtime:
+  name: a100_4x_80g
+  num_gpus: 4
+  cuda_visible_devices: "0,1,2,3"
+  hf_home: ${HF_HOME:-/workspace/hf_cache}
+  hf_env_file: /workspace/secrets/hf.env
+  workdir: /workspace/cot-safety
+  data_root: /workspace/data
+  output_root: /workspace/outputs
+  run_root: /workspace/cot-safety/runs
+  torch_dtype: bfloat16
+  sft:
+    per_device_train_batch_size: 1
+    per_device_eval_batch_size: 1
+    gradient_accumulation_steps: 8
+    gradient_checkpointing: true
+  hidden:
+    extract_jobs: 4
+    batch_size_per_gpu: 4
+  probes:
+    jobs: 24
+    device: cuda
+  generation:
+    workers: 4
+    batch_size_per_gpu: 16
+  judging:
+    workers: 2
+    batch_size_per_gpu: 1

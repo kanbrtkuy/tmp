@@ -1,0 +1,30 @@
+defaults:
+  - ../model/deepseek_r1_distill_qwen_1_5b.yaml
+  - ../data/stage4_steering_eval_sources.yaml
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage4_pause_only_steering_deepseek_1p5b
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_pause_only_steering_deepseek_1p5b
+
+steering:
+  method: learned_delta
+  target_positions: [pause_0, pause_1, pause_2]
+  forbidden_target_prefixes: [pre_pause_, post_pause_, cot_, control_cot_]
+  layer: 14
+  init: zero
+  steps: 80
+  safe_weight: 1.0
+  unsafe_weight: 1.0
+  l2: 0.001
+  alpha_grid: [0.0, 1.0, 2.0]
+  seeds: [260618, 260619, 260620]
+  loss:
+    safe: minimize_post_pause_reasoning_nll
+    unsafe: maximize_post_pause_reasoning_nll
+
+eval:
+  model_conditions: [base, sft, sft_steering]
+  judges: [wildguard, llamaguard, harmbench]
+  capability: [gsm8k, math500]
+  safety: [strongreject, harmbench_behaviors, jailbreakbench, xtest_hard_safe, or_bench_hard_safe, squad_benign]

@@ -1,0 +1,9 @@
+defaults:
+  - auto_model_for_causal_lm
+
+pretrained_model_name_or_path: ${oc.env:DEEPSEEK_MODEL_PATH,/workspace/models/DeepSeek-R1-Distill-Qwen-1.5B}
+device_map: null
+trust_remote_code: false
+torch_dtype:
+  _target_: src.utils.hydra_custom_resolvers.get_module_attr
+  module_and_attr: torch.bfloat16

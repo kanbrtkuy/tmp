@@ -1,0 +1,13 @@
+defaults:
+  - template_deepseek_r1_distill.yaml
+
+model:
+  name: deepseek_r1_distill_llama_8b
+  base_model: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+  local_base_model: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Llama-8B
+  sft_checkpoint: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot3/final
+  tokenizer: null
+  trust_remote_code: false
+  max_length: 4096
+  # Verify and adjust after the first 8B hidden-state smoke test.
+  default_layers: [8, 16, 20, 24, 28, 32]

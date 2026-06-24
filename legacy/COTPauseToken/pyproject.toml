@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cot-pause-token"
+version = "0.1.0"
+description = "Pause-token SFT utilities for SafeChain COTPauseToken experiments."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "kanbrtkuy"}]
+dependencies = [
+    "accelerate",
+    "datasets>=3.0.0",
+    "hydra-colorlog>=1.2.0",
+    "hydra-core>=1.3.2",
+    "omegaconf>=2.3.0",
+    "rich",
+    "rootutils",
+    "safetensors",
+    "tokenizers",
+    "torch",
+    "transformers>=4.45.0",
+    "trl==0.8.1",
+]
+
+[project.optional-dependencies]
+eval = ["vllm>=0.6.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

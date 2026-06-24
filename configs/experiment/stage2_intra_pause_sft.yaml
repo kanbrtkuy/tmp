@@ -1,0 +1,24 @@
+defaults:
+  - ../model/deepseek_r1_distill_qwen_1_5b.yaml
+  - ../data/stage2_trusted_cot_18k.yaml
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage2_intra_pause_sft_deepseek_1p5b
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_intra_pause_cot3_trusted_cot_18k_refactor
+
+sft:
+  method: full_sft
+  peft: false
+  trainer: trl_sft
+  num_train_epochs: 2.0
+  learning_rate: 2.0e-5
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_seq_length: 4096
+  save_steps: 200
+  eval_steps: 200
+  save_total_limit: 3
+  completion_loss_starts_after: assistant_template
+  add_special_tokens:
+    - "<|pause|>"
