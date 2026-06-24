@@ -18,11 +18,17 @@ def main() -> None:
     for path in [
         "configs/experiment/stage1_positionscan.yaml",
         "configs/experiment/stage2_intra_pause_sft.yaml",
+        "configs/experiment/stage2_intra_pause_sft_8b_4xa100.yaml",
+        "configs/experiment/stage2_intra_pause_sft_8b_cot3_control_4xa100.yaml",
+        "configs/experiment/stage2_intra_pause_format_only_8b_cot4_4xa100.yaml",
+        "configs/experiment/stage2_intra_pause_format_only_8b_cot3_4xa100.yaml",
+        "configs/experiment/stage2_model_comparison_eval.yaml",
+        "configs/experiment/stage2_model_comparison_eval_8b_4xa100.yaml",
         "configs/experiment/stage3_intra_pause_probe.yaml",
         "configs/experiment/stage4_pause_steering.yaml",
     ]:
         cfg = load_config(path)
-        assert "model" in cfg, path
+        assert "model" in cfg or cfg.get("eval", {}).get("model_conditions") is not None, path
 
     positions, info = locate_intra_cot_positions(
         DummyTokenizer(),

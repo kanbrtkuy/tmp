@@ -1,0 +1,27 @@
+defaults:
+  - stage2_model_comparison_eval.yaml
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage2_model_comparison_eval_deepseek_8b_cot4_ckpt500_2xa100
+  output_dir: ${COT_SAFETY_RUN_ROOT:-/workspace/cot-safety/runs}/eval/stage2_model_comparison_deepseek_8b_cot4_ckpt500_2xa100
+
+eval:
+  devices: ["0", "1"]
+  model_conditions:
+    - label: cot4_pause_sft_ckpt500
+      kind: sft
+      path: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot4_trusted_cot_18k_save100_rerun/checkpoint-500
+      insert_pause_after_cot_tokens: 4
+      n_insert_pauses: 3
+      batch_size: 32
+  data:
+    prepared_dir: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/model_comparison_eval/deepseek_8b_stage2
+  judging:
+    batch_size:
+      wildguard: 16
+      llamaguard: 16
+      harmbench: 4
+    device_map:
+      llamaguard: auto

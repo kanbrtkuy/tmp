@@ -199,7 +199,7 @@ def validate_row(
     errors = validate_common(row)
     if "missing_output" in errors:
         return errors
-    if mode == "intra_pause_cot3":
+    if mode.startswith("intra_pause"):
         errors.extend(
             validate_intra_row(
                 row,
@@ -229,7 +229,11 @@ def validate_row(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset_dir", required=True)
-    parser.add_argument("--mode", choices=["intra_pause_cot3", "no_pause", "pre_think_pause"], required=True)
+    parser.add_argument(
+        "--mode",
+        required=True,
+        help="Validation mode: intra_pause_cotN/intra_pause, no_pause, or pre_think_pause.",
+    )
     parser.add_argument("--expected_pause_tokens", type=int, default=3)
     parser.add_argument("--cot_offset", type=int, default=3)
     parser.add_argument("--pause_token", default=PAUSE_TOKEN)

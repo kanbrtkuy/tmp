@@ -1,11 +1,13 @@
 from typing import Any, Dict, Optional, Tuple
+import inspect
 import os
 
 import hydra
+import torch
 import rootutils
 from omegaconf import DictConfig, OmegaConf
 from tokenizers import AddedToken
-from transformers import set_seed
+from transformers import EarlyStoppingCallback, TrainingArguments, set_seed
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
@@ -34,12 +36,42 @@ def add_special_tokens(tokenizer, model, token_names: list[str]) -> None:
     ]
     n_added = tokenizer.add_tokens(added_tokens, special_tokens=True)
     if n_added:
-        model.resize_token_embeddings(len(tokenizer))
+        try:
+            model.resize_token_embeddings(len(tokenizer), mean_resizing=False)
+        except TypeError:
+            model.resize_token_embeddings(len(tokenizer))
         log.info(f"Added {n_added} special token(s): {token_names}")
+
+
+def normalize_training_args_config(trainer_cfg: Dict[str, Any]) -> None:
+    args_cfg = trainer_cfg.get("args")
+    if not isinstance(args_cfg, dict):
+        return
+
+    if "evaluation_strategy" in args_cfg and "eval_strategy" not in args_cfg:
+        args_cfg["eval_strategy"] = args_cfg.pop("evaluation_strategy")
+
+    valid_args = set(inspect.signature(TrainingArguments.__init__).parameters)
+    dropped = []
+    for key in list(args_cfg):
+        if key == "_target_":
+            continue
+        if key not in valid_args:
+            dropped.append(key)
+            args_cfg.pop(key)
+
+    if dropped:
+        log.warning(
+            "Dropped unsupported TrainingArguments keys for this transformers version: "
+            f"{sorted(dropped)}"
+        )
 
 
 def build_trainer_config(cfg: DictConfig, tokenizer) -> Dict[str, Any]:
     trainer_cfg = OmegaConf.to_container(cfg.trainer, resolve=True)
+    trainer_cfg.pop("early_stopping", None)
+    trainer_cfg.pop("format_only", None)
+    normalize_training_args_config(trainer_cfg)
     data_collator_cfg = trainer_cfg.get("data_collator")
     if data_collator_cfg:
         data_collator_cfg["tokenizer"] = tokenizer
@@ -51,6 +83,111 @@ def build_trainer_config(cfg: DictConfig, tokenizer) -> Dict[str, Any]:
                 response_template,
             )
     return trainer_cfg
+
+
+def token_ids_for_text(tokenizer, text: str) -> list[int]:
+    ids = tokenizer.encode(text, add_special_tokens=False)
+    return [int(token_id) for token_id in ids]
+
+
+def initialize_trainable_token_embeddings(model, tokenizer, format_cfg: DictConfig) -> None:
+    init_text = format_cfg.get("init_from_text")
+    trainable_tokens = list(format_cfg.get("trainable_tokens", []))
+    if not init_text or not trainable_tokens:
+        return
+
+    source_ids = token_ids_for_text(tokenizer, str(init_text))
+    if not source_ids:
+        log.warning(f"Could not tokenize format-only init_from_text={init_text!r}; skipping init")
+        return
+
+    input_embeddings = model.get_input_embeddings().weight
+    with torch.no_grad():
+        source_vec = input_embeddings[source_ids].mean(dim=0)
+        for token in trainable_tokens:
+            token_id = tokenizer.convert_tokens_to_ids(str(token))
+            if token_id is None or token_id < 0:
+                raise ValueError(f"Unknown format-only trainable token: {token!r}")
+            input_embeddings[int(token_id)].copy_(source_vec)
+            output_embeddings = model.get_output_embeddings()
+            if output_embeddings is not None and output_embeddings.weight is not input_embeddings:
+                output_embeddings.weight[int(token_id)].copy_(source_vec)
+            log.info(
+                "Initialized format-only token "
+                f"{token!r} id={int(token_id)} from text={init_text!r} source_ids={source_ids}"
+            )
+
+
+def mask_embedding_gradients(parameter, keep_ids: list[int], name: str) -> None:
+    keep = sorted(set(int(token_id) for token_id in keep_ids))
+
+    def hook(grad):
+        if grad is None:
+            return None
+        row_mask = torch.zeros(grad.shape[0], dtype=grad.dtype, device=grad.device)
+        row_mask[keep] = 1
+        grad.mul_(row_mask.view(-1, *([1] * (grad.ndim - 1))))
+        return grad
+
+    parameter.register_hook(hook)
+    log.info(f"Registered format-only gradient mask on {name}; trainable_rows={keep}")
+
+
+def configure_format_only_training(model, tokenizer, cfg: DictConfig) -> None:
+    format_cfg = cfg.trainer.get("format_only")
+    if not format_cfg or not format_cfg.get("enabled", False):
+        return
+
+    trainable_tokens = list(format_cfg.get("trainable_tokens", []))
+    if not trainable_tokens:
+        raise ValueError("trainer.format_only.enabled=true requires trainable_tokens")
+
+    trainable_ids = []
+    for token in trainable_tokens:
+        token_id = tokenizer.convert_tokens_to_ids(str(token))
+        if token_id is None or token_id < 0:
+            raise ValueError(f"Unknown format-only trainable token: {token!r}")
+        trainable_ids.append(int(token_id))
+
+    initialize_trainable_token_embeddings(model, tokenizer, format_cfg)
+
+    for param in model.parameters():
+        param.requires_grad_(False)
+
+    input_embeddings = model.get_input_embeddings()
+    input_embeddings.weight.requires_grad_(True)
+    mask_embedding_gradients(input_embeddings.weight, trainable_ids, "input_embeddings.weight")
+
+    output_embeddings = model.get_output_embeddings()
+    if output_embeddings is not None and output_embeddings.weight is not input_embeddings.weight:
+        output_embeddings.weight.requires_grad_(True)
+        mask_embedding_gradients(output_embeddings.weight, trainable_ids, "output_embeddings.weight")
+
+    log.info(
+        "Enabled format-only SFT: model body frozen; only configured token rows "
+        f"receive nonzero gradients. tokens={list(zip(trainable_tokens, trainable_ids))}"
+    )
+
+
+def is_rank_zero() -> bool:
+    return int(os.environ.get("RANK", "0")) == 0
+
+
+def add_early_stopping_callback(trainer, cfg: DictConfig) -> None:
+    early_cfg = cfg.trainer.get("early_stopping")
+    if not early_cfg or not early_cfg.get("enabled", False):
+        return
+    trainer.add_callback(
+        EarlyStoppingCallback(
+            early_stopping_patience=int(early_cfg.get("patience", 2)),
+            early_stopping_threshold=float(early_cfg.get("threshold", 0.0)),
+        )
+    )
+    log.info(
+        "Enabled early stopping: "
+        f"patience={early_cfg.get('patience', 2)}, "
+        f"threshold={early_cfg.get('threshold', 0.0)}"
+    )
 
 
 @task_wrapper
@@ -75,8 +212,9 @@ def trl_train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         model,
         list(cfg.rl_algorithm.policy.model.get("special_tokens_to_add", [])),
     )
+    configure_format_only_training(model, tokenizer, cfg)
 
-    if cfg.get("save_before_train"):
+    if cfg.get("save_before_train") and is_rank_zero():
         raw_dir = os.path.join(cfg.paths.output_dir, "raw")
         model.save_pretrained(raw_dir)
         tokenizer.save_pretrained(raw_dir)
@@ -92,6 +230,7 @@ def trl_train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         tokenizer=tokenizer,
         _convert_="partial",
     )
+    add_early_stopping_callback(trainer, cfg)
     log.info(f"Model parameters: {make_trainable_params_summary(trainer.model)}")
 
     object_dict = {

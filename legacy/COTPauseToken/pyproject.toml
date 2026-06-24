@@ -21,7 +21,8 @@ dependencies = [
     "safetensors",
     "tokenizers",
     "torch",
-    "transformers>=4.45.0",
+    "transformers>=4.45.0,<5",
+    "bitsandbytes>=0.43.0",
     "trl==0.8.1",
 ]
 

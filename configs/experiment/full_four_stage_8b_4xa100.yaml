@@ -6,8 +6,11 @@ pipeline:
   stages:
     - configs/experiment/stage1_positionscan_8b_4xa100.yaml
     - configs/experiment/stage2_intra_pause_sft_8b_4xa100.yaml
+    - configs/experiment/stage2_model_comparison_eval_8b_4xa100.yaml
     - configs/experiment/stage3_intra_pause_probe_8b_4xa100.yaml
     - configs/experiment/stage4_pause_steering_8b_4xa100.yaml
+  stage2_controls:
+    cot3_before_pause: configs/experiment/stage2_intra_pause_sft_8b_cot3_control_4xa100.yaml
   stop_on_failure: true
   write_manifests: true
   skip_existing: true

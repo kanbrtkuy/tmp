@@ -18,7 +18,10 @@ sft:
   max_seq_length: 4096
   save_steps: 200
   eval_steps: 200
-  save_total_limit: 3
+  save_total_limit: 4
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
   completion_loss_starts_after: assistant_template
   add_special_tokens:
     - "<|pause|>"

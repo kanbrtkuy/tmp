@@ -5,7 +5,7 @@ model:
   name: deepseek_r1_distill_llama_8b
   base_model: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
   local_base_model: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Llama-8B
-  sft_checkpoint: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot3/final
+  sft_checkpoint: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot4_trusted_cot_18k/final
   tokenizer: null
   trust_remote_code: false
   max_length: 4096

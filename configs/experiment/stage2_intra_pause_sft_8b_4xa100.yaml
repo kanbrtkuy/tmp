@@ -4,5 +4,27 @@ defaults:
   - ../runtime/a100_4x.yaml
 
 run:
-  name: stage2_intra_pause_sft_deepseek_8b_4xa100
-  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot3_trusted_cot_18k
+  name: stage2_intra_pause_sft_deepseek_8b_cot4_save100_rerun_4xa100
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot4_trusted_cot_18k_save100_rerun
+
+pause:
+  cot_offset: 4
+  n_pause_tokens: 3
+
+data:
+  prepared_root: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/trusted_cot_18k_intra_cot4
+
+sft:
+  cot_offset: 4
+  intra_dir_name: intra_pause_cot4
+  tags: [deepseek_8b, intra_pause_cot4, before_cot4, full_sft, a100_sxm]
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  save_steps: 100
+  eval_steps: 100
+  save_total_limit: null
+  early_stopping:
+    enabled: true
+    patience: 2
+    threshold: 0.001

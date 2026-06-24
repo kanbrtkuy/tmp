@@ -28,6 +28,7 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
     probe = config.get("probe", {})
     sft = config.get("sft", {})
     steering = config.get("steering", {})
+    eval_cfg = config.get("eval", {})
     if config.get("pipeline", {}).get("stages"):
         return [
             PipelineStep(
@@ -66,27 +67,25 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                 action="data_prepare",
                 command=[
                     "python",
-                    "legacy/COTPauseToken/scripts/data_generation/pause_sft/build_intra_think_pause_sft_splits.py",
-                    "<raw-jsonl>",
-                    "<tokenizer>",
-                    "<output-root>",
+                    "scripts/run_stage2_sft.py",
+                    "--config",
+                    "<config>",
+                    "--skip_train",
                 ],
-                notes="Pause placement and split sizes come from config.",
+                notes="Build and validate cot-offset-specific intra-pause SFT splits from config.",
             ),
             PipelineStep(
                 name="train_intra_pause_sft",
                 stage="stage2",
                 action="sft_train",
                 command=[
-                    "bash",
-                    "legacy/COTPauseToken/scripts/training/run_4gpu_intra_pause_sft.sh",
-                    "<data-dir>",
-                    "<output-dir>",
-                    "<model-path>",
-                    run_name,
-                    "1",
+                    "python",
+                    "scripts/run_stage2_sft.py",
+                    "--config",
+                    "<config>",
+                    "--skip_data_prep",
                 ],
-                notes="Use runtime config to choose 4xA100 vs smaller launch settings.",
+                notes="Launch DDP SFT using runtime batch, accumulation, and dataloader settings.",
             ),
         ]
 
@@ -160,6 +159,66 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                     "legacy/PauseProbe/scripts/steering/run_intra_pause_full_steering_eval.sh",
                 ],
                 notes="Evaluate base, SFT, and SFT+steering with configured judges and datasets.",
+            ),
+        ]
+
+    if eval_cfg.get("model_conditions"):
+        return [
+            PipelineStep(
+                name="prepare_model_comparison_eval_data",
+                stage="eval",
+                action="data_prepare",
+                command=[
+                    "python",
+                    "scripts/run_model_comparison_eval.py",
+                    "--config",
+                    "<config>",
+                    "--phase",
+                    "prepare",
+                ],
+                notes="Normalize configured benchmark sources into prompt-only capability and safety JSONL files.",
+            ),
+            PipelineStep(
+                name="generate_model_comparison_outputs",
+                stage="eval",
+                action="generate",
+                command=[
+                    "python",
+                    "scripts/run_model_comparison_eval.py",
+                    "--config",
+                    "<config>",
+                    "--phase",
+                    "generate",
+                ],
+                notes="Generate outputs for every configured model condition with condition-specific pause placement.",
+            ),
+            PipelineStep(
+                name="judge_model_comparison_outputs",
+                stage="eval",
+                action="judge",
+                command=[
+                    "python",
+                    "scripts/run_model_comparison_eval.py",
+                    "--config",
+                    "<config>",
+                    "--phase",
+                    "judge",
+                ],
+                notes="Run configured open judges over safety generations and normalize labels.",
+            ),
+            PipelineStep(
+                name="summarize_model_comparison_eval",
+                stage="eval",
+                action="summarize",
+                command=[
+                    "python",
+                    "scripts/run_model_comparison_eval.py",
+                    "--config",
+                    "<config>",
+                    "--phase",
+                    "summary",
+                ],
+                notes="Write capability and safety CSV summaries for configured model conditions.",
             ),
         ]
 

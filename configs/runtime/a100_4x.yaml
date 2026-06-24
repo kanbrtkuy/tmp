@@ -12,10 +12,15 @@ runtime:
   torch_dtype: bfloat16
   pytorch_cuda_alloc_conf: expandable_segments:True
   sft:
+    parallelism: ddp
+    interconnect: nvlink
     per_device_train_batch_size: 1
     per_device_eval_batch_size: 1
     gradient_accumulation_steps: 8
     gradient_checkpointing: true
+    dataloader_num_workers: 8
+    optim: paged_adamw_8bit
+    tf32: true
   hidden:
     extract_jobs: 4
     extract_devices: [cuda:0, cuda:1, cuda:2, cuda:3]

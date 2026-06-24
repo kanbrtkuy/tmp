@@ -45,8 +45,15 @@ def clean_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
-def build_prompt(prompt: str, suffix: str, forced_prefix: str) -> str:
-    return f"{DEEPSEEK_BOS_TOKEN}{DEEPSEEK_USER_TEMPLATE}{prompt}{suffix}{DEEPSEEK_ASSISTANT_TEMPLATE}{forced_prefix}"
+def build_prompt(
+    prompt: str,
+    suffix: str,
+    forced_prefix: str,
+    bos_token: str,
+    user_template: str,
+    assistant_template: str,
+) -> str:
+    return f"{bos_token}{user_template}{prompt}{suffix}{assistant_template}{forced_prefix}"
 
 
 def task_suffix(row: dict[str, Any]) -> str:
@@ -147,7 +154,16 @@ def generate_plain_batch(model: Any, tokenizer: Any, prompts: list[str], args: a
             eos_token_id=tokenizer.eos_token_id,
             use_cache=True,
         )
-    return [tokenizer.decode(item[prompt_width:], skip_special_tokens=False).strip() for item in generated]
+    decoded = []
+    eos_id = tokenizer.eos_token_id
+    for item in generated:
+        continuation = item[prompt_width:]
+        if eos_id is not None:
+            eos_positions = (continuation == eos_id).nonzero(as_tuple=True)[0]
+            if len(eos_positions) > 0:
+                continuation = continuation[: int(eos_positions[0])]
+        decoded.append(tokenizer.decode(continuation, skip_special_tokens=False).strip())
+    return decoded
 
 
 def load_model_and_tokenizer(args: argparse.Namespace) -> tuple[Any, Any, Any, Any | None, int | None]:
@@ -196,6 +212,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top_p", type=float, default=0.95)
     parser.add_argument("--seed", type=int, default=260622)
     parser.add_argument("--forced_prefix", default=DEFAULT_FORCED_PREFIX)
+    parser.add_argument("--bos_token", default=DEEPSEEK_BOS_TOKEN)
+    parser.add_argument("--user_template", default=DEEPSEEK_USER_TEMPLATE)
+    parser.add_argument("--assistant_template", default=DEEPSEEK_ASSISTANT_TEMPLATE)
     parser.add_argument("--insert_pause_after_cot_tokens", type=int, default=3)
     parser.add_argument("--n_insert_pauses", type=int, default=3)
     parser.add_argument("--torch_dtype", choices=("auto", "float32", "float16", "bfloat16"), default="bfloat16")
@@ -222,7 +241,17 @@ def main() -> None:
     with out.open("w", encoding="utf-8") as f:
         for start in range(0, len(rows), args.batch_size):
             batch = rows[start : start + args.batch_size]
-            base_prompts = [build_prompt(clean_text(row["prompt"]), task_suffix(row), args.forced_prefix) for row in batch]
+            base_prompts = [
+                build_prompt(
+                    clean_text(row["prompt"]),
+                    task_suffix(row),
+                    args.forced_prefix,
+                    args.bos_token,
+                    args.user_template,
+                    args.assistant_template,
+                )
+                for row in batch
+            ]
             inserted_prefixes = ["" for _ in batch]
             if args.model_kind in {"sft", "steer"} and args.insert_pause_after_cot_tokens >= 0:
                 set_seed(args.seed + start)
@@ -231,7 +260,10 @@ def main() -> None:
                     prefixes = steer.generate_prefix_batch(model, tokenizer, base_prompts, prefix_args)
                 else:
                     prefixes = ["" for _ in batch]
-                inserted_prefixes = [prefix + (steer.PAUSE_TOKEN * args.n_insert_pauses) for prefix in prefixes]
+                inserted_prefixes = [
+                    steer.strip_pause_tokens(prefix) + (steer.PAUSE_TOKEN * args.n_insert_pauses)
+                    for prefix in prefixes
+                ]
             prompts = [prompt + inserted for prompt, inserted in zip(base_prompts, inserted_prefixes)]
             set_seed(args.seed + start + int(args.alpha * 1000))
             if args.model_kind == "steer":
@@ -274,6 +306,9 @@ def main() -> None:
                             "top_p": args.top_p,
                             "max_new_tokens": args.max_new_tokens,
                             "forced_prefix": args.forced_prefix,
+                            "bos_token": args.bos_token,
+                            "user_template": args.user_template,
+                            "assistant_template": args.assistant_template,
                             "insert_pause_after_cot_tokens": args.insert_pause_after_cot_tokens if args.model_kind in {"sft", "steer"} else -1,
                             "n_insert_pauses": args.n_insert_pauses if args.model_kind in {"sft", "steer"} else 0,
                         },
