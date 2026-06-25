@@ -3,11 +3,11 @@ runtime:
   num_gpus: 1
   cuda_visible_devices: "0"
   hf_home: ${HF_HOME:-/workspace/hf_cache}
-  hf_env_file: /workspace/secrets/hf.env
-  workdir: /workspace/cot-safety
-  data_root: /workspace/data
-  output_root: /workspace/outputs
-  run_root: /workspace/cot-safety/runs
+  hf_env_file: ${COT_SAFETY_HF_ENV_FILE:-/workspace/secrets/hf.env}
+  workdir: ${COT_SAFETY_WORKDIR:-/workspace/cot-safety}
+  data_root: ${COT_SAFETY_DATA_ROOT:-/workspace/data}
+  output_root: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}
+  run_root: ${COT_SAFETY_RUN_ROOT:-/workspace/cot-safety/runs}
   torch_dtype: bfloat16
   sft:
     per_device_train_batch_size: 1

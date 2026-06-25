@@ -4,11 +4,11 @@ runtime:
   cuda_visible_devices: "0,1,2,3"
   devices: [cuda:0, cuda:1, cuda:2, cuda:3]
   hf_home: ${HF_HOME:-/workspace/hf_cache}
-  hf_env_file: /workspace/secrets/hf.env
-  workdir: /workspace/cot-safety
-  data_root: /workspace/data
-  output_root: /workspace/outputs
-  run_root: /workspace/cot-safety/runs
+  hf_env_file: ${COT_SAFETY_HF_ENV_FILE:-/workspace/secrets/hf.env}
+  workdir: ${COT_SAFETY_WORKDIR:-/workspace/cot-safety}
+  data_root: ${COT_SAFETY_DATA_ROOT:-/workspace/data}
+  output_root: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}
+  run_root: ${COT_SAFETY_RUN_ROOT:-/workspace/cot-safety/runs}
   torch_dtype: bfloat16
   pytorch_cuda_alloc_conf: expandable_segments:True
   sft:

@@ -2,15 +2,40 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+_ENV_PATTERN = re.compile(
+    r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-)([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)"
+)
+
+
+def expand_env_string(value: str) -> str:
+    """Expand shell-style env vars, including ${VAR:-default} fallbacks."""
+
+    def replace(match: re.Match[str]) -> str:
+        braced_name = match.group(1)
+        operator = match.group(2)
+        default = match.group(3)
+        plain_name = match.group(4)
+        name = braced_name or plain_name
+        current = os.environ.get(name)
+
+        if operator == ":-":
+            return current if current not in (None, "") else (default or "")
+        if operator == "-":
+            return current if current is not None else (default or "")
+        return current if current is not None else match.group(0)
+
+    return _ENV_PATTERN.sub(replace, value)
+
 
 def _expand_env(value: Any) -> Any:
     if isinstance(value, str):
-        return os.path.expandvars(value)
+        return expand_env_string(os.path.expanduser(value))
     if isinstance(value, list):
         return [_expand_env(item) for item in value]
     if isinstance(value, dict):

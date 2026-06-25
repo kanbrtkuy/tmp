@@ -7,17 +7,16 @@ RUN_STAGE1="${RUN_STAGE1:-0}"
 RUN_STAGE2="${RUN_STAGE2:-0}"
 
 cd "$ROOT"
-if [[ -f /workspace/secrets/hf.env ]]; then
-  source /workspace/secrets/hf.env
-fi
+# shellcheck disable=SC1091
+source "${ROOT}/pipelines/runpod_hot_env.sh"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
-mkdir -p runs
+mkdir -p "${COT_SAFETY_RUN_ROOT}"
 PYTHONPATH=src python scripts/smoke_test.py
-PYTHONPATH=src python -m cot_safety.cli config show --config "$CONFIG" > runs/full_four_stage_resolved.yaml
-PYTHONPATH=src python -m cot_safety.cli pipeline plan --config configs/experiment/stage1_positionscan_8b_4xa100.yaml > runs/stage1_positionscan_plan.json
-PYTHONPATH=src python -m cot_safety.cli pipeline plan --config configs/experiment/stage2_intra_pause_sft_8b_4xa100.yaml > runs/stage2_intra_pause_sft_plan.json
-PYTHONPATH=src python -m cot_safety.cli pipeline plan --config configs/experiment/stage2_model_comparison_eval_8b_4xa100.yaml > runs/stage2_model_comparison_eval_plan.json
+PYTHONPATH=src python -m cot_safety.cli config show --config "$CONFIG" > "${COT_SAFETY_RUN_ROOT}/full_four_stage_resolved.yaml"
+PYTHONPATH=src python -m cot_safety.cli pipeline plan --config configs/experiment/stage1_positionscan_8b_4xa100.yaml > "${COT_SAFETY_RUN_ROOT}/stage1_positionscan_plan.json"
+PYTHONPATH=src python -m cot_safety.cli pipeline plan --config configs/experiment/stage2_intra_pause_sft_8b_4xa100.yaml > "${COT_SAFETY_RUN_ROOT}/stage2_intra_pause_sft_plan.json"
+PYTHONPATH=src python -m cot_safety.cli pipeline plan --config configs/experiment/stage2_model_comparison_eval_8b_4xa100.yaml > "${COT_SAFETY_RUN_ROOT}/stage2_model_comparison_eval_plan.json"
 PYTHONPATH=src python -m cot_safety.cli steer validate-scope --config configs/experiment/stage4_pause_steering_8b_4xa100.yaml
 
 echo "Config and safety-scope smoke checks passed for 4xA100."

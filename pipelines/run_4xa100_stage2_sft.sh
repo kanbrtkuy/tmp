@@ -5,13 +5,11 @@ ROOT="${ROOT:-/workspace/cot-safety}"
 CONFIG="${CONFIG:-configs/experiment/stage2_intra_pause_sft_8b_4xa100.yaml}"
 PYTHON="${PYTHON:-python}"
 
-if [[ -f /workspace/secrets/hf.env ]]; then
-  # shellcheck disable=SC1091
-  source /workspace/secrets/hf.env
-fi
+# shellcheck disable=SC1091
+source "${ROOT}/pipelines/runpod_hot_env.sh"
 
 cd "${ROOT}"
-mkdir -p runs logs
+mkdir -p "${COT_SAFETY_RUN_ROOT}" logs
 
 EXTRA_ARGS=()
 if [[ "${SKIP_DATA_PREP:-0}" == "1" ]]; then
