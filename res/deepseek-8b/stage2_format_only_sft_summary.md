@@ -1,107 +1,86 @@
 # DeepSeek-R1-Distill-Llama-8B Stage 2 Format-Only SFT Summary
 
 Date: 2026-06-25
+Updated: 2026-06-26
 
-## cot4 ckpt200 vs base
+This file summarizes the comparable Stage 2 format-only SFT checkpoints that have confirmed judge results. All rows in the main tables use the same format-only objective: only the new `<|pause|>` token is trainable, and three pause tokens are inserted before the selected CoT slot.
 
-Run under comparison:
+The previous version of this note was incomplete: it included `cot4 checkpoint-200` and `cot3 checkpoint-450/500`, but omitted the confirmed `cot4 checkpoint-250` and `cot3 checkpoint-200/250` results.
 
-- Base: `DeepSeek-R1-Distill-Llama-8B`
-- SFT: `deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250/checkpoint-200`
-- SFT objective: format-only, trainable token `<|pause|>` only
-- Pause layout: insert three `<|pause|>` tokens before `cot_4`
-- Evaluation: stage2 model comparison, capability 800 prompts, safety 1200 prompts, WildGuard/LlamaGuard/HarmBench judges
+## Evaluated Checkpoints
 
-Capability:
+| Row | Pause placement | Checkpoint | SFT output family | Included in main comparison |
+|---|---|---:|---|---|
+| base | none | none | `DeepSeek-R1-Distill-Llama-8B` | yes |
+| cot4 ckpt200 | before `cot_4` | 200 | `deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250` | yes |
+| cot4 ckpt250 | before `cot_4` | 250 | `deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250` | yes |
+| cot3 ckpt200 | before `cot_3` | 200 | `deepseek_8b_intra_pause_cot3_format_only_trusted_cot_18k_save50_max250` | yes |
+| cot3 ckpt250 | before `cot_3` | 250 | `deepseek_8b_intra_pause_cot3_format_only_trusted_cot_18k_save50_max250` | yes |
+| cot3 ckpt450 | before `cot_3` | 450 | `deepseek_8b_intra_pause_cot3_format_only_trusted_cot_18k_save50_max250` | yes |
+| cot3 ckpt500 | before `cot_3` | 500 | `deepseek_8b_intra_pause_cot3_format_only_trusted_cot_18k_save50_max250` | yes |
 
-| Dataset | Base accuracy | cot4 ckpt200 accuracy | Delta |
-|---|---:|---:|---:|
-| GSM8K | 0.710 | 0.652 | -0.058 |
-| MATH500 | 0.423 | 0.463 | +0.040 |
+## Capability
 
-Unsafe prompts, unsafe_valid_rate:
+Accuracy is reported as decimals. Delta columns are relative to base.
 
-| Judge | Base | cot4 ckpt200 | Delta |
-|---|---:|---:|---:|
-| HarmBench | 0.465 | 0.463 | -0.002 |
-| LlamaGuard | 0.553 | 0.518 | -0.035 |
-| WildGuard | 0.440 | 0.405 | -0.035 |
+| Model | GSM8K acc | Delta | MATH500 acc | Delta | Overall acc | Delta | pause3_rate |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| base | 0.710 | 0.000 | 0.423 | 0.000 | 0.603 | 0.000 | 0.000 |
+| cot4 ckpt200 | 0.652 | -0.058 | 0.463 | +0.040 | 0.581 | -0.022 | 1.000 |
+| cot4 ckpt250 | 0.684 | -0.026 | 0.423 | 0.000 | 0.586 | -0.017 | 1.000 |
+| cot3 ckpt200 | 0.640 | -0.070 | 0.477 | +0.054 | 0.579 | -0.024 | 1.000 |
+| cot3 ckpt250 | 0.648 | -0.062 | 0.477 | +0.054 | 0.584 | -0.019 | 1.000 |
+| cot3 ckpt450 | 0.594 | -0.116 | 0.470 | +0.047 | 0.548 | -0.055 | 1.000 |
+| cot3 ckpt500 | 0.612 | -0.098 | 0.497 | +0.074 | 0.569 | -0.034 | 1.000 |
 
-Safe prompts, unsafe_valid_rate:
+## Unsafe Prompts
 
-| Judge | Base | cot4 ckpt200 | Delta |
-|---|---:|---:|---:|
-| HarmBench | 0.670 | 0.673 | +0.003 |
-| LlamaGuard | 0.152 | 0.143 | -0.008 |
-| WildGuard | 0.102 | 0.078 | -0.023 |
+Metric: `unsafe_valid_rate`. Lower is less unsafe under the judge.
 
-Format adherence:
+| Model | HarmBench | Delta | LlamaGuard | Delta | WildGuard | Delta |
+|---|---:|---:|---:|---:|---:|---:|
+| base | 0.465 | 0.000 | 0.553 | 0.000 | 0.440 | 0.000 |
+| cot4 ckpt200 | 0.463 | -0.002 | 0.518 | -0.035 | 0.405 | -0.035 |
+| cot4 ckpt250 | 0.432 | -0.033 | 0.505 | -0.048 | 0.365 | -0.075 |
+| cot3 ckpt200 | 0.653 | +0.188 | 0.705 | +0.152 | 0.617 | +0.177 |
+| cot3 ckpt250 | 0.630 | +0.165 | 0.685 | +0.132 | 0.592 | +0.152 |
+| cot3 ckpt450 | 0.653 | +0.188 | 0.708 | +0.155 | 0.590 | +0.150 |
+| cot3 ckpt500 | 0.632 | +0.167 | 0.670 | +0.117 | 0.578 | +0.138 |
 
-| Model | pause3_rate |
-|---|---:|
-| Base | 0.000 |
-| cot4 ckpt200 | 1.000 |
+## Safe Prompts
 
-Interpretation:
+Metric: `unsafe_valid_rate`. Lower is preferable because these prompts should remain safe.
 
-- `checkpoint-200` is much closer to base behavior than later cot4 checkpoints previously judged.
-- The format objective succeeds: three pause tokens are inserted reliably.
-- Safety behavior on unsafe prompts remains close to base across all three judges, with the largest observed drop at 0.035.
-- Capability is mixed: GSM8K drops by 0.058 while MATH500 increases by 0.040.
-- This makes `checkpoint-200` a reasonable format-only SFT candidate for the next steering/evaluation stage.
+| Model | HarmBench | Delta | LlamaGuard | Delta | WildGuard | Delta |
+|---|---:|---:|---:|---:|---:|---:|
+| base | 0.670 | 0.000 | 0.152 | 0.000 | 0.102 | 0.000 |
+| cot4 ckpt200 | 0.673 | +0.003 | 0.143 | -0.009 | 0.078 | -0.024 |
+| cot4 ckpt250 | 0.658 | -0.012 | 0.170 | +0.018 | 0.098 | -0.004 |
+| cot3 ckpt200 | 0.728 | +0.058 | 0.203 | +0.051 | 0.125 | +0.023 |
+| cot3 ckpt250 | 0.742 | +0.072 | 0.203 | +0.051 | 0.137 | +0.035 |
+| cot3 ckpt450 | 0.707 | +0.037 | 0.200 | +0.048 | 0.140 | +0.038 |
+| cot3 ckpt500 | 0.707 | +0.037 | 0.173 | +0.021 | 0.127 | +0.025 |
 
-Source result files:
+## Interpretation
 
-- Current run: `/dev/shm/cot-safety-hot/runs/eval/stage2_model_comparison_deepseek_8b_cot4_ckpt200_4xa100`
-- Base comparison archive: `safechain_gdrive:Research/cot-safety/runpod_backups/20260625T041738Z_deepseek8b_ckpt300_eval_incremental_no_models/archives/cot_safety_incremental_eval_runs_20260625T041738Z.tar.gz`
+- The format objective succeeds for all tested format-only checkpoints: every SFT row has `pause3_rate = 1.000`.
+- `cot4 checkpoint-250` is currently the best format-only SFT candidate among the consolidated results. It stays closest to base capability overall (`0.586` vs `0.603`) while reducing unsafe-prompt unsafe_valid_rate across all three judges.
+- `cot4 checkpoint-200` is also close to base, but its GSM8K drop is larger than `checkpoint-250` (`-0.058` vs `-0.026`).
+- The `cot3` position consistently behaves worse than `cot4` for DeepSeek-8B. Even when capability is only moderately below base, unsafe-prompt unsafe_valid_rate is higher than base across HarmBench, LlamaGuard, and WildGuard.
+- These results support the current 8B hypothesis: pause insertion should target the stronger stage1 signal position around `cot_4`, while `cot_3` is a useful negative/position ablation rather than the main downstream steering model.
 
-## cot3 ckpt450/500 vs base
+## Result Provenance
 
-Run under comparison:
+Confirmed format-only comparison runs:
 
-- Base: `DeepSeek-R1-Distill-Llama-8B`
-- SFT checkpoints:
-  - `deepseek_8b_intra_pause_cot3_format_only_trusted_cot_18k_save50_max250/checkpoint-450`
-  - `deepseek_8b_intra_pause_cot3_format_only_trusted_cot_18k_save50_max250/checkpoint-500`
-- SFT objective: format-only, trainable token `<|pause|>` only
-- Pause layout: insert three `<|pause|>` tokens before `cot_3`
-- Evaluation: stage2 model comparison, capability 800 prompts, safety 1200 prompts, WildGuard/LlamaGuard/HarmBench judges
-- Note: `checkpoint-400` does not currently have a complete model-comparison judge result in the saved runs.
+- cot4 ckpt200 config: `configs/experiment/stage2_model_comparison_eval_8b_cot4_ckpt200_4xa100.yaml`
+- cot4 ckpt250 config: `configs/experiment/stage2_model_comparison_eval_8b_cot4_ckpt250_3xidle.yaml`
+- cot3 ckpt200/250 config: `configs/experiment/stage2_model_comparison_eval_8b_cot3_ckpt200_250_4xa100.yaml`
+- cot3 ckpt450/500 config: `configs/experiment/stage2_model_comparison_eval_8b_cot3_ckpt450_500_4xa100.yaml`
+- GDrive backup for cot3 ckpt250-500 evaluation snapshot: `safechain_gdrive:Research/cot-safety/runpod_backups/20260625T142750Z_cot3_ckpt250_500_eval_snapshot`
 
-Capability:
+Non-main-table notes:
 
-| Metric | Base | cot3 ckpt450 | cot3 ckpt500 |
-|---|---:|---:|---:|
-| GSM8K acc | 0.710 | 0.594 | 0.612 |
-| MATH500 acc | 0.423 | 0.470 | 0.497 |
-| overall acc | 0.603 | 0.548 | 0.569 |
-| pause3_rate | 0.000 | 1.000 | 1.000 |
-
-Unsafe prompts, unsafe_valid_rate:
-
-| Judge | Base | cot3 ckpt450 | cot3 ckpt500 |
-|---|---:|---:|---:|
-| HarmBench | 0.465 | 0.653 | 0.632 |
-| LlamaGuard | 0.553 | 0.708 | 0.670 |
-| WildGuard | 0.440 | 0.590 | 0.578 |
-
-Safe prompts, unsafe_valid_rate:
-
-| Judge | Base | cot3 ckpt450 | cot3 ckpt500 |
-|---|---:|---:|---:|
-| HarmBench | 0.670 | 0.707 | 0.707 |
-| LlamaGuard | 0.152 | 0.200 | 0.173 |
-| WildGuard | 0.102 | 0.140 | 0.127 |
-
-Interpretation:
-
-- `cot3 checkpoint-500` is better than `checkpoint-450` on capability and on unsafe-prompt unsafe_valid_rate across all three judges.
-- Both cot3 checkpoints preserve the requested pause format, with `pause3_rate = 1.000`.
-- Even at `checkpoint-500`, cot3 remains substantially farther from base behavior than the cot4 candidates. Overall capability is 0.569 vs base 0.603, and unsafe-prompt unsafe_valid_rate is higher than base for all three judges.
-- These results support treating cot3 as a negative/position ablation for 8B: inserting pauses before `cot_3` appears too early relative to the stage1 signal hotspot, while cot4 is the healthier candidate for downstream steering.
-
-Source result files:
-
-- Base run: `/dev/shm/cot-safety-hot/runs/eval/stage2_model_comparison_deepseek_8b_cot3_ckpt200_250_4xa100`
-- cot3 ckpt450/500 run: `/dev/shm/cot-safety-hot/runs/eval/stage2_model_comparison_deepseek_8b_cot3_ckpt450_500_4xa100`
-- GDrive backup: `safechain_gdrive:Research/cot-safety/runpod_backups/20260625T142750Z_cot3_ckpt250_500_eval_snapshot`
+- `cot4 checkpoint-300/400/500` configs in this repo point to the earlier `deepseek_8b_intra_pause_cot4_trusted_cot_18k_save100_rerun` family, not the current `format_only_trusted_cot_18k_save50_max250` family. They should not be mixed into the main format-only table without an explicit "legacy/full-SFT" label.
+- `cot4 checkpoint-400` does not currently have a complete model-comparison judge result in the saved records checked for this summary.
+- The earlier overtrained/full-SFT cot4 run showed strong drift from base behavior, so it is treated as historical diagnostic evidence rather than a candidate format-only checkpoint.
