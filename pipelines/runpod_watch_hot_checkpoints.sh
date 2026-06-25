@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+# shellcheck disable=SC1091
+source "${ROOT}/pipelines/runpod_hot_env.sh"
+
+OUTPUT_PATH=""
+INTERVAL_SECONDS="${INTERVAL_SECONDS:-60}"
+STOP_PID_FILE=""
+ONCE=0
+REMOVE_HOT_AFTER_SYNC=0
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  bash pipelines/runpod_watch_hot_checkpoints.sh --output PATH [options]
+
+Options:
+  --output PATH       Output directory relative to $COT_SAFETY_OUTPUT_ROOT.
+                      Example: deepseek_8b_run_name
+  --interval SECONDS  Poll interval. Default: 60.
+  --stop-pid-file P   Exit after this PID file's process ends, after one final sync.
+  --remove-hot-after-sync
+                      Remove each hot checkpoint after its cold copy is marked
+                      synced. Use this when /dev/shm is the hot root.
+  --once              Sync currently complete checkpoints once, then exit.
+
+The script persists complete hot checkpoints to /workspace/outputs/PATH.
+A checkpoint is considered complete when trainer_state.json and
+model.safetensors.index.json both exist.
+USAGE
+}
+
+checkpoint_complete() {
+  local checkpoint_dir="$1"
+  [[ -f "${checkpoint_dir}/trainer_state.json" && -f "${checkpoint_dir}/model.safetensors.index.json" ]]
+}
+
+sync_checkpoint() {
+  local name="$1"
+  local hot_dir="${COT_SAFETY_OUTPUT_ROOT}/${OUTPUT_PATH}/${name}"
+  local cold_dir="${COT_SAFETY_COLD_ROOT}/outputs/${OUTPUT_PATH}/${name}"
+  local marker="${cold_dir}/.synced_to_cold"
+
+  if [[ -f "${marker}" ]]; then
+    if [[ "${REMOVE_HOT_AFTER_SYNC}" == "1" && -d "${hot_dir}" ]]; then
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] removing already-synced hot checkpoint ${OUTPUT_PATH}/${name}"
+      rm -rf -- "${hot_dir}"
+    fi
+    return 0
+  fi
+
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] syncing ${OUTPUT_PATH}/${name}"
+  local sync_args=(
+    --output "${OUTPUT_PATH}/${name}"
+    --all-runs
+  )
+  if [[ "${REMOVE_HOT_AFTER_SYNC}" == "1" ]]; then
+    sync_args+=(--remove-hot-after-sync)
+  fi
+  ROOT="${ROOT}" bash "${ROOT}/pipelines/runpod_sync_hot_to_cold.sh" \
+    "${sync_args[@]}"
+  mkdir -p "${cold_dir}"
+  date -u +%Y-%m-%dT%H:%M:%SZ > "${marker}"
+}
+
+sync_complete_checkpoints() {
+  local hot_dir="${COT_SAFETY_OUTPUT_ROOT}/${OUTPUT_PATH}"
+  [[ -d "${hot_dir}" ]] || return 0
+
+  local checkpoint_dir name
+  for checkpoint_dir in "${hot_dir}"/checkpoint-*; do
+    [[ -d "${checkpoint_dir}" ]] || continue
+    checkpoint_complete "${checkpoint_dir}" || continue
+    name="$(basename "${checkpoint_dir}")"
+    sync_checkpoint "${name}"
+  done
+}
+
+training_process_alive() {
+  [[ -n "${STOP_PID_FILE}" ]] || return 0
+  [[ -f "${STOP_PID_FILE}" ]] || return 1
+  local pid
+  pid="$(cat "${STOP_PID_FILE}")"
+  [[ -n "${pid}" ]] || return 1
+  kill -0 "${pid}" 2>/dev/null
+}
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --output)
+      shift
+      OUTPUT_PATH="$1"
+      ;;
+    --interval)
+      shift
+      INTERVAL_SECONDS="$1"
+      ;;
+    --stop-pid-file)
+      shift
+      STOP_PID_FILE="$1"
+      ;;
+    --remove-hot-after-sync)
+      REMOVE_HOT_AFTER_SYNC=1
+      ;;
+    --once)
+      ONCE=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [[ -z "${OUTPUT_PATH}" ]]; then
+  echo "missing --output" >&2
+  usage >&2
+  exit 2
+fi
+
+while true; do
+  sync_complete_checkpoints
+  if [[ "${ONCE}" == "1" ]]; then
+    exit 0
+  fi
+  if [[ -n "${STOP_PID_FILE}" ]] && ! training_process_alive; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] training process ended; final sync"
+    sync_complete_checkpoints
+    ROOT="${ROOT}" bash "${ROOT}/pipelines/runpod_sync_hot_to_cold.sh" --all-runs
+    exit 0
+  fi
+  sleep "${INTERVAL_SECONDS}"
+done

@@ -273,10 +273,15 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
     env["WARMUP_RATIO"] = str(sft.get("warmup_ratio", 0.03))
     env["WEIGHT_DECAY"] = str(sft.get("weight_decay", 0.0))
     env["TF32"] = str(sft_runtime.get("tf32", True)).lower()
+    env["GRADIENT_CHECKPOINTING"] = str(
+        sft_runtime.get("gradient_checkpointing", sft.get("gradient_checkpointing", True))
+    ).lower()
     env["TAGS"] = sft_tags(config, intra_dir_name)
     env["SAVE_BEFORE_TRAIN"] = str(sft.get("save_before_train", False)).lower()
     if sft.get("max_steps") not in (None, ""):
         env["MAX_STEPS"] = str(sft["max_steps"])
+    if sft.get("resume_from_checkpoint") not in (None, ""):
+        env["RESUME_FROM_CHECKPOINT"] = str(resolve_value(sft["resume_from_checkpoint"]))
     format_only = sft.get("format_only", {}) or {}
     format_only_enabled = str(sft.get("method", "")).lower() == "format_only" or bool(
         format_only.get("enabled", False)
@@ -325,11 +330,27 @@ def main() -> None:
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_existing", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
+    parser.add_argument("--max_steps", type=int, default=None)
+    parser.add_argument("--resume_from_checkpoint", default=None)
+    parser.add_argument("--disable_save_before_train", action="store_true")
+    parser.add_argument("--disable_gradient_checkpointing", action="store_true")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
     legacy_root = Path(args.legacy_root) if args.legacy_root else repo_root / "legacy/COTPauseToken"
     config = resolve_value(load_config(repo_root / args.config))
+    sft_config = config.setdefault("sft", {})
+    if args.max_steps is not None:
+        sft_config["max_steps"] = int(args.max_steps)
+    if args.resume_from_checkpoint:
+        sft_config["resume_from_checkpoint"] = args.resume_from_checkpoint
+    if args.disable_save_before_train:
+        sft_config["save_before_train"] = False
+    if args.disable_gradient_checkpointing:
+        sft_config["gradient_checkpointing"] = False
+        runtime_config = config.setdefault("runtime", {})
+        runtime_sft_config = runtime_config.setdefault("sft", {})
+        runtime_sft_config["gradient_checkpointing"] = False
     selected_model = model_path(config.get("model", {}))
     paths = stage2_paths(config)
 

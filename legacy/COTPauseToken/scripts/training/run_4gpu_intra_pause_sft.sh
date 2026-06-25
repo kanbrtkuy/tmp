@@ -69,14 +69,21 @@ echo "  EARLY_STOPPING=$EARLY_STOPPING_ENABLED patience=$EARLY_STOPPING_PATIENCE
 echo "  FORMAT_ONLY=$FORMAT_ONLY trainable_tokens=$FORMAT_ONLY_TRAINABLE_TOKENS"
 echo "  SAVE_BEFORE_TRAIN=$SAVE_BEFORE_TRAIN"
 echo "  WEIGHT_DECAY=$WEIGHT_DECAY"
+echo "  GRADIENT_CHECKPOINTING=$GRADIENT_CHECKPOINTING"
 if [ -n "$MAX_STEPS" ]; then
   echo "  MAX_STEPS=$MAX_STEPS"
+fi
+if [ -n "$RESUME_FROM_CHECKPOINT" ]; then
+  echo "  RESUME_FROM_CHECKPOINT=$RESUME_FROM_CHECKPOINT"
 fi
 echo "  PYTHON_BIN=$(command -v "$PYTHON_BIN" || echo "$PYTHON_BIN")"
 
 EXTRA_ARGS=()
 if [ -n "$MAX_STEPS" ]; then
   EXTRA_ARGS+=(+trainer.args.max_steps="$MAX_STEPS")
+fi
+if [ -n "$RESUME_FROM_CHECKPOINT" ]; then
+  EXTRA_ARGS+=(+resume_from_checkpoint="$RESUME_FROM_CHECKPOINT")
 fi
 
 "$PYTHON_BIN" -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node="$NPROC_PER_NODE" "$PROJECT_ROOT/src/trl_train.py" \
@@ -104,7 +111,7 @@ fi
   +trainer.early_stopping.threshold="$EARLY_STOPPING_THRESHOLD" \
   trainer.args.dataloader_num_workers="$DATALOADER_NUM_WORKERS" \
   trainer.args.dataloader_pin_memory=true \
-  trainer.args.gradient_checkpointing=true \
+  trainer.args.gradient_checkpointing="$GRADIENT_CHECKPOINTING" \
   trainer.args.bf16=true \
   trainer.args.fp16=false \
   +trainer.args.tf32="$TF32" \

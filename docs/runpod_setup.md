@@ -2,12 +2,198 @@
 
 ## Fresh Pod Checklist
 
-1. Clone this repo.
-2. Create Python environments or install editable package.
-3. Inject Hugging Face token through SSH stdin.
-4. Restore persistent experiment data/checkpoints from GDrive or download them.
-5. Stage hot runtime files to local storage before any GPU job.
-6. Validate configs and run smoke tests.
+1. Confirm GPU count and storage mounts.
+2. Install code without unpacking many small files on `/workspace`.
+3. Create Python environments or install the editable package.
+4. Inject Hugging Face token and rclone config.
+5. Restore prepared experiment data from GDrive to the pod volume.
+6. Download base and judge models to the pod volume if they will be reused.
+7. Stage only the active working set from the pod volume to hot storage.
+8. Validate configs with `--dry_run` before starting any GPU job.
+9. Launch the job and confirm all expected GPUs are active.
+10. Sync hot outputs back to the pod volume and then to GDrive.
+
+Fast hardware/storage check:
+
+```bash
+POD_ALIAS=<new-runpod-ssh-alias>
+ssh "${POD_ALIAS}" 'hostname; nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu --format=csv,noheader; df -h /workspace /dev/shm; findmnt -T /workspace -no TARGET,FSTYPE,SOURCE,OPTIONS'
+```
+
+If `/workspace` is FUSE-backed, treat it as cold persistent storage only.  Do
+not unpack code tarballs, load models, load checkpoints, or write training
+outputs there during active setup or training.
+
+## Fast Fresh-Pod Path
+
+Use this path for short-lived RunPod migrations where the base and judge models
+can be downloaded again.
+
+1. Prepare secrets:
+
+```bash
+POD_ALIAS=<new-runpod-ssh-alias>
+ssh "${POD_ALIAS}" 'mkdir -p /workspace/secrets /root/.config/rclone /dev/shm/cot-safety-hot && chmod 700 /workspace/secrets /root/.config/rclone'
+scp ~/.safechain_secrets/hf_token "${POD_ALIAS}:/workspace/secrets/hf_token"
+scp ~/.config/rclone/rclone.conf "${POD_ALIAS}:/root/.config/rclone/rclone.conf"
+ssh "${POD_ALIAS}" 'chmod 600 /workspace/secrets/hf_token /root/.config/rclone/rclone.conf && python3 - <<PY
+from pathlib import Path
+t = Path("/workspace/secrets/hf_token").read_text().strip()
+p = Path("/workspace/secrets/hf.env")
+p.write_text(f"export HF_TOKEN={t}\nexport HUGGING_FACE_HUB_TOKEN={t}\n", encoding="utf-8")
+p.chmod(0o600)
+PY'
+```
+
+2. Install code into hot storage.
+
+Preferred: use GitHub SSH or an access token so the pod can clone directly.
+
+```bash
+ssh "${POD_ALIAS}" 'cd /dev/shm && git clone git@github.com:kanbrtkuy/cot-safety.git cot-safety-src'
+```
+
+Fallback: if direct clone is blocked by private-repo auth, transfer a clean
+source archive from a local checkout.  Keep it small, avoid Apple extended
+attributes, and unpack under `/dev/shm`, not `/workspace`.
+
+```bash
+COPYFILE_DISABLE=1 tar --no-xattrs -czf /tmp/cot-safety-src.tar.gz \
+  --exclude='cot-safety/.git' \
+  --exclude='cot-safety/outputs' \
+  --exclude='cot-safety/data' \
+  --exclude='cot-safety/hf_cache' \
+  --exclude='cot-safety/wandb' \
+  --exclude='*/__pycache__' \
+  --exclude='*.pyc' \
+  -C <LOCAL_PARENT_DIR> cot-safety
+scp /tmp/cot-safety-src.tar.gz "${POD_ALIAS}:/dev/shm/cot-safety-src.tar.gz"
+ssh "${POD_ALIAS}" 'rm -rf /dev/shm/cot-safety-src && mkdir -p /dev/shm/cot-safety-src && tar -xzf /dev/shm/cot-safety-src.tar.gz -C /dev/shm/cot-safety-src --strip-components=1'
+```
+
+Do not use a broad tar exclude such as `--exclude='data'`; it also drops
+`configs/data/` and `src/cot_safety/data/`.  Exclude only the repository root's
+large data directory, for example `--exclude='cot-safety/data'`.
+
+3. Install dependencies:
+
+```bash
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src && PIP_CACHE_DIR=/dev/shm/cot-safety-hot/pip-cache python3 -m pip install -e ".[sft]"'
+```
+
+4. Restore prepared data from GDrive to the pod volume.  This is the persistent
+copy.  Do not restore backup archives straight into `/dev/shm`; `/dev/shm` is
+only the hot working cache.
+
+```bash
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src && bash pipelines/runpod_restore_gdrive_backup.sh --backup-id <BACKUP_ID> --archive data.tar.gz'
+```
+
+The restore script stores the raw archive under
+`/workspace/restore_archives/<BACKUP_ID>/` and unpacks it into `/workspace`.
+If an archive contains a leading `workspace/data` prefix, the script normalizes
+it to `/workspace/data`.
+
+5. Stage only the needed data from the pod volume to hot storage:
+
+```bash
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source /workspace/secrets/hf.env; source pipelines/runpod_hot_env.sh; bash pipelines/runpod_stage_hot_storage.sh --data pause_sft/trusted_cot_18k_intra_cot4 --data pause_sft/trusted_cot_18k_intra_cot3_control'
+```
+
+Verify the SFT data path before training:
+
+```bash
+ssh "${POD_ALIAS}" 'find /dev/shm/cot-safety-hot/data/pause_sft/trusted_cot_18k_intra_cot4 -maxdepth 2 -type f \( -name train.json -o -name manifest.json -o -name "*validation*.json" \) -print'
+```
+
+6. Download the base model to the pod volume, then stage it to hot storage.
+Base and judge models are not backed up to GDrive, but keeping them on the pod
+volume avoids re-downloading within the same pod lifetime.
+
+```bash
+ssh "${POD_ALIAS}" 'source /workspace/secrets/hf.env; mkdir -p /workspace/models /workspace/hf_cache; HF_HOME=/workspace/hf_cache python3 - <<PY
+from huggingface_hub import snapshot_download
+snapshot_download(
+    repo_id="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+    local_dir="/workspace/models/DeepSeek-R1-Distill-Llama-8B",
+    token=True,
+    max_workers=8,
+)
+PY'
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source pipelines/runpod_hot_env.sh; bash pipelines/runpod_stage_hot_storage.sh --model DeepSeek-R1-Distill-Llama-8B'
+```
+
+7. Run a dry run and check the printed launch environment:
+
+```bash
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source /workspace/secrets/hf.env; source pipelines/runpod_hot_env.sh; python3 scripts/run_stage2_sft.py --config configs/experiment/<CONFIG>.yaml --skip_existing --dry_run'
+```
+
+For the 8B cot4 format-only 250-step run, the dry run should print:
+
+- `NPROC_PER_NODE=4`
+- `PER_DEVICE_TRAIN_BATCH_SIZE=1`
+- `GRADIENT_ACCUMULATION_STEPS=8`
+- `EVAL_STEPS=50`
+- `SAVE_STEPS=50`
+- `SAVE_TOTAL_LIMIT=null`
+- `FORMAT_ONLY=true`
+- `MAX_STEPS=250`
+
+8. Launch and monitor:
+
+```bash
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; mkdir -p /dev/shm/cot-safety-hot/runs/logs; source /workspace/secrets/hf.env; source pipelines/runpod_hot_env.sh; nohup python3 scripts/run_stage2_sft.py --config configs/experiment/<CONFIG>.yaml --skip_existing > /dev/shm/cot-safety-hot/runs/logs/stage2_sft.log 2>&1 & echo $! > /dev/shm/cot-safety-hot/runs/stage2_sft.pid'
+ssh "${POD_ALIAS}" 'nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu --format=csv,noheader; tail -n 80 /dev/shm/cot-safety-hot/runs/logs/stage2_sft.log'
+```
+
+During tokenization/map, GPU utilization can be low.  Training has really
+started when the log shows `Starting training` and a progress bar such as
+`0/250`; at that point all expected GPUs should have high utilization.
+
+9. Persist hot outputs back to the pod volume, then release hot copies after
+they have been verified on cold storage.  Do this after each checkpoint that
+must survive a pod restart, and again at the end of the run.
+
+```bash
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; bash pipelines/runpod_sync_hot_to_cold.sh --output deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250/checkpoint-50 --all-runs --remove-hot-after-sync'
+```
+
+For longer runs, start a checkpoint watcher immediately after launch:
+
+```bash
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; nohup bash pipelines/runpod_watch_hot_checkpoints.sh --output deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250 --stop-pid-file /dev/shm/cot-safety-hot/runs/stage2_sft.pid --remove-hot-after-sync > /dev/shm/cot-safety-hot/runs/logs/watch_hot_checkpoints.log 2>&1 &'
+```
+
+The checkpoint is then available under:
+
+```text
+/workspace/outputs/deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250/checkpoint-50
+```
+
+The cold copy contains a `.synced_to_cold` marker.  Only after that marker is
+present should the corresponding `/dev/shm` checkpoint be removed.  The
+`--remove-hot-after-sync` flag performs that removal automatically for explicit
+`--output` paths and for checkpoint watcher syncs.
+
+## 2026-06-25 Fresh 4xA100 Notes
+
+These were the deployment issues observed on a fresh 4x A100 SXM pod and the
+fixes that should be applied next time.
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `git clone https://github.com/kanbrtkuy/cot-safety.git` failed with `could not read Username` | Private repo auth was not configured on the pod. | Prefer GitHub SSH/token clone. If unavailable, transfer a clean source archive and unpack it under `/dev/shm`. |
+| A small code tar unpack on `/workspace` hung in `D` state | `/workspace` was a FUSE-backed RunPod network volume; unpacking many small files and Apple xattrs triggered filesystem I/O wait. | Do not unpack source archives on `/workspace`; use `/dev/shm/cot-safety-src` or local NVMe. Build tarballs with `COPYFILE_DISABLE=1 tar --no-xattrs`. |
+| `tar` tried to preserve local macOS uid/gid and printed ownership errors | The archive was created on macOS. | Use `tar --no-same-owner` when unpacking on Linux, and avoid macOS xattrs. |
+| Training dry run failed because `configs/data/stage2_trusted_cot_18k.yaml` was missing | The source archive used `--exclude='data'`, which also excluded `configs/data` and package code under `src/cot_safety/data`. | Exclude only `cot-safety/data`, not every path named `data`. |
+| First training launch failed with `ModuleNotFoundError: No module named 'rich'` | The legacy COTPauseToken trainer imports `rich`, but it was missing from the SFT optional dependencies. | Keep `rich` in the `sft` extra and install with `pip install -e ".[sft]"`. |
+| Data restore appeared empty at `$COT_SAFETY_HOT_ROOT/data` | The GDrive archive was restored directly to hot storage and unpacked with a leading `workspace/data` prefix. | Restore GDrive backups to `/workspace` with `runpod_restore_gdrive_backup.sh`, normalize there, then stage selected data to hot storage. |
+| Pod volume looked empty while training was running | The job was writing hot outputs to `/dev/shm` only. | Use `runpod_sync_hot_to_cold.sh` after each important checkpoint and at job end. |
+| `/dev/shm` stayed full after checkpoints were backed up | The old flow synced to `/workspace` but did not release the hot checkpoint copy. | Use `--remove-hot-after-sync`; it removes hot checkpoints only after the cold copy has a `.synced_to_cold` marker. |
+| A later checkpoint could be lost if the pod stops before manual sync | Checkpoints were written to hot storage first. | Start `runpod_watch_hot_checkpoints.sh --remove-hot-after-sync` after launch so completed checkpoints are copied to `/workspace` automatically and then pruned from `/dev/shm`. |
+| GPU utilization was low after launch | The job was still in CPU-side dataset map/tokenization. | Wait for `Starting training` and the step progress bar before judging GPU utilization. |
+| `rclone ls` over the full backup was slow | It recursively listed large checkpoint trees. | Use known archive paths, `rclone lsf --dirs-only`, `rclone size`, or direct `rclone cat .../archives/data.tar.gz`. |
 
 ## Token Injection
 
@@ -77,8 +263,29 @@ The pipeline wrappers source `pipelines/runpod_hot_env.sh`, which maps:
 - `HF_HOME` to `$COT_SAFETY_HOT_ROOT/hf_cache`
 
 After a successful run, copy only results/checkpoints that must persist back to
-`/workspace` or GDrive.  Base models and judge models should be re-downloaded or
-re-staged on the next pod, not backed up in experiment archives.
+`/workspace` or GDrive:
+
+```bash
+cd /workspace/cot-safety
+bash pipelines/runpod_sync_hot_to_cold.sh --all-outputs --all-runs
+```
+
+For specific checkpoints or final model directories, prefer explicit output
+syncs with hot pruning:
+
+```bash
+bash pipelines/runpod_sync_hot_to_cold.sh \
+  --output deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250/checkpoint-250 \
+  --all-runs \
+  --remove-hot-after-sync
+bash pipelines/runpod_sync_hot_to_cold.sh \
+  --output deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250/final \
+  --all-runs \
+  --remove-hot-after-sync
+```
+
+Base models and judge models should be re-downloaded or re-staged on the next
+pod, not backed up in experiment archives.
 
 ## GDrive Restore
 
@@ -87,26 +294,24 @@ prepared from benchmarks, SFT checkpoints, run logs, and result summaries.  Do
 not restore base models or judge models from backups unless the network is down;
 they are large, downloadable, and make migration slower.
 
+Restore archives to the pod volume first:
+
 ```bash
-mkdir -p /workspace/restore_archives
-rclone copy \
-  --transfers=16 --checkers=32 --buffer-size=64M \
-  --drive-chunk-size=256M --drive-upload-cutoff=256M \
-  --stats=5s --progress \
-  safechain_gdrive:Research/cot-safety/runpod_backups/<BACKUP_ID>/archives \
-  /workspace/restore_archives
+cd /workspace/cot-safety
+bash pipelines/runpod_restore_gdrive_backup.sh \
+  --backup-id <BACKUP_ID> \
+  --archive data.tar.gz
 ```
 
-Unpack restored experiment artifacts into `/workspace`, then stage only the
-active working set to hot storage:
+Then stage only the active working set to hot storage:
 
 ```bash
-tar -xzf /workspace/restore_archives/<ARCHIVE>.tar.gz -C /workspace
 cd /workspace/cot-safety
 export COT_SAFETY_HOT_ROOT=/dev/shm/cot-safety-hot
 bash pipelines/runpod_stage_hot_storage.sh \
   --output deepseek_8b_intra_pause_cot4_trusted_cot_18k_save100_rerun/checkpoint-500 \
-  --data model_comparison_eval/deepseek_8b_stage2
+  --data model_comparison_eval/deepseek_8b_stage2 \
+  --data pause_sft/trusted_cot_18k_intra_cot4
 ```
 
 ## D-State Triage

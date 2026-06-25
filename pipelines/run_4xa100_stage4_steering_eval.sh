@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-/workspace/cot-safety}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 LEGACY_ROOT="${LEGACY_ROOT:-${ROOT}/legacy/PauseProbe}"
 PYTHON="${PYTHON:-python}"
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-/workspace/cot-safety}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 CONFIG="${CONFIG:-configs/experiment/stage2_intra_pause_sft_8b_4xa100.yaml}"
 PYTHON="${PYTHON:-python}"
 

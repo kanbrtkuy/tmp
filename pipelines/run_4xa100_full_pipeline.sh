@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-/workspace/cot-safety}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 CONFIG="${CONFIG:-configs/experiment/full_four_stage_8b_4xa100.yaml}"
 RUN_STAGE1="${RUN_STAGE1:-0}"
 RUN_STAGE2="${RUN_STAGE2:-0}"

@@ -1,8 +1,10 @@
 from typing import Any, Dict, Optional, Tuple
+import _codecs
 import inspect
 import os
 
 import hydra
+import numpy as np
 import torch
 import rootutils
 from omegaconf import DictConfig, OmegaConf
@@ -190,6 +192,24 @@ def add_early_stopping_callback(trainer, cfg: DictConfig) -> None:
     )
 
 
+def allow_safe_rng_checkpoint_globals() -> None:
+    """Allowlist numpy RNG payload types used by Trainer rng_state_*.pth files."""
+    safe_globals = [_codecs.encode, np.ndarray, np.dtype]
+    try:
+        from numpy._core.multiarray import _reconstruct
+
+        safe_globals.append(_reconstruct)
+    except Exception:
+        pass
+
+    for dtype_name in ("UInt32DType", "Int64DType", "Float64DType"):
+        dtype_type = getattr(getattr(np, "dtypes", None), dtype_name, None)
+        if dtype_type is not None:
+            safe_globals.append(dtype_type)
+
+    torch.serialization.add_safe_globals(safe_globals)
+
+
 @task_wrapper
 def trl_train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     if cfg.get("seed") is not None:
@@ -214,7 +234,8 @@ def trl_train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     )
     configure_format_only_training(model, tokenizer, cfg)
 
-    if cfg.get("save_before_train") and is_rank_zero():
+    resume_from_checkpoint = cfg.get("resume_from_checkpoint")
+    if cfg.get("save_before_train") and not resume_from_checkpoint and is_rank_zero():
         raw_dir = os.path.join(cfg.paths.output_dir, "raw")
         model.save_pretrained(raw_dir)
         tokenizer.save_pretrained(raw_dir)
@@ -244,7 +265,10 @@ def trl_train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     metrics: Dict[str, Any] = {}
     if cfg.get("train"):
         log.info("Starting training")
-        trainer.train()
+        if resume_from_checkpoint:
+            log.info(f"Resuming training from checkpoint: {resume_from_checkpoint}")
+            allow_safe_rng_checkpoint_globals()
+        trainer.train(resume_from_checkpoint=str(resume_from_checkpoint) if resume_from_checkpoint else None)
         metrics = dict(trainer.state.__dict__)
         final_dir = os.path.join(cfg.paths.output_dir, "final")
         trainer.save_model(final_dir)
