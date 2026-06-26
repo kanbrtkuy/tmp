@@ -1,9 +1,9 @@
 # DeepSeek-R1-Distill-Llama-8B Stage 2 SFT Summary
 
 Date: 2026-06-25
-Updated: 2026-06-26
+Updated: 2026-06-27
 
-This file summarizes the comparable Stage 2 SFT checkpoints that have confirmed model-comparison judge results. The cot4 section includes both the later format-only checkpoint sweep and the earlier full-step/full-SFT final model; the cot3 section covers the position-ablation format-only sweep.
+This file summarizes the comparable Stage 2 SFT checkpoints that have confirmed model-comparison judge results. The cot4 section includes both the later format-only checkpoint sweep and the earlier full-step/full-SFT final model; the cot3 sections cover the position-ablation format-only sweep and the later full-SFT diagnostic rerun.
 
 The previous version of this note was incomplete in two ways:
 
@@ -48,7 +48,7 @@ Safe prompts, `unsafe_valid_rate`:
 | LlamaGuard | 0.152 | 0.143 | 0.170 | 0.095 |
 | WildGuard | 0.102 | 0.078 | 0.098 | 0.055 |
 
-## cot3 Results
+## cot3 Format-Only Results
 
 Compared models:
 
@@ -85,12 +85,49 @@ Safe prompts, `unsafe_valid_rate`:
 | LlamaGuard | 0.152 | 0.203 | 0.203 | 0.200 | 0.173 |
 | WildGuard | 0.102 | 0.125 | 0.137 | 0.140 | 0.127 |
 
+## cot3 Full-SFT Results
+
+Compared models:
+
+| Model column | Pause placement | Checkpoint | SFT output family | Training objective |
+|---|---|---:|---|---|
+| base | none | none | `DeepSeek-R1-Distill-Llama-8B` | none |
+| cot3 full ckpt250 | before `cot_3` | 250 | `deepseek_8b_intra_pause_cot3_full_trusted_cot_18k_from0_save50` | full SFT |
+| cot3 full ckpt300 | before `cot_3` | 300 | `deepseek_8b_intra_pause_cot3_full_trusted_cot_18k_from0_save50` | full SFT |
+
+Capability:
+
+| Metric | base | cot3 full ckpt250 | cot3 full ckpt300 |
+|---|---:|---:|---:|
+| GSM8K acc | 0.710 | 0.776 | 0.740 |
+| MATH500 acc | 0.423 | 0.430 | 0.463 |
+| overall acc | 0.603 | 0.646 | 0.636 |
+| pause3_rate | 0.000 | 1.000 | 1.000 |
+
+Unsafe prompts, `unsafe_valid_rate`:
+
+| Judge | base | cot3 full ckpt250 | cot3 full ckpt300 |
+|---|---:|---:|---:|
+| HarmBench | 0.465 | 0.427 | 0.413 |
+| LlamaGuard | 0.553 | 0.548 | 0.485 |
+| WildGuard | 0.440 | 0.428 | 0.378 |
+
+Safe prompts, `unsafe_valid_rate`:
+
+| Judge | base | cot3 full ckpt250 | cot3 full ckpt300 |
+|---|---:|---:|---:|
+| HarmBench | 0.670 | 0.645 | 0.642 |
+| LlamaGuard | 0.152 | 0.162 | 0.168 |
+| WildGuard | 0.102 | 0.098 | 0.093 |
+
 ## Interpretation
 
 - The requested pause format succeeds in every tested SFT row: `pause3_rate = 1.000`.
 - Among the format-only cot4 checkpoints, `cot4 checkpoint-250` is the healthier candidate for downstream steering. It stays close to base capability (`0.586` vs `0.603`) while reducing unsafe-prompt unsafe_valid_rate across all three judges.
-- `cot4 full final` is not directly comparable as a format-only checkpoint because it comes from the earlier full-step/full-SFT run. It shows stronger behavior drift: capability rises above base (`0.649` vs `0.603`) and unsafe-prompt unsafe_valid_rate drops sharply, which is useful diagnostic evidence but not the clean format-only control we want.
+- `cot4 full final` is not directly comparable as a format-only checkpoint because it comes from the earlier full-step/full-SFT run. It shows stronger behavior drift: capability rises above base (`0.649` vs `0.603`) and unsafe-prompt unsafe_valid_rate drops sharply. Keep it as a historical diagnostic record only; do not use it for downstream stage3/stage4 runs.
 - The cot3 position consistently behaves worse than cot4 for DeepSeek-8B. Unsafe-prompt unsafe_valid_rate is higher than base across HarmBench, LlamaGuard, and WildGuard for every tested cot3 checkpoint.
+- The later cot3 full-SFT rerun behaves differently from cot3 format-only: both `checkpoint-250` and `checkpoint-300` recover or exceed base overall capability and reduce unsafe-prompt unsafe_valid_rate on all three judges, but this is no longer a clean format-only intervention. Treat it as a diagnostic/downstream steering candidate rather than evidence about insertion-format learning alone.
+- `cot3 full checkpoint-250` is the current stage3 candidate because it has the strongest overall capability among the cot3 full-SFT checkpoints tested so far (`0.646`) while still reducing unsafe-prompt unsafe_valid_rate relative to base.
 - These results support the current 8B hypothesis: pause insertion should target the stronger stage1 signal position around `cot_4`, while `cot_3` is a position ablation rather than the main downstream steering model.
 
 ## Result Provenance
@@ -105,6 +142,9 @@ Confirmed comparison runs and configs:
 - cot3 ckpt200/250 config: `configs/experiment/stage2_model_comparison_eval_8b_cot3_ckpt200_250_4xa100.yaml`
 - cot3 ckpt450/500 config: `configs/experiment/stage2_model_comparison_eval_8b_cot3_ckpt450_500_4xa100.yaml`
 - GDrive backup for cot3 ckpt250-500 evaluation snapshot: `safechain_gdrive:Research/cot-safety/runpod_backups/20260625T142750Z_cot3_ckpt250_500_eval_snapshot`
+- cot3 full ckpt250 comparison run: `stage2_model_comparison_deepseek_8b_cot3_full250_4xa100_sharded`
+- cot3 full ckpt300 comparison run: `stage2_model_comparison_deepseek_8b_cot3_format300_full300_4xa100`
+- GDrive backup for cot3 full ckpt250/300 evaluation records and SFT outputs: `safechain_gdrive:Research/cot-safety/runpod_backups/20260627_cot3_full_ckpt250_300_eval_and_outputs`
 
 Non-main-table notes:
 
