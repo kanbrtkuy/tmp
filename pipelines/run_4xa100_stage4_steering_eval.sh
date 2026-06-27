@@ -10,7 +10,7 @@ PYTHON="${PYTHON:-python}"
 source "${ROOT}/pipelines/runpod_hot_env.sh"
 
 export DEVICES="${DEVICES:-0,1,2,3}"
-export MODEL="${MODEL:-${COT_SAFETY_OUTPUT_ROOT}/deepseek_8b_intra_pause_cot4_trusted_cot_18k/final}"
+export MODEL="${MODEL:-${COT_SAFETY_OUTPUT_ROOT}/deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250/checkpoint-250}"
 export DELTA="${DELTA:-${LEGACY_ROOT}/runs/steering/intra_pause_learned_delta_8b/zero_l16_steps80/learned_delta.pt}"
 export OUT_ROOT="${OUT_ROOT:-${COT_SAFETY_RUN_ROOT}/steering/intra_pause_full_steering_eval_8b_4xa100}"
 export LAYER="${LAYER:-16}"

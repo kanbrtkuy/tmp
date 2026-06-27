@@ -12,6 +12,7 @@ ROOT="${ROOT:-/workspace/PauseProbe}"
 PYTHON="${PYTHON:-python}"
 MODEL="${MODEL:-/workspace/models/DeepSeek-R1-Distill-Qwen-1.5B}"
 FALLBACK_MODEL="${FALLBACK_MODEL:-deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B}"
+MODEL_LABEL="${MODEL_LABEL:-deepseek_r1_distill_qwen_1p5b_base}"
 DATA_ROOT="${DATA_ROOT:-/workspace/data/intra_pause_hardsafe_steering_eval_260621}"
 OUT_ROOT="${OUT_ROOT:-/workspace/PauseProbe/runs/steering/base_model_hardsafe_reference_eval_260621}"
 HF_HOME="${HF_HOME:-/workspace/hf_cache}"
@@ -148,7 +149,7 @@ run_generation_job() {
     --model "${MODEL}" \
     --input_file "${input_file}" \
     --output_jsonl "${gen_file}" \
-    --model_label deepseek_r1_distill_qwen_1p5b_base \
+    --model_label "${MODEL_LABEL}" \
     --run_label "base_reference_${dataset}_seed${seed}" \
     --rows_per_label "${rows_per_label}" \
     --label_filter "${label_filter}" \
@@ -245,6 +246,7 @@ run_pool() {
 {
   echo "root=${ROOT}"
   echo "model=${MODEL}"
+  echo "model_label=${MODEL_LABEL}"
   echo "out_root=${OUT_ROOT}"
   echo "data_root=${DATA_ROOT}"
   echo "dataset_specs_file=${DATASET_SPECS_FILE}"

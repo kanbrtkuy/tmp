@@ -14,10 +14,18 @@ MODEL="${MODEL:-/workspace/outputs/deepseek_intra_pause_cot3_trusted_cot_18k_lr2
 DELTA="${DELTA:-/workspace/PauseProbe/runs/steering/intra_pause_learned_delta_260618/zero_l14_steps80/learned_delta.pt}"
 OUT_ROOT="${OUT_ROOT:-/workspace/PauseProbe/runs/steering/intra_pause_full_steering_eval_260621}"
 HF_HOME="${HF_HOME:-/workspace/hf_cache}"
+BASE_OUT_ROOT="${OUT_ROOT}"
 
 DEVICES="${DEVICES:-0,1}"
 SEEDS="${SEEDS:-260621 260622 260623}"
 ALPHAS="${ALPHAS:-0,1,2}"
+TARGET_SPECS="${TARGET_SPECS:-\
+all3|pause_0,pause_1,pause_2
+pause0_only|pause_0
+pause1_only|pause_1
+pause2_only|pause_2}"
+TARGET_NAME="${TARGET_NAME:-all3}"
+TARGET_POSITIONS="${TARGET_POSITIONS:-pause_0,pause_1,pause_2}"
 
 GEN_BATCH_SIZE="${GEN_BATCH_SIZE:-4}"
 JUDGE_BATCH_SIZE="${JUDGE_BATCH_SIZE:-4}"
@@ -38,6 +46,7 @@ RUN_GENERATION="${RUN_GENERATION:-1}"
 RUN_JUDGE="${RUN_JUDGE:-1}"
 RUN_SUMMARY="${RUN_SUMMARY:-1}"
 ALLOW_MISSING_DATASETS="${ALLOW_MISSING_DATASETS:-0}"
+REUSE_ALPHA0_FROM_TARGET="${REUSE_ALPHA0_FROM_TARGET:-}"
 
 # Format: name|input_file|label_filter|rows_per_label
 # label_filter is one of all/safe/unsafe.  For label_filter=all, each shard
@@ -50,8 +59,8 @@ source_heldout_safe|/workspace/data/intra_pause_probe_full_corrected_v2_final160
 DATASET_SPECS_FILE="${DATASET_SPECS_FILE:-}"
 
 cd "${ROOT}"
-mkdir -p "${OUT_ROOT}" "${HF_HOME}" "${OUT_ROOT}/logs"
-export HF_HOME OUT_ROOT
+mkdir -p "${BASE_OUT_ROOT}" "${HF_HOME}"
+export HF_HOME
 
 IFS=',' read -r -a DEVICE_ARRAY <<< "${DEVICES}"
 if [[ "${#DEVICE_ARRAY[@]}" -lt 1 ]]; then
@@ -101,6 +110,36 @@ raise SystemExit(1)
 PY
 }
 
+link_file_if_exists() {
+  local src="$1"
+  local dst="$2"
+  if [[ -f "${src}" ]]; then
+    mkdir -p "$(dirname "${dst}")"
+    rm -f "${dst}"
+    ln -s "${src}" "${dst}"
+  fi
+}
+
+reuse_alpha0_generation_if_available() {
+  local dataset="$1"
+  local seed="$2"
+  local gen_file="$3"
+  local slug="0"
+
+  [[ -n "${REUSE_ALPHA0_FROM_TARGET}" ]] || return 1
+  [[ "${TARGET_NAME}" != "${REUSE_ALPHA0_FROM_TARGET}" ]] || return 1
+
+  local src_dir="${BASE_OUT_ROOT}/${REUSE_ALPHA0_FROM_TARGET}/${dataset}/seed_${seed}/alpha_${slug}"
+  local src_gen="${src_dir}/generations.jsonl"
+  local src_manifest="${src_dir}/generations.manifest.json"
+
+  generation_complete "${src_gen}" || return 1
+  link_file_if_exists "${src_gen}" "${gen_file}"
+  link_file_if_exists "${src_manifest}" "${gen_file%.jsonl}.manifest.json"
+  echo "[generation reuse alpha0] target=${TARGET_NAME} from=${REUSE_ALPHA0_FROM_TARGET} dataset=${dataset} seed=${seed} rows=$(count_lines "${gen_file}")"
+  return 0
+}
+
 judge_complete() {
   local gen_file="$1"
   local norm_file="$2"
@@ -112,12 +151,43 @@ judge_complete() {
   [[ "${gen_rows}" -gt 0 && "${gen_rows}" -eq "${norm_rows}" ]]
 }
 
+reuse_alpha0_judge_if_available() {
+  local dataset="$1"
+  local seed="$2"
+  local gen_file="$3"
+  local raw_file="$4"
+  local norm_file="$5"
+  local slug="0"
+
+  [[ -n "${REUSE_ALPHA0_FROM_TARGET}" ]] || return 1
+  [[ "${TARGET_NAME}" != "${REUSE_ALPHA0_FROM_TARGET}" ]] || return 1
+
+  local src_dir="${BASE_OUT_ROOT}/${REUSE_ALPHA0_FROM_TARGET}/${dataset}/seed_${seed}/alpha_${slug}"
+  local src_gen="${src_dir}/generations.jsonl"
+  local src_raw="${src_dir}/${RAW_FILENAME}"
+  local src_norm="${src_dir}/${NORMALIZED_FILENAME}"
+
+  judge_complete "${src_gen}" "${src_norm}" || return 1
+  link_file_if_exists "${src_gen}" "${gen_file}"
+  link_file_if_exists "${src_dir}/generations.manifest.json" "${gen_file%.jsonl}.manifest.json"
+  link_file_if_exists "${src_raw}" "${raw_file}"
+  link_file_if_exists "${src_raw%.jsonl}.manifest.json" "${raw_file%.jsonl}.manifest.json"
+  link_file_if_exists "${src_norm}" "${norm_file}"
+  link_file_if_exists "${src_norm%.jsonl}.manifest.json" "${norm_file%.jsonl}.manifest.json"
+  echo "[judge reuse alpha0] target=${TARGET_NAME} from=${REUSE_ALPHA0_FROM_TARGET} dataset=${dataset} seed=${seed} rows=$(count_lines "${norm_file}")"
+  return 0
+}
+
 dataset_specs() {
   if [[ -n "${DATASET_SPECS_FILE}" ]]; then
     grep -v '^[[:space:]]*#' "${DATASET_SPECS_FILE}" | grep -v '^[[:space:]]*$'
   else
     printf '%s\n' "${DATASET_SPECS}" | grep -v '^[[:space:]]*$'
   fi
+}
+
+target_specs() {
+  printf '%s\n' "${TARGET_SPECS}" | grep -v '^[[:space:]]*$'
 }
 
 run_generation_job() {
@@ -134,6 +204,12 @@ run_generation_job() {
   local gen_file="${out_dir}/generations.jsonl"
   local log_file="${out_dir}/generate.log"
   mkdir -p "${out_dir}"
+
+  if [[ "${alpha}" == "0" || "${alpha}" == "0.0" ]]; then
+    if reuse_alpha0_generation_if_available "${dataset}" "${seed}" "${gen_file}"; then
+      return 0
+    fi
+  fi
 
   if [[ ! -f "${input_file}" ]]; then
     if [[ "${ALLOW_MISSING_DATASETS}" == "1" ]]; then
@@ -157,9 +233,10 @@ run_generation_job() {
     --input_file "${input_file}" \
     --output_jsonl "${gen_file}" \
     --model_label deepseek_intra_pause_cot3_sft \
-    --run_label "full_steering_${dataset}_seed${seed}_alpha${slug}" \
+    --run_label "full_steering_${TARGET_NAME}_${dataset}_seed${seed}_alpha${slug}" \
     --layer "${LAYER}" \
     --alphas="${alpha}" \
+    --target_positions "${TARGET_POSITIONS}" \
     --rows_per_label "${rows_per_label}" \
     --label_filter "${label_filter}" \
     --batch_size "${GEN_BATCH_SIZE}" \
@@ -188,6 +265,12 @@ run_judge_job() {
   local norm_file="${out_dir}/${NORMALIZED_FILENAME}"
   local judge_log="${out_dir}/judge.log"
   local normalize_log="${out_dir}/normalize.log"
+
+  if [[ "${alpha}" == "0" || "${alpha}" == "0.0" ]]; then
+    if reuse_alpha0_judge_if_available "${dataset}" "${seed}" "${gen_file}" "${raw_file}" "${norm_file}"; then
+      return 0
+    fi
+  fi
 
   if [[ ! -f "${gen_file}" ]]; then
     echo "[judge skip missing generation] dataset=${dataset} seed=${seed} alpha=${alpha}" >&2
@@ -259,31 +342,51 @@ run_pool() {
   fi
 }
 
-{
-  echo "root=${ROOT}"
-  echo "model=${MODEL}"
-  echo "delta=${DELTA}"
-  echo "out_root=${OUT_ROOT}"
-  echo "devices=${DEVICES}"
-  echo "seeds=${SEEDS}"
-  echo "alphas=${ALPHAS}"
-  echo "judges=${JUDGES}"
-  echo "dataset_specs:"
-  dataset_specs
-} > "${OUT_ROOT}/run_config.txt"
+run_target() {
+  local target_name="$1"
+  local target_positions="$2"
+  TARGET_NAME="${target_name}"
+  TARGET_POSITIONS="${target_positions}"
+  OUT_ROOT="${BASE_OUT_ROOT}/${TARGET_NAME}"
+  export OUT_ROOT TARGET_NAME TARGET_POSITIONS
+  mkdir -p "${OUT_ROOT}" "${OUT_ROOT}/logs"
 
-if [[ "${RUN_GENERATION}" == "1" ]]; then
-  run_pool generation "${MAX_PARALLEL_GENERATION_JOBS}"
-fi
+  {
+    echo "root=${ROOT}"
+    echo "model=${MODEL}"
+    echo "delta=${DELTA}"
+    echo "base_out_root=${BASE_OUT_ROOT}"
+    echo "out_root=${OUT_ROOT}"
+    echo "target_name=${TARGET_NAME}"
+    echo "target_positions=${TARGET_POSITIONS}"
+    echo "devices=${DEVICES}"
+    echo "seeds=${SEEDS}"
+    echo "alphas=${ALPHAS}"
+    echo "judges=${JUDGES}"
+    echo "dataset_specs:"
+    dataset_specs
+  } > "${OUT_ROOT}/run_config.txt"
 
-if [[ "${RUN_JUDGE}" == "1" ]]; then
-  run_pool judge "${MAX_PARALLEL_JUDGE_JOBS}"
-fi
+  if [[ "${RUN_GENERATION}" == "1" ]]; then
+    run_pool generation "${MAX_PARALLEL_GENERATION_JOBS}"
+  fi
 
-if [[ "${RUN_SUMMARY}" == "1" ]]; then
-  "${PYTHON}" scripts/steering/summarize_intra_pause_full_steering_eval.py \
-    --out_root "${OUT_ROOT}" \
-    --normalized_filename "${NORMALIZED_FILENAME}"
-fi
+  if [[ "${RUN_JUDGE}" == "1" ]]; then
+    run_pool judge "${MAX_PARALLEL_JUDGE_JOBS}"
+  fi
 
-echo "[done] ${OUT_ROOT}"
+  if [[ "${RUN_SUMMARY}" == "1" ]]; then
+    "${PYTHON}" scripts/steering/summarize_intra_pause_full_steering_eval.py \
+      --out_root "${OUT_ROOT}" \
+      --normalized_filename "${NORMALIZED_FILENAME}"
+  fi
+
+  echo "[done] ${OUT_ROOT}"
+}
+
+while IFS='|' read -r target_name target_positions; do
+  [[ -n "${target_name}" && -n "${target_positions}" ]] || continue
+  run_target "${target_name}" "${target_positions}"
+done < <(target_specs)
+
+echo "[done all targets] ${BASE_OUT_ROOT}"

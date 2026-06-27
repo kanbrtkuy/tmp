@@ -11,6 +11,8 @@ INTERVAL_SECONDS="${INTERVAL_SECONDS:-60}"
 STOP_PID_FILE=""
 ONCE=0
 REMOVE_HOT_AFTER_SYNC=0
+KEEP_LATEST_HOT=0
+KEEP_BEST_HOT=0
 
 usage() {
   cat <<'USAGE'
@@ -25,6 +27,12 @@ Options:
   --remove-hot-after-sync
                       Remove each hot checkpoint after its cold copy is marked
                       synced. Use this when /dev/shm is the hot root.
+  --keep-latest-hot N
+                      When removing hot checkpoints, always keep the latest N
+                      complete hot checkpoints. Default: 0.
+  --keep-best-hot    When removing hot checkpoints, keep the checkpoint named by
+                      the newest trainer_state.json best_model_checkpoint. Use
+                      this with load_best_model_at_end / early stopping.
   --once              Sync currently complete checkpoints once, then exit.
 
 The script persists complete hot checkpoints to /workspace/outputs/PATH.
@@ -38,6 +46,72 @@ checkpoint_complete() {
   [[ -f "${checkpoint_dir}/trainer_state.json" && -f "${checkpoint_dir}/model.safetensors.index.json" ]]
 }
 
+protected_hot_checkpoints() {
+  local hot_dir="${COT_SAFETY_OUTPUT_ROOT}/${OUTPUT_PATH}"
+  [[ -d "${hot_dir}" ]] || return 0
+
+  if [[ "${KEEP_LATEST_HOT}" -gt 0 ]]; then
+    find "${hot_dir}" -maxdepth 1 -type d -name 'checkpoint-*' -printf '%f\n' \
+      | sort -t- -k2,2n \
+      | tail -n "${KEEP_LATEST_HOT}"
+  fi
+
+  if [[ "${KEEP_BEST_HOT}" == "1" ]]; then
+    python - "$hot_dir" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+hot_dir = Path(sys.argv[1])
+states = []
+for path in hot_dir.glob("checkpoint-*/trainer_state.json"):
+    match = re.search(r"checkpoint-(\d+)$", str(path.parent))
+    try:
+        state = json.loads(path.read_text())
+    except Exception:
+        continue
+    step = int(state.get("global_step") or (match.group(1) if match else 0))
+    states.append((step, state))
+if not states:
+    raise SystemExit(0)
+_, newest = max(states, key=lambda item: item[0])
+best = newest.get("best_model_checkpoint")
+if best:
+    print(os.path.basename(str(best).rstrip("/")))
+PY
+  fi
+}
+
+hot_checkpoint_is_protected() {
+  local name="$1"
+  protected_hot_checkpoints | grep -Fxq "${name}"
+}
+
+remove_hot_checkpoint_if_allowed() {
+  local name="$1"
+  local hot_dir="${COT_SAFETY_OUTPUT_ROOT}/${OUTPUT_PATH}/${name}"
+  local cold_dir="${COT_SAFETY_COLD_ROOT}/outputs/${OUTPUT_PATH}/${name}"
+
+  [[ "${REMOVE_HOT_AFTER_SYNC}" == "1" ]] || return 0
+  [[ -d "${hot_dir}" ]] || return 0
+
+  if hot_checkpoint_is_protected "${name}"; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] keeping protected hot checkpoint ${OUTPUT_PATH}/${name}"
+    return 0
+  fi
+  if [[ ! -f "${cold_dir}/.synced_to_cold" ]]; then
+    echo "refusing to remove hot checkpoint without cold marker: ${cold_dir}" >&2
+    return 1
+  fi
+
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] removing synced hot checkpoint ${OUTPUT_PATH}/${name}"
+  rm -rf -- "${hot_dir}"
+}
+
 sync_checkpoint() {
   local name="$1"
   local hot_dir="${COT_SAFETY_OUTPUT_ROOT}/${OUTPUT_PATH}/${name}"
@@ -45,10 +119,7 @@ sync_checkpoint() {
   local marker="${cold_dir}/.synced_to_cold"
 
   if [[ -f "${marker}" ]]; then
-    if [[ "${REMOVE_HOT_AFTER_SYNC}" == "1" && -d "${hot_dir}" ]]; then
-      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] removing already-synced hot checkpoint ${OUTPUT_PATH}/${name}"
-      rm -rf -- "${hot_dir}"
-    fi
+    remove_hot_checkpoint_if_allowed "${name}"
     return 0
   fi
 
@@ -57,13 +128,11 @@ sync_checkpoint() {
     --output "${OUTPUT_PATH}/${name}"
     --all-runs
   )
-  if [[ "${REMOVE_HOT_AFTER_SYNC}" == "1" ]]; then
-    sync_args+=(--remove-hot-after-sync)
-  fi
   ROOT="${ROOT}" bash "${ROOT}/pipelines/runpod_sync_hot_to_cold.sh" \
     "${sync_args[@]}"
   mkdir -p "${cold_dir}"
   date -u +%Y-%m-%dT%H:%M:%SZ > "${marker}"
+  remove_hot_checkpoint_if_allowed "${name}"
 }
 
 sync_complete_checkpoints() {
@@ -104,6 +173,13 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --remove-hot-after-sync)
       REMOVE_HOT_AFTER_SYNC=1
+      ;;
+    --keep-latest-hot)
+      shift
+      KEEP_LATEST_HOT="$1"
+      ;;
+    --keep-best-hot)
+      KEEP_BEST_HOT=1
       ;;
     --once)
       ONCE=1

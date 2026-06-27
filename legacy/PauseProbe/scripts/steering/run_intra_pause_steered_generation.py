@@ -40,6 +40,23 @@ def parse_csv_float(value: str) -> list[float]:
     return out
 
 
+def parse_target_positions(value: str) -> list[str]:
+    out = [piece.strip() for piece in value.split(",") if piece.strip()]
+    if not out:
+        raise argparse.ArgumentTypeError("expected at least one pause target")
+    valid = {f"pause_{idx}" for idx in range(16)}
+    invalid = [item for item in out if item not in valid]
+    if invalid:
+        raise argparse.ArgumentTypeError(
+            "target positions must be pause_N entries, got: " + ",".join(invalid)
+        )
+    return out
+
+
+def target_pause_ordinals(target_positions: list[str]) -> set[int]:
+    return {int(item.removeprefix("pause_")) for item in target_positions}
+
+
 def first_label(row: dict[str, Any]) -> int | None:
     for field in (
         "binary_safety_label",
@@ -195,6 +212,7 @@ def generate_one_batch(
     delta: Any,
     layer_id: int,
     pause_id: int,
+    target_ordinals: set[int],
     args: argparse.Namespace,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     import torch
@@ -236,6 +254,12 @@ def generate_one_batch(
                 if ids is None or ids.shape[:2] != hidden.shape[:2]:
                     return output
                 mask = ids.eq(pause_id)
+                if target_ordinals:
+                    pause_ordinals = mask.cumsum(dim=1) - 1
+                    target_mask = torch.zeros_like(mask)
+                    for ordinal in target_ordinals:
+                        target_mask |= mask & pause_ordinals.eq(ordinal)
+                    mask = target_mask
                 row_touched = mask.sum(dim=1).detach().cpu().tolist()
                 if sum(int(item) for item in row_touched) == 0:
                     return output
@@ -328,6 +352,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--n_insert_pauses", type=int, default=3)
+    parser.add_argument(
+        "--target_positions",
+        type=parse_target_positions,
+        default=["pause_0", "pause_1", "pause_2"],
+        help=(
+            "Comma-separated pause positions to steer, e.g. pause_0 or "
+            "pause_0,pause_1,pause_2. Only pause_N targets are allowed."
+        ),
+    )
     parser.add_argument("--torch_dtype", choices=("auto", "float32", "float16", "bfloat16"), default="bfloat16")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--device_map", default=None)
@@ -341,6 +374,12 @@ def parse_args() -> argparse.Namespace:
         parser.error("--insert_pause_after_cot_tokens must be >= -1.")
     if args.n_insert_pauses <= 0:
         parser.error("--n_insert_pauses must be positive.")
+    max_target = max(target_pause_ordinals(args.target_positions))
+    if max_target >= args.n_insert_pauses:
+        parser.error(
+            f"--target_positions references pause_{max_target}, but only "
+            f"{args.n_insert_pauses} pauses are inserted."
+        )
     return args
 
 
@@ -376,6 +415,7 @@ def main() -> None:
 
     checkpoint = torch.load(args.delta_checkpoint, map_location="cpu", weights_only=False)
     delta = checkpoint["delta"].detach().float().to(next(model.parameters()).device)
+    target_ordinals = target_pause_ordinals(args.target_positions)
 
     sampled = stratified_prompt_sample(
         Path(args.input_file),
@@ -431,6 +471,7 @@ def main() -> None:
                     delta=delta,
                     layer_id=args.layer,
                     pause_id=pause_ids[0],
+                    target_ordinals=target_ordinals,
                     args=args,
                 )
                 for row, inserted, response, hook_stat in zip(batch, inserted_prefixes, responses, hook_stats):
@@ -457,6 +498,7 @@ def main() -> None:
                         "delta_checkpoint": args.delta_checkpoint,
                         "layer": args.layer,
                         "alpha": float(alpha),
+                        "target_positions": args.target_positions,
                         "sampling_params": {
                             "temperature": args.temperature,
                             "top_p": args.top_p,
@@ -478,6 +520,7 @@ def main() -> None:
         "input_file": args.input_file,
         "output_jsonl": str(output_path),
         "layer": args.layer,
+        "target_positions": args.target_positions,
         "alphas": args.alphas,
         "rows_per_label": args.rows_per_label,
         "label_filter": args.label_filter,
@@ -498,6 +541,7 @@ def main() -> None:
             "When insertion is enabled, the script generates a short CoT prefix, inserts pause tokens, and then continues generation.",
             "No pre_pause_* or post_pause_* hidden states are modified.",
             "generated_for_judge removes pause tokens from the visible response.",
+            "target_positions controls which inserted pause_N tokens receive the learned delta.",
         ],
     }
     write_json(output_path.with_suffix(".manifest.json"), manifest)

@@ -183,12 +183,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--layers", default=",".join(str(x) for x in DEFAULT_LAYERS))
     parser.add_argument("--positions", default=",".join(DEFAULT_SINGLE_POSITIONS))
     parser.add_argument("--cot_offsets", default=",".join(str(x) for x in DEFAULT_COT_OFFSETS))
+    parser.add_argument(
+        "--insert_cot_offset",
+        type=int,
+        default=3,
+        help="Original CoT-token offset before which the three pause tokens are inserted during intra-pause data prep.",
+    )
     parser.add_argument("--pre_pause_window", type=int, default=3)
     parser.add_argument("--post_pause_window", type=int, default=3)
     parser.add_argument("--extract_batch_size", type=int, default=8)
     parser.add_argument("--extract_max_length", type=int, default=4096)
     parser.add_argument("--extract_jobs", type=int, default=1)
     parser.add_argument("--extract_devices", default="cuda")
+    parser.add_argument(
+        "--extract_train_shards",
+        type=int,
+        default=1,
+        help="Split the train JSON into this many round-robin shards for parallel hidden extraction, then merge.",
+    )
     parser.add_argument("--torch_dtype", choices=("auto", "float32", "float16", "bfloat16"), default="bfloat16")
     parser.add_argument("--save_dtype", choices=("float16", "float32"), default="float16")
     parser.add_argument(
@@ -196,6 +208,12 @@ def parse_args() -> argparse.Namespace:
         choices=("compressed", "uncompressed"),
         default="compressed",
         help="Use uncompressed NPZ for faster hidden-state saves and later probe loads when disk is plentiful.",
+    )
+    parser.add_argument(
+        "--single_scan_backend",
+        choices=("pilot", "batched"),
+        default="pilot",
+        help="Use batched to train many single linear probes per GPU process instead of one process per token/layer.",
     )
     parser.add_argument("--scan_jobs", type=int, default=12)
     parser.add_argument("--pooled_jobs", type=int, default=6)
@@ -223,6 +241,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.extract_jobs < 1:
         parser.error("--extract_jobs must be >= 1")
+    if args.extract_train_shards < 1:
+        parser.error("--extract_train_shards must be >= 1")
     if args.scan_jobs < 1:
         parser.error("--scan_jobs must be >= 1")
     if args.pooled_jobs < 1:
@@ -327,6 +347,8 @@ def run_intra_data_prep(args: argparse.Namespace) -> None:
         "none",
         "--split_strategy",
         "source_label_prompt_group",
+        "--insert_cot_offset",
+        str(args.insert_cot_offset),
     ]
     for source in args.heldout_source:
         cmd.extend(["--heldout_source", source])
@@ -393,9 +415,75 @@ def run_extraction_one(args: argparse.Namespace, spec: SplitSpec, layers: list[i
     return spec.name
 
 
+def split_train_json(args: argparse.Namespace, train_spec: SplitSpec) -> list[Path]:
+    rows = read_json(train_spec.input_json)
+    if not isinstance(rows, list):
+        raise ValueError(f"Expected {train_spec.input_json} to contain a JSON list.")
+    shard_dir = Path(args.data_dir) / "cotpause_shards" / "train"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    buckets: list[list[dict[str, Any]]] = [[] for _ in range(args.extract_train_shards)]
+    for idx, row in enumerate(rows):
+        buckets[idx % args.extract_train_shards].append(row)
+
+    paths = []
+    for idx, bucket in enumerate(buckets):
+        path = shard_dir / f"train.shard{idx}.json"
+        write_json(path, bucket)
+        paths.append(path)
+    return paths
+
+
+def train_shard_specs(args: argparse.Namespace, train_spec: SplitSpec, layers: list[int]) -> list[SplitSpec]:
+    shard_paths = split_train_json(args, train_spec)
+    hidden_dir = Path(args.hidden_dir)
+    suffix = layer_suffix(layers)
+    specs = []
+    for idx, input_json in enumerate(shard_paths):
+        prefix = f"{args.hidden_prefix}_train_shard{idx}_layers_{suffix}"
+        specs.append(
+            SplitSpec(
+                f"train_shard{idx}",
+                input_json,
+                hidden_dir / f"{prefix}.npz",
+                hidden_dir / f"{prefix}.metadata.jsonl",
+                hidden_dir / f"{prefix}.manifest.json",
+            )
+        )
+    return specs
+
+
+def merge_train_shards(args: argparse.Namespace, train_spec: SplitSpec, shard_specs: list[SplitSpec]) -> None:
+    if args.skip_existing and train_spec.output_npz.exists() and train_spec.manifest_json.exists():
+        print(f"skip existing train shard merge: {train_spec.output_npz}")
+        return
+    cmd = [
+        args.python,
+        "scripts/probe/merge_hidden_shards.py",
+        "--inputs",
+        *[str(spec.output_npz) for spec in shard_specs],
+        "--output_npz",
+        str(train_spec.output_npz),
+        "--metadata_jsonl",
+        str(train_spec.metadata_jsonl),
+        "--manifest_json",
+        str(train_spec.manifest_json),
+    ]
+    if args.hidden_compression == "compressed":
+        cmd.append("--compressed")
+    run_logged(cmd, Path(args.log_dir) / "intra_pause_extract_train_merge.log", args.dry_run)
+
+
 def run_hidden_extraction(args: argparse.Namespace, specs: dict[str, SplitSpec], layers: list[int]) -> None:
     devices = parse_csv(args.extract_devices) or ["cuda"]
+    train_shards: list[SplitSpec] = []
     jobs = list(specs.values())
+    if args.extract_train_shards > 1 and "train" in specs:
+        train_spec = specs["train"]
+        if args.skip_existing and train_spec.output_npz.exists() and train_spec.manifest_json.exists():
+            print(f"skip train sharding because merged train extraction exists: {train_spec.output_npz}")
+        else:
+            train_shards = train_shard_specs(args, train_spec, layers)
+            jobs = train_shards + [spec for name, spec in specs.items() if name != "train"]
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.extract_jobs, len(jobs))) as executor:
         futures = {}
         for idx, spec in enumerate(jobs):
@@ -405,6 +493,8 @@ def run_hidden_extraction(args: argparse.Namespace, specs: dict[str, SplitSpec],
             spec, device = futures[future]
             result = future.result()
             print(f"finished extraction {result} on {device}")
+    if train_shards:
+        merge_train_shards(args, specs["train"], train_shards)
 
 
 def eval_npz_args(specs: dict[str, SplitSpec]) -> list[str]:
@@ -426,7 +516,9 @@ def run_single_scan(args: argparse.Namespace, specs: dict[str, SplitSpec], posit
                 require_file(spec.output_npz)
     cmd = [
         args.python,
-        "scripts/probe/run_position_scan_pilot.py",
+        "scripts/probe/run_position_scan_batched.py"
+        if args.single_scan_backend == "batched"
+        else "scripts/probe/run_position_scan_pilot.py",
         "--train_npz",
         str(specs["train"].output_npz),
         "--val_npz",

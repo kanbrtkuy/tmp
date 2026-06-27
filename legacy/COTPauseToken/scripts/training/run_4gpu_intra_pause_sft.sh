@@ -73,7 +73,7 @@ echo "  GRADIENT_CHECKPOINTING=$GRADIENT_CHECKPOINTING"
 if [ -n "$MAX_STEPS" ]; then
   echo "  MAX_STEPS=$MAX_STEPS"
 fi
-if [ -n "$RESUME_FROM_CHECKPOINT" ]; then
+if [ -n "${RESUME_FROM_CHECKPOINT:-}" ]; then
   echo "  RESUME_FROM_CHECKPOINT=$RESUME_FROM_CHECKPOINT"
 fi
 echo "  PYTHON_BIN=$(command -v "$PYTHON_BIN" || echo "$PYTHON_BIN")"
@@ -82,7 +82,7 @@ EXTRA_ARGS=()
 if [ -n "$MAX_STEPS" ]; then
   EXTRA_ARGS+=(+trainer.args.max_steps="$MAX_STEPS")
 fi
-if [ -n "$RESUME_FROM_CHECKPOINT" ]; then
+if [ -n "${RESUME_FROM_CHECKPOINT:-}" ]; then
   EXTRA_ARGS+=(+resume_from_checkpoint="$RESUME_FROM_CHECKPOINT")
 fi
 
