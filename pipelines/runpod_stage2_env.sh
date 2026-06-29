@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/runpod_base_env.sh"
 
-export COT_SAFETY_STAGE="${COT_SAFETY_STAGE:-stage2}"
+export COT_SAFETY_STAGE="stage2"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-0}"
 export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-0}"
@@ -62,6 +62,10 @@ except Exception as exc:
 native_lib = getattr(cextension, "lib", None)
 if native_lib is None:
     raise SystemExit("bitsandbytes native CUDA library did not load")
+if native_lib.__class__.__name__ == "ErrorHandlerMockBNBNativeLibrary":
+    raise SystemExit("bitsandbytes native CUDA library is an error-handler mock")
+if getattr(native_lib, "compiled_with_cuda", False) is False:
+    raise SystemExit("bitsandbytes native CUDA library was not compiled with CUDA")
 
 print("bitsandbytes native CUDA library loaded")
 PY

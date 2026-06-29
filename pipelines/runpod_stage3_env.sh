@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/runpod_base_env.sh"
 
-export COT_SAFETY_STAGE="${COT_SAFETY_STAGE:-stage3}"
+export COT_SAFETY_STAGE="stage3"
 export COT_SAFETY_LEGACY_ROOT="${COT_SAFETY_LEGACY_ROOT:-${COT_SAFETY_REPO_ROOT}/legacy/PauseProbe}"
 
 if [[ "${COT_SAFETY_STAGE3_CHECK_IMPORTS:-1}" == "1" ]]; then

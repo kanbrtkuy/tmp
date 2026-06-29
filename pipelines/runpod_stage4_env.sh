@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/runpod_base_env.sh"
 
-export COT_SAFETY_STAGE="${COT_SAFETY_STAGE:-stage4}"
+export COT_SAFETY_STAGE="stage4"
 export DEVICES="${DEVICES:-0,1,2,3}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-${DEVICES}}"
 export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
