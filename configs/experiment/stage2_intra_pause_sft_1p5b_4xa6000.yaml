@@ -6,5 +6,8 @@ run:
   name: stage2_intra_pause_sft_deepseek_1p5b_4xa6000
   output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot3_trusted_cot_18k_4xa6000
 
+data:
+  input_jsonl: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/trusted_cot_18k/trusted_cot_raw.jsonl
+
 sft:
   tags: [deepseek_1p5b, intra_pause_cot3, before_cot3, full_sft, a6000_pcie]
