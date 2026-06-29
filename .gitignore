@@ -15,6 +15,10 @@ hf_token
 
 # Large experiment artifacts
 data/
+!configs/data/
+!configs/data/*.yaml
+!legacy/COTPauseToken/configs/data/
+!legacy/COTPauseToken/configs/data/*.yaml
 !legacy/PauseProbe/scripts/data/
 !legacy/PauseProbe/scripts/data/*.py
 outputs/
