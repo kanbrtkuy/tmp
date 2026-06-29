@@ -24,9 +24,12 @@ runtime:
   hidden:
     extract_jobs: 4
     extract_devices: [cuda:0, cuda:1, cuda:2, cuda:3]
+    extract_train_shards: 8
     batch_size_per_gpu: 20
     compression: uncompressed
   probes:
+    single_scan_backend: batched
+    dynamic_task_multiplier: 4
     jobs: 48
     devices: [cuda:0, cuda:1, cuda:2, cuda:3]
     jobs_per_gpu: 12

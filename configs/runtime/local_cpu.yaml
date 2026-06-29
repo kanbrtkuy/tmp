@@ -11,8 +11,11 @@ runtime:
   torch_dtype: float32
   hidden:
     extract_jobs: 1
+    extract_train_shards: 1
     batch_size_per_gpu: 1
   probes:
+    single_scan_backend: batched
+    dynamic_task_multiplier: 1
     jobs: 1
     device: cpu
   generation:

@@ -9,3 +9,4 @@ run:
 
 steering:
   layer: 16
+  delta_checkpoint: ${COT_SAFETY_LEGACY_ROOT:-/workspace/cot-safety/legacy/PauseProbe}/runs/steering/intra_pause_learned_delta_8b/zero_l16_steps80/learned_delta.pt

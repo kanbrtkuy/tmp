@@ -30,10 +30,18 @@ TEMPERATURE="${TEMPERATURE:-0.6}"
 TOP_P="${TOP_P:-0.95}"
 TORCH_DTYPE="${TORCH_DTYPE:-bfloat16}"
 
+STAGE4_JUDGE_BACKEND="${STAGE4_JUDGE_BACKEND:-vllm}"
 JUDGES="${JUDGES:-wildguard}"
 NORMALIZED_FILENAME="${NORMALIZED_FILENAME:-open_judges_normalized.jsonl}"
 RAW_FILENAME="${RAW_FILENAME:-open_judges_raw.jsonl}"
 JUDGE_STRATEGY="${JUDGE_STRATEGY:-conservative}"
+VLLM_JUDGE_WORKER_SCRIPT="${VLLM_JUDGE_WORKER_SCRIPT:-scripts/judge/run_vllm_dynamic_open_judges.py}"
+WILDGUARD_MODEL="${WILDGUARD_MODEL:-${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/wildguard}"
+LLAMAGUARD_MODEL="${LLAMAGUARD_MODEL:-${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/Llama-Guard-3-8B}"
+HARMBENCH_MODEL="${HARMBENCH_MODEL:-${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/HarmBench-Llama-2-13b-cls}"
+VLLM_JUDGE_GPU_MEMORY_UTILIZATION="${VLLM_JUDGE_GPU_MEMORY_UTILIZATION:-0.90}"
+VLLM_JUDGE_MAX_NUM_SEQS="${VLLM_JUDGE_MAX_NUM_SEQS:-32}"
+VLLM_JUDGE_DTYPE="${VLLM_JUDGE_DTYPE:-${TORCH_DTYPE}}"
 
 RUN_GENERATION="${RUN_GENERATION:-1}"
 RUN_JUDGE="${RUN_JUDGE:-1}"
@@ -72,6 +80,11 @@ fi
 
 read -r -a SEED_ARRAY <<< "${SEEDS}"
 read -r -a JUDGE_ARRAY <<< "${JUDGES}"
+
+if [[ "${STAGE4_JUDGE_BACKEND}" != "vllm" && "${STAGE4_JUDGE_BACKEND}" != "transformers" ]]; then
+  echo "STAGE4_JUDGE_BACKEND must be vllm or transformers, got: ${STAGE4_JUDGE_BACKEND}" >&2
+  exit 2
+fi
 
 count_lines() {
   local file="$1"
@@ -115,6 +128,46 @@ judge_complete() {
 
 dataset_specs() {
   grep -v '^[[:space:]]*#' "${DATASET_SPECS_FILE}" | grep -v '^[[:space:]]*$'
+}
+
+task_safe_name() {
+  printf '%s' "$*" | tr -c '[:alnum:]_.=-' '_'
+}
+
+worker_count_for_limit() {
+  local limit="$1"
+  local devices="${#DEVICE_ARRAY[@]}"
+  if [[ "${limit}" -lt 1 ]]; then
+    echo 1
+  elif [[ "${limit}" -lt "${devices}" ]]; then
+    echo "${limit}"
+  else
+    echo "${devices}"
+  fi
+}
+
+claim_next_task() {
+  local queue_root="$1"
+  local worker_id="$2"
+  local task
+  mkdir -p "${queue_root}/running"
+  for task in "${queue_root}/pending"/*.task; do
+    [[ -e "${task}" ]] || return 1
+    local claimed="${queue_root}/running/${worker_id}_$(basename "${task}")"
+    if mv "${task}" "${claimed}" 2>/dev/null; then
+      printf '%s\n' "${claimed}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+finish_claimed_task() {
+  local queue_root="$1"
+  local claimed="$2"
+  local status="$3"
+  mkdir -p "${queue_root}/${status}"
+  mv "${claimed}" "${queue_root}/${status}/$(basename "${claimed}")"
 }
 
 run_generation_job() {
@@ -204,41 +257,141 @@ run_judge_job() {
   echo "[judge done] dataset=${dataset} seed=${seed} rows=$(count_lines "${norm_file}")"
 }
 
-run_pool() {
+run_dynamic_worker() {
+  local stage="$1"
+  local queue_root="$2"
+  local gpu="$3"
+  local worker_id="$4"
+  local claimed
+
+  while claimed="$(claim_next_task "${queue_root}" "${worker_id}")"; do
+    if [[ "${stage}" == "generation" ]]; then
+      local dataset input_file label_filter rows_per_label seed
+      IFS='|' read -r dataset input_file label_filter rows_per_label seed < "${claimed}"
+      if run_generation_job "${gpu}" "${dataset}" "${input_file}" "${label_filter}" "${rows_per_label}" "${seed}"; then
+        finish_claimed_task "${queue_root}" "${claimed}" "done"
+      else
+        finish_claimed_task "${queue_root}" "${claimed}" "failed"
+        return 1
+      fi
+    else
+      local dataset seed
+      IFS='|' read -r dataset seed < "${claimed}"
+      if run_judge_job "${gpu}" "${dataset}" "${seed}"; then
+        finish_claimed_task "${queue_root}" "${claimed}" "done"
+      else
+        finish_claimed_task "${queue_root}" "${claimed}" "failed"
+        return 1
+      fi
+    fi
+  done
+}
+
+run_dynamic_pool() {
   local stage="$1"
   local limit="$2"
-  local active=0
-  local failed=0
-  local job_index=0
+  local queue_root="${OUT_ROOT}/logs/${stage}_queue_$$"
+  local worker_count
+  worker_count="$(worker_count_for_limit "${limit}")"
 
+  rm -rf "${queue_root}"
+  mkdir -p "${queue_root}/pending" "${queue_root}/running" "${queue_root}/done" "${queue_root}/failed"
   while IFS='|' read -r dataset input_file label_filter rows_per_label; do
     [[ -n "${dataset}" ]] || continue
     for seed in "${SEED_ARRAY[@]}"; do
-      local gpu="${DEVICE_ARRAY[$((job_index % ${#DEVICE_ARRAY[@]}))]}"
       if [[ "${stage}" == "generation" ]]; then
-        run_generation_job "${gpu}" "${dataset}" "${input_file}" "${label_filter}" "${rows_per_label}" "${seed}" &
+        printf '%s|%s|%s|%s|%s\n' "${dataset}" "${input_file}" "${label_filter}" "${rows_per_label}" "${seed}" \
+          > "${queue_root}/pending/$(task_safe_name "${dataset}_${seed}").task"
       else
-        run_judge_job "${gpu}" "${dataset}" "${seed}" &
-      fi
-      active=$((active + 1))
-      job_index=$((job_index + 1))
-      if [[ "${active}" -ge "${limit}" ]]; then
-        if ! wait -n; then
-          failed=1
-        fi
-        active=$((active - 1))
+        printf '%s|%s\n' "${dataset}" "${seed}" \
+          > "${queue_root}/pending/$(task_safe_name "${dataset}_${seed}").task"
       fi
     done
   done < <(dataset_specs)
 
-  while [[ "${active}" -gt 0 ]]; do
+  local failed=0
+  for idx in $(seq 0 $((worker_count - 1))); do
+    local gpu="${DEVICE_ARRAY[$idx]}"
+    run_dynamic_worker "${stage}" "${queue_root}" "${gpu}" "gpu${gpu}_${stage}" > "${OUT_ROOT}/logs/${stage}_gpu${gpu}.log" 2>&1 &
+  done
+  for _ in $(seq 1 "${worker_count}"); do
     if ! wait -n; then
       failed=1
     fi
-    active=$((active - 1))
   done
   if [[ "${failed}" -ne 0 ]]; then
     echo "[${stage}] one or more jobs failed" >&2
+    exit 1
+  fi
+}
+
+run_vllm_judge_pool() {
+  if [[ "${#JUDGE_ARRAY[@]}" -ne 1 ]]; then
+    echo "STAGE4_JUDGE_BACKEND=vllm currently expects exactly one judge for ${NORMALIZED_FILENAME}; got: ${JUDGES}" >&2
+    echo "Use STAGE4_JUDGE_BACKEND=transformers for multi-judge ensemble output, or run pipelines/run_stage4_second_judges_vllm_dynamic.sh for per-judge second passes." >&2
+    exit 2
+  fi
+  local judge="${JUDGE_ARRAY[0]}"
+  if [[ "${judge}" != "wildguard" && "${judge}" != "llamaguard" && "${judge}" != "harmbench" ]]; then
+    echo "STAGE4_JUDGE_BACKEND=vllm supports wildguard/llamaguard/harmbench, got: ${judge}" >&2
+    exit 2
+  fi
+
+  local queue_root="${OUT_ROOT}/logs/vllm_judge_queue_$$"
+  local worker_count
+  worker_count="$(worker_count_for_limit "${MAX_PARALLEL_JUDGE_JOBS}")"
+  rm -rf "${queue_root}"
+  mkdir -p "${queue_root}/pending/${judge}" "${queue_root}/running" "${queue_root}/done" "${queue_root}/failed"
+
+  while IFS='|' read -r dataset _input_file _label_filter _rows_per_label; do
+    [[ -n "${dataset}" ]] || continue
+    for seed in "${SEED_ARRAY[@]}"; do
+      local out_dir gen_file raw_file norm_file key
+      out_dir="${OUT_ROOT}/${dataset}/seed_${seed}/alpha_0"
+      gen_file="${out_dir}/generations.jsonl"
+      raw_file="${out_dir}/${RAW_FILENAME}"
+      norm_file="${out_dir}/${NORMALIZED_FILENAME}"
+      [[ -f "${gen_file}" ]] || continue
+      judge_complete "${gen_file}" "${norm_file}" && continue
+      rm -f "${raw_file}" "${raw_file%.jsonl}.manifest.json" "${norm_file}" "${norm_file%.jsonl}.manifest.json"
+      key="$(task_safe_name "${dataset}_${seed}_${judge}")"
+      "${PYTHON}" - "${queue_root}/pending/${judge}/${key}.json" "${judge}" "${gen_file}" "${raw_file}" "${norm_file}" <<'PY'
+import json
+import sys
+from pathlib import Path
+path, judge, gen, raw, norm = sys.argv[1:]
+Path(path).write_text(json.dumps({"judge": judge, "gen": gen, "raw": raw, "norm": norm}, indent=2), encoding="utf-8")
+PY
+    done
+  done < <(dataset_specs)
+
+  local model_map_json="{\"wildguard\":\"${WILDGUARD_MODEL}\",\"llamaguard\":\"${LLAMAGUARD_MODEL}\",\"harmbench\":\"${HARMBENCH_MODEL}\"}"
+  local max_model_len_json="{\"wildguard\":${JUDGE_MAX_INPUT_LENGTH},\"llamaguard\":${JUDGE_MAX_INPUT_LENGTH},\"harmbench\":${JUDGE_MAX_INPUT_LENGTH}}"
+  local failed=0
+  export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
+  for idx in $(seq 0 $((worker_count - 1))); do
+    local gpu="${DEVICE_ARRAY[$idx]}"
+    CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON}" "${VLLM_JUDGE_WORKER_SCRIPT}" \
+      --queue_root "${queue_root}" \
+      --worker_id "gpu${gpu}_vllm_judge" \
+      --preferred_judges "${judge}" \
+      --model_map_json "${model_map_json}" \
+      --max_model_len_json "${max_model_len_json}" \
+      --gpu_memory_utilization "${VLLM_JUDGE_GPU_MEMORY_UTILIZATION}" \
+      --max_num_seqs "${VLLM_JUDGE_MAX_NUM_SEQS}" \
+      --dtype "${VLLM_JUDGE_DTYPE}" \
+      --strategy "${JUDGE_STRATEGY}" \
+      > "${OUT_ROOT}/logs/vllm_judge_gpu${gpu}.log" 2>&1 &
+  done
+  for _ in $(seq 1 "${worker_count}"); do
+    if ! wait -n; then
+      failed=1
+    fi
+  done
+  local failed_count
+  failed_count="$(find "${queue_root}/failed" -type f -name '*.json' | wc -l | tr -d ' ')"
+  if [[ "${failed}" -ne 0 || "${failed_count}" != "0" ]]; then
+    echo "[vllm judge] one or more jobs failed: ${failed_count}" >&2
     exit 1
   fi
 }
@@ -253,6 +406,7 @@ run_pool() {
   echo "devices=${DEVICES}"
   echo "seeds=${SEEDS}"
   echo "judges=${JUDGES}"
+  echo "stage4_judge_backend=${STAGE4_JUDGE_BACKEND}"
   echo "baseline_role=model_level_reference"
   echo "notes=base model, no pause insertion, no steering; compare against intra-pause SFT alpha=0 and alpha>0 separately"
   echo "dataset_specs:"
@@ -260,11 +414,15 @@ run_pool() {
 } > "${OUT_ROOT}/run_config.txt"
 
 if [[ "${RUN_GENERATION}" == "1" ]]; then
-  run_pool generation "${MAX_PARALLEL_GENERATION_JOBS}"
+  run_dynamic_pool generation "${MAX_PARALLEL_GENERATION_JOBS}"
 fi
 
 if [[ "${RUN_JUDGE}" == "1" ]]; then
-  run_pool judge "${MAX_PARALLEL_JUDGE_JOBS}"
+  if [[ "${STAGE4_JUDGE_BACKEND}" == "vllm" ]]; then
+    run_vllm_judge_pool
+  else
+    run_dynamic_pool judge "${MAX_PARALLEL_JUDGE_JOBS}"
+  fi
 fi
 
 if [[ "${RUN_SUMMARY}" == "1" ]]; then

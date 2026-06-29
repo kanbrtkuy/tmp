@@ -43,8 +43,57 @@ def count_lines(path: Path) -> int:
         return sum(1 for line in f if line.strip())
 
 
+class _FallbackRuntimeQueue:
+    def __init__(self, jobs: list[dict[str, Any]]) -> None:
+        self._queue: queue.Queue[tuple[int, dict[str, Any]]] = queue.Queue()
+        for idx, job in enumerate(jobs):
+            self._queue.put((idx, job))
+
+    def get_nowait(self) -> tuple[int, dict[str, Any]]:
+        return self._queue.get_nowait()
+
+    def task_done(self) -> None:
+        self._queue.task_done()
+
+
+def make_runtime_queue(jobs: list[dict[str, Any]]) -> Any:
+    return _FallbackRuntimeQueue(jobs)
+
+
 def complete_jsonl(path: Path, expected: int) -> bool:
     return expected > 0 and path.exists() and count_lines(path) == expected
+
+
+def jsonl_ranges(total: int, chunk_size: int) -> list[tuple[int, int]]:
+    if total <= 0 or chunk_size <= 0:
+        return []
+    return [(start, min(total, start + chunk_size)) for start in range(0, total, chunk_size)]
+
+
+def merge_jsonl(shards: list[Path], output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output.parent / f"{output.name}.tmp"
+    with tmp.open("w", encoding="utf-8") as out:
+        for shard in shards:
+            if not shard.exists():
+                continue
+            with shard.open("r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        out.write(line)
+    tmp.replace(output)
+
+
+def write_jsonl_range(input_path: Path, output_path: Path, start_index: int, end_index: int) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with input_path.open("r", encoding="utf-8") as src, output_path.open("w", encoding="utf-8") as dst:
+        for idx, line in enumerate(src):
+            if idx < start_index:
+                continue
+            if idx >= end_index:
+                break
+            if line.strip():
+                dst.write(line)
 
 
 def repo_path(value: str | Path) -> Path:
@@ -152,6 +201,9 @@ def build_generation_jobs(
                 condition.get("insert_pause_after_cot_tokens", gen_cfg.get("insert_pause_after_cot_tokens", 3))
             ),
             "n_insert_pauses": int(condition.get("n_insert_pauses", gen_cfg.get("n_insert_pauses", 3))),
+            "backend": "transformers"
+            if kind == "steer"
+            else str(condition.get("generation_backend", gen_cfg.get("generation_backend", "transformers"))),
         }
         if has_capability:
             jobs.append(
@@ -173,7 +225,42 @@ def build_generation_jobs(
                     "max_new_tokens": int(condition.get("safety_max_new_tokens", gen_cfg.get("safety_max_new_tokens", 768))),
                 }
             )
-    return jobs
+    return split_generation_jobs(jobs, out_root, int(gen_cfg.get("chunk_size", 0)), dry_run=dry_run)
+
+
+def split_generation_jobs(
+    jobs: list[dict[str, Any]],
+    out_root: Path,
+    chunk_size: int,
+    *,
+    dry_run: bool,
+) -> list[dict[str, Any]]:
+    if chunk_size <= 0:
+        return jobs
+    split_jobs: list[dict[str, Any]] = []
+    for job in jobs:
+        total = count_lines(Path(job["input"]))
+        ranges = jsonl_ranges(total, chunk_size)
+        if not ranges and dry_run:
+            ranges = [(0, chunk_size)]
+        if not ranges:
+            split_jobs.append(job)
+            continue
+        final_output = Path(job["output"])
+        shard_dir = out_root / "shards" / "generations" / f"{job['label']}_{job['task']}"
+        for shard_id, (start, end) in enumerate(ranges):
+            split_jobs.append(
+                {
+                    **job,
+                    "output": shard_dir / f"part-{shard_id:05d}.jsonl",
+                    "final_output": final_output,
+                    "shard_id": shard_id,
+                    "start_index": start,
+                    "end_index": end,
+                    "expected_rows": end - start,
+                }
+            )
+    return split_jobs
 
 
 def generation_cmd(job: dict[str, Any], config: dict[str, Any]) -> list[str]:
@@ -210,7 +297,21 @@ def generation_cmd(job: dict[str, Any], config: dict[str, Any]) -> list[str]:
         str(job["n_insert_pauses"]),
         "--torch_dtype",
         str(eval_cfg.get("torch_dtype", config.get("runtime", {}).get("torch_dtype", "bfloat16"))),
+        "--generation_backend",
+        str(job.get("backend", "transformers")),
     ]
+    if job.get("start_index") is not None:
+        cmd.extend(["--start_index", str(job["start_index"])])
+    if job.get("end_index") is not None:
+        cmd.extend(["--end_index", str(job["end_index"])])
+    vllm_cfg = eval_cfg.get("generation", {}).get("vllm", {})
+    if job.get("backend") == "vllm":
+        if vllm_cfg.get("gpu_memory_utilization") is not None:
+            cmd.extend(["--vllm_gpu_memory_utilization", str(vllm_cfg["gpu_memory_utilization"])])
+        if vllm_cfg.get("max_model_len") is not None:
+            cmd.extend(["--vllm_max_model_len", str(vllm_cfg["max_model_len"])])
+        if vllm_cfg.get("max_num_seqs") is not None:
+            cmd.extend(["--vllm_max_num_seqs", str(vllm_cfg["max_num_seqs"])])
     if template.get("bos_token") is not None:
         cmd.extend(["--bos_token", str(template["bos_token"])])
     if template.get("user_template") is not None:
@@ -256,9 +357,53 @@ def build_judge_jobs(config: dict[str, Any], out_root: Path, *, labels: set[str]
                     "normalized": judge_dir / f"{label}_normalized.jsonl",
                     "batch_size": int(judge_cfg.get("batch_size", {}).get(judge, judge_cfg.get("batch_size_per_gpu", 1))),
                     "device_map": device_map.get(judge),
+                    "backend": str(judge_cfg.get("judge_backend", judge_cfg.get("backend", "transformers"))),
                 }
             )
-    return jobs
+    return split_judge_jobs(jobs, out_root, int(judge_cfg.get("chunk_size", 0)), dry_run=bool(config.get("_dry_run", False)))
+
+
+def split_judge_jobs(
+    jobs: list[dict[str, Any]],
+    out_root: Path,
+    chunk_size: int,
+    *,
+    dry_run: bool,
+) -> list[dict[str, Any]]:
+    if chunk_size <= 0:
+        return jobs
+    split_jobs: list[dict[str, Any]] = []
+    for job in jobs:
+        input_file = Path(job["input"])
+        total = count_lines(input_file)
+        ranges = jsonl_ranges(total, chunk_size)
+        if not ranges and dry_run:
+            ranges = [(0, chunk_size)]
+        if not ranges:
+            split_jobs.append(job)
+            continue
+        raw_final = Path(job["raw"])
+        norm_final = Path(job["normalized"])
+        shard_dir = out_root / "shards" / "judges" / str(job["judge"]) / str(job["label"])
+        for shard_id, (start, end) in enumerate(ranges):
+            shard_input = shard_dir / "inputs" / f"part-{shard_id:05d}.jsonl"
+            if not dry_run:
+                write_jsonl_range(input_file, shard_input, start, end)
+            split_jobs.append(
+                {
+                    **job,
+                    "input": shard_input,
+                    "raw": shard_dir / "raw" / f"part-{shard_id:05d}.jsonl",
+                    "normalized": shard_dir / "normalized" / f"part-{shard_id:05d}.jsonl",
+                    "final_raw": raw_final,
+                    "final_normalized": norm_final,
+                    "shard_id": shard_id,
+                    "start_index": start,
+                    "end_index": end,
+                    "expected_rows": end - start,
+                }
+            )
+    return split_jobs
 
 
 def judge_cmd(job: dict[str, Any], config: dict[str, Any]) -> list[str]:
@@ -266,6 +411,36 @@ def judge_cmd(job: dict[str, Any], config: dict[str, Any]) -> list[str]:
     judge_cfg = eval_cfg.get("judging", {})
     model_map = {str(k): str(v) for k, v in (judge_cfg.get("model_map") or {}).items()}
     max_new_tokens = {str(k): int(v) for k, v in (judge_cfg.get("max_new_tokens") or {}).items()}
+    if job.get("backend") == "vllm":
+        max_model_len = {str(k): int(v) for k, v in (judge_cfg.get("max_model_len") or {}).items()}
+        vllm_cfg = judge_cfg.get("vllm", {})
+        cmd = [
+            str(eval_cfg.get("python", sys.executable)),
+            "scripts/judge/run_vllm_dynamic_open_judges.py",
+            "--judge",
+            str(job["judge"]),
+            "--input_file",
+            str(job["input"]),
+            "--output_jsonl",
+            str(job["raw"]),
+            "--normalized_jsonl",
+            str(job["normalized"]),
+            "--model_map_json",
+            json.dumps(model_map),
+            "--max_new_tokens_json",
+            json.dumps(max_new_tokens),
+            "--dtype",
+            str(judge_cfg.get("torch_dtype", eval_cfg.get("torch_dtype", config.get("runtime", {}).get("torch_dtype", "bfloat16")))),
+            "--max_num_seqs",
+            str(vllm_cfg.get("max_num_seqs", judge_cfg.get("max_num_seqs", 32))),
+            "--gpu_memory_utilization",
+            str(vllm_cfg.get("gpu_memory_utilization", judge_cfg.get("gpu_memory_utilization", 0.90))),
+            "--strategy",
+            str(judge_cfg.get("aggregation_strategy", "conservative")),
+        ]
+        if max_model_len:
+            cmd.extend(["--max_model_len_json", json.dumps(max_model_len)])
+        return cmd
     cmd = [
         str(eval_cfg.get("python", sys.executable)),
         "scripts/judge/run_open_judges.py",
@@ -335,12 +510,10 @@ def run_jobs(
         env_base.setdefault(name, str(cpu_threads))
     failures: list[str] = []
     failure_lock = threading.Lock()
-    job_queue: queue.Queue[tuple[int, dict[str, Any]]] = queue.Queue()
-    for idx, job in enumerate(jobs):
-        job_queue.put((idx, job))
+    job_queue = make_runtime_queue(jobs)
 
     def run_one(index: int, job: dict[str, Any], gpu: str) -> tuple[str, int]:
-        expected = count_lines(Path(job["input"]))
+        expected = int(job.get("expected_rows") or count_lines(Path(job["input"])))
         output = Path(job.get("output") or job.get("normalized"))
         if complete_jsonl(output, expected):
             print(f"[skip complete] {phase} {job.get('label')} {job.get('task', job.get('judge'))} rows={expected}")
@@ -361,7 +534,8 @@ def run_jobs(
             )
             return str(output), rc
         cmd = cmd_builder(job, config)
-        log_name = f"{phase}_{job.get('label', 'job')}_{job.get('task', job.get('judge', index))}_gpu{gpu}.log"
+        shard = f"_part{int(job['shard_id']):05d}" if job.get("shard_id") is not None else ""
+        log_name = f"{phase}_{job.get('label', 'job')}_{job.get('task', job.get('judge', index))}{shard}_gpu{gpu}.log"
         print(
             f"[start] phase={phase} gpu={gpu} cpu_threads={cpu_threads} "
             f"label={job.get('label')} task={job.get('task', job.get('judge'))}"
@@ -403,6 +577,22 @@ def run_jobs(
         thread.join()
     if failures:
         raise SystemExit(f"{phase} failed for: {', '.join(failures)}")
+    if not dry_run:
+        merge_sharded_outputs(jobs, phase)
+
+
+def merge_sharded_outputs(jobs: list[dict[str, Any]], phase: str) -> None:
+    groups: dict[Path, list[dict[str, Any]]] = {}
+    for job in jobs:
+        if phase == "generation" and job.get("final_output"):
+            groups.setdefault(Path(job["final_output"]), []).append(job)
+        if phase == "judge" and job.get("final_normalized"):
+            groups.setdefault(Path(job["final_raw"]), []).append({**job, "_merge_path": Path(job["raw"])})
+            groups.setdefault(Path(job["final_normalized"]), []).append({**job, "_merge_path": Path(job["normalized"])})
+    for final_path, group in groups.items():
+        ordered = sorted(group, key=lambda item: int(item.get("shard_id", 0)))
+        shards = [Path(item.get("_merge_path") or item.get("output")) for item in ordered]
+        merge_jsonl(shards, final_path)
 
 
 def summarize(config: dict[str, Any], out_root: Path, *, dry_run: bool) -> None:

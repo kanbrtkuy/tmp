@@ -19,6 +19,7 @@ import concurrent.futures
 import json
 import math
 import os
+import queue
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -287,6 +288,12 @@ def parse_args() -> argparse.Namespace:
         default="cuda",
         help="Comma-separated extraction devices. Example: cuda:0,cuda:1. Jobs are assigned round-robin.",
     )
+    parser.add_argument(
+        "--extract_train_shards",
+        type=int,
+        default=1,
+        help="Split the train JSON into this many round-robin shards for parallel hidden extraction, then merge.",
+    )
     parser.add_argument("--torch_dtype", choices=("auto", "float32", "float16", "bfloat16"), default="bfloat16")
     parser.add_argument("--save_dtype", choices=("float16", "float32"), default="float16")
     parser.add_argument(
@@ -294,6 +301,18 @@ def parse_args() -> argparse.Namespace:
         choices=("compressed", "uncompressed"),
         default="compressed",
         help="Use uncompressed NPZ for faster hidden-state saves and later probe loads when disk is plentiful.",
+    )
+    parser.add_argument(
+        "--single_scan_backend",
+        choices=("pilot", "batched"),
+        default="batched",
+        help="Use batched to train many single linear probes per GPU process instead of one process per token/layer.",
+    )
+    parser.add_argument(
+        "--dynamic_task_multiplier",
+        type=int,
+        default=4,
+        help="When using batched single scan, over-partition probe chunks by devices*multiplier for dynamic work stealing.",
     )
     parser.add_argument("--scan_jobs", type=int, default=6)
     parser.add_argument("--scan_epochs", type=int, default=30)
@@ -340,8 +359,12 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.extract_jobs < 1:
         parser.error("--extract_jobs must be >= 1")
+    if args.extract_train_shards < 1:
+        parser.error("--extract_train_shards must be >= 1")
     if args.scan_jobs < 1:
         parser.error("--scan_jobs must be >= 1")
+    if args.dynamic_task_multiplier < 1:
+        parser.error("--dynamic_task_multiplier must be >= 1")
     if args.multilayer_jobs < 1:
         parser.error("--multilayer_jobs must be >= 1")
     if args.probe_cpu_threads < 0:
@@ -497,18 +520,97 @@ def run_extraction_one(
     return spec.name
 
 
+def split_train_json(args: argparse.Namespace, train_spec: SplitSpec) -> list[Path]:
+    rows = read_json(train_spec.input_json)
+    if not isinstance(rows, list):
+        raise ValueError(f"Expected {train_spec.input_json} to contain a JSON list.")
+    shard_dir = Path(args.data_dir) / "cotpause_shards" / "train"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    buckets: list[list[dict[str, Any]]] = [[] for _ in range(args.extract_train_shards)]
+    for idx, row in enumerate(rows):
+        buckets[idx % args.extract_train_shards].append(row)
+
+    paths = []
+    for idx, bucket in enumerate(buckets):
+        path = shard_dir / f"train.shard{idx}.json"
+        write_json(path, bucket)
+        paths.append(path)
+    return paths
+
+
+def train_shard_specs(args: argparse.Namespace, train_spec: SplitSpec, layers: list[int]) -> list[SplitSpec]:
+    shard_paths = split_train_json(args, train_spec)
+    hidden_dir = Path(args.hidden_dir)
+    suffix = layer_suffix(layers)
+    specs = []
+    for idx, input_json in enumerate(shard_paths):
+        prefix = f"{args.hidden_prefix}_train_shard{idx}_dense_cot_layers_{suffix}"
+        specs.append(
+            SplitSpec(
+                f"train_shard{idx}",
+                input_json,
+                hidden_dir / f"{prefix}.npz",
+                hidden_dir / f"{prefix}.metadata.jsonl",
+                hidden_dir / f"{prefix}.manifest.json",
+            )
+        )
+    return specs
+
+
+def merge_train_shards(args: argparse.Namespace, train_spec: SplitSpec, shard_specs: list[SplitSpec]) -> None:
+    if args.skip_existing and train_spec.output_npz.exists() and train_spec.manifest_json.exists():
+        print(f"skip existing train shard merge: {train_spec.output_npz}")
+        return
+    cmd = [
+        args.python,
+        "scripts/probe/merge_hidden_shards.py",
+        "--inputs",
+        *[str(spec.output_npz) for spec in shard_specs],
+        "--output_npz",
+        str(train_spec.output_npz),
+        "--metadata_jsonl",
+        str(train_spec.metadata_jsonl),
+        "--manifest_json",
+        str(train_spec.manifest_json),
+    ]
+    if args.hidden_compression == "compressed":
+        cmd.append("--compressed")
+    run_logged(cmd, Path(args.log_dir) / "position_scan_full_extract_train_merge.log", args.dry_run)
+
+
 def run_hidden_extraction(args: argparse.Namespace, specs: dict[str, SplitSpec], layers: list[int]) -> None:
     devices = parse_csv(args.extract_devices) or ["cuda"]
+    train_shards: list[SplitSpec] = []
     jobs = list(specs.values())
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.extract_jobs, len(jobs))) as executor:
-        futures = {}
-        for idx, spec in enumerate(jobs):
-            device = devices[idx % len(devices)]
-            futures[executor.submit(run_extraction_one, args, spec, layers, device)] = (spec, device)
-        for future in concurrent.futures.as_completed(futures):
-            spec, device = futures[future]
-            result = future.result()
+    if args.extract_train_shards > 1 and "train" in specs:
+        train_spec = specs["train"]
+        if args.skip_existing and train_spec.output_npz.exists() and train_spec.manifest_json.exists():
+            print(f"skip train sharding because merged train extraction exists: {train_spec.output_npz}")
+        else:
+            train_shards = train_shard_specs(args, train_spec, layers)
+            jobs = train_shards + [spec for name, spec in specs.items() if name != "train"]
+
+    task_queue: queue.Queue[SplitSpec] = queue.Queue()
+    for spec in jobs:
+        task_queue.put(spec)
+
+    def extraction_worker(slot_id: int) -> None:
+        device = devices[slot_id % len(devices)]
+        while True:
+            try:
+                spec = task_queue.get_nowait()
+            except queue.Empty:
+                return
+            result = run_extraction_one(args, spec, layers, device)
             print(f"finished extraction {result} on {device}")
+            task_queue.task_done()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.extract_jobs, len(jobs))) as executor:
+        futures = [executor.submit(extraction_worker, idx) for idx in range(min(args.extract_jobs, len(jobs)))]
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
+    if train_shards:
+        merge_train_shards(args, specs["train"], train_shards)
 
 
 def eval_npz_args(specs: dict[str, SplitSpec]) -> list[str]:
@@ -528,9 +630,14 @@ def run_single_scan(args: argparse.Namespace, specs: dict[str, SplitSpec], posit
         for spec in specs.values():
             if spec.name.startswith("source_heldout_"):
                 require_file(spec.output_npz)
+    scan_script = (
+        "scripts/probe/run_position_scan_batched.py"
+        if args.single_scan_backend == "batched"
+        else "scripts/probe/run_position_scan_pilot.py"
+    )
     cmd = [
         args.python,
-        "scripts/probe/run_position_scan_pilot.py",
+        scan_script,
         "--train_npz",
         str(specs["train"].output_npz),
         "--val_npz",
@@ -575,6 +682,8 @@ def run_single_scan(args: argparse.Namespace, specs: dict[str, SplitSpec], posit
     ]
     if args.probe_devices:
         cmd.extend(["--devices", args.probe_devices])
+    if args.single_scan_backend == "batched":
+        cmd.extend(["--dynamic_task_multiplier", str(args.dynamic_task_multiplier)])
     if args.skip_existing:
         cmd.append("--skip_existing")
     run_logged(cmd, Path(args.log_dir) / "position_scan_full_single_scan.log", args.dry_run)
@@ -763,29 +872,27 @@ def run_multilayer(
     probe_devices = parse_csv(args.probe_devices) if args.probe_devices else [args.probe_device]
     if not probe_devices:
         probe_devices = [args.probe_device]
+    task_queue: queue.Queue[tuple[str, str, str]] = queue.Queue()
+    for job in jobs:
+        task_queue.put(job)
+
+    def multilayer_worker(slot_id: int) -> list[tuple[str, str, str, str, str]]:
+        device = probe_devices[slot_id % len(probe_devices)]
+        completed = []
+        while True:
+            try:
+                position, layer_combine, model_kind = task_queue.get_nowait()
+            except queue.Empty:
+                return completed
+            run_name = run_multilayer_one(args, position, layer_combine, model_kind, layers, specs, device)
+            completed.append((run_name, model_kind, layer_combine, position, device))
+            task_queue.task_done()
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.multilayer_jobs, len(jobs))) as executor:
-        futures = {
-            executor.submit(
-                run_multilayer_one,
-                args,
-                position,
-                layer_combine,
-                model_kind,
-                layers,
-                specs,
-                probe_devices[idx % len(probe_devices)],
-            ): (
-                position,
-                layer_combine,
-                model_kind,
-                probe_devices[idx % len(probe_devices)],
-            )
-            for idx, (position, layer_combine, model_kind) in enumerate(jobs)
-        }
+        futures = [executor.submit(multilayer_worker, idx) for idx in range(min(args.multilayer_jobs, len(jobs)))]
         for future in concurrent.futures.as_completed(futures):
-            position, layer_combine, model_kind, device = futures[future]
-            run_name = future.result()
-            print(f"finished multilayer {run_name} ({model_kind}, {layer_combine}, {position}, {device})")
+            for run_name, model_kind, layer_combine, position, device in future.result():
+                print(f"finished multilayer {run_name} ({model_kind}, {layer_combine}, {position}, {device})")
 
     if args.dry_run:
         return

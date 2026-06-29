@@ -16,10 +16,15 @@ probe:
   positions: [cot_0, cot_1, cot_2, cot_3, cot_4, cot_5, cot_6, cot_7, cot_8, cot_9, cot_10, cot_12, cot_16, cot_24, cot_32, cot_48, cot_64, cot_96, cot_128]
   model_kinds: [linear, mlp]
   single_scan:
+    backend: batched
     layer_combine: first
     position_pool: first
+  hidden_extraction:
+    train_shards: 1
+    scheduler: dynamic_worker_queue
   multilayer_concat:
     positions: [cot_1, cot_2, cot_3, cot_7, cot_8]
     layer_combine: concat
     position_pool: first
+    scheduler: dynamic_worker_queue
   metrics: [auroc, balanced_accuracy, recall, fpr, heldout_generalization]

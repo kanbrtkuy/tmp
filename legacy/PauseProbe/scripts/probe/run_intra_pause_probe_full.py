@@ -19,6 +19,7 @@ import argparse
 import concurrent.futures
 import json
 import math
+import queue
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -484,15 +485,26 @@ def run_hidden_extraction(args: argparse.Namespace, specs: dict[str, SplitSpec],
         else:
             train_shards = train_shard_specs(args, train_spec, layers)
             jobs = train_shards + [spec for name, spec in specs.items() if name != "train"]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.extract_jobs, len(jobs))) as executor:
-        futures = {}
-        for idx, spec in enumerate(jobs):
-            device = devices[idx % len(devices)]
-            futures[executor.submit(run_extraction_one, args, spec, layers, device)] = (spec, device)
-        for future in concurrent.futures.as_completed(futures):
-            spec, device = futures[future]
-            result = future.result()
+
+    task_queue: queue.Queue[SplitSpec] = queue.Queue()
+    for spec in jobs:
+        task_queue.put(spec)
+
+    def extraction_worker(slot_id: int) -> None:
+        device = devices[slot_id % len(devices)]
+        while True:
+            try:
+                spec = task_queue.get_nowait()
+            except queue.Empty:
+                return
+            result = run_extraction_one(args, spec, layers, device)
             print(f"finished extraction {result} on {device}")
+            task_queue.task_done()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.extract_jobs, len(jobs))) as executor:
+        futures = [executor.submit(extraction_worker, idx) for idx in range(min(args.extract_jobs, len(jobs)))]
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
     if train_shards:
         merge_train_shards(args, specs["train"], train_shards)
 
@@ -726,18 +738,27 @@ def run_pooled(args: argparse.Namespace, splits: dict[str, SplitSpec], layers: l
     probe_devices = parse_csv(args.probe_devices) if args.probe_devices else [args.probe_device]
     if not probe_devices:
         probe_devices = [args.probe_device]
+    task_queue: queue.Queue[PooledSpec] = queue.Queue()
+    for spec in jobs:
+        task_queue.put(spec)
+
+    def pooled_worker(slot_id: int) -> list[tuple[str, PooledSpec, str]]:
+        device = probe_devices[slot_id % len(probe_devices)]
+        completed = []
+        while True:
+            try:
+                spec = task_queue.get_nowait()
+            except queue.Empty:
+                return completed
+            run_name = run_pooled_one(args, spec, splits, device)
+            completed.append((run_name, spec, device))
+            task_queue.task_done()
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.pooled_jobs, len(jobs))) as executor:
-        futures = {
-            executor.submit(run_pooled_one, args, spec, splits, probe_devices[idx % len(probe_devices)]): (
-                spec,
-                probe_devices[idx % len(probe_devices)],
-            )
-            for idx, spec in enumerate(jobs)
-        }
+        futures = [executor.submit(pooled_worker, idx) for idx in range(min(args.pooled_jobs, len(jobs)))]
         for future in concurrent.futures.as_completed(futures):
-            spec, device = futures[future]
-            run_name = future.result()
-            print(f"finished pooled {run_name} ({','.join(spec.positions)}, {device})")
+            for run_name, spec, device in future.result():
+                print(f"finished pooled {run_name} ({','.join(spec.positions)}, {device})")
 
     if args.dry_run:
         return

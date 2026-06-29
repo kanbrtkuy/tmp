@@ -5,14 +5,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 LEGACY_ROOT="${LEGACY_ROOT:-${ROOT}/legacy/PauseProbe}"
 PYTHON="${PYTHON:-python}"
+CONFIG="${CONFIG:-configs/experiment/stage4_pause_steering_8b_4xa100.yaml}"
+PHASE="${PHASE:-eval}"
 
 # shellcheck disable=SC1091
 source "${ROOT}/pipelines/runpod_hot_env.sh"
 
 export DEVICES="${DEVICES:-0,1,2,3}"
-export MODEL="${MODEL:-${COT_SAFETY_OUTPUT_ROOT}/deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250/checkpoint-250}"
-export DELTA="${DELTA:-${LEGACY_ROOT}/runs/steering/intra_pause_learned_delta_8b/zero_l16_steps80/learned_delta.pt}"
-export OUT_ROOT="${OUT_ROOT:-${COT_SAFETY_RUN_ROOT}/steering/intra_pause_full_steering_eval_8b_4xa100}"
-export LAYER="${LAYER:-16}"
+export COT_SAFETY_LEGACY_ROOT="${COT_SAFETY_LEGACY_ROOT:-${LEGACY_ROOT}}"
 
-ROOT="${LEGACY_ROOT}" PYTHON="${PYTHON}" bash "${LEGACY_ROOT}/scripts/steering/run_intra_pause_full_steering_eval.sh"
+PYTHONPATH="${ROOT}/src:${PYTHONPATH:-}" "${PYTHON}" "${ROOT}/scripts/run_stage4_steering.py" \
+  --config "${CONFIG}" \
+  --legacy-root "${LEGACY_ROOT}" \
+  --python "${PYTHON}" \
+  --phase "${PHASE}"

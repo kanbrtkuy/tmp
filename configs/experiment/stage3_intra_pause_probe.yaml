@@ -15,13 +15,18 @@ hidden:
   pre_pause_window: 3
   post_pause_window: 3
   cot_offsets: [3, 4, 7, 8]
+  extraction:
+    train_shards: 1
+    scheduler: dynamic_worker_queue
 
 probe:
   model_kinds: [linear, mlp]
   sample_weight_mode: source_label
   threshold_max_fpr: 0.05
   scan:
+    single_scan_backend: batched
     single_position_single_layer: true
     pause_span_pool: [mean, concat]
     layer_combine: [first, concat]
+    pooled_scheduler: dynamic_worker_queue
   metrics: [auroc, balanced_accuracy, recall, fpr, heldout_generalization]

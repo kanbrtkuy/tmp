@@ -9,3 +9,5 @@ run:
 
 hidden:
   layers: [7, 8, 14, 16, 17, 20, 21, 22, 24, 25, 28, 32]
+  extraction:
+    train_shards: 8

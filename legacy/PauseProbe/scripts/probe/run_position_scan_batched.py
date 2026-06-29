@@ -11,9 +11,11 @@ one GPU.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import math
 import os
+import queue
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -97,6 +99,12 @@ def chunk_round_robin(items: list[ProbeSpec], n_chunks: int) -> list[list[ProbeS
     for idx, item in enumerate(items):
         chunks[idx % len(chunks)].append(item)
     return [chunk for chunk in chunks if chunk]
+
+
+def chunk_contiguous(items: list[ProbeSpec], n_chunks: int) -> list[list[ProbeSpec]]:
+    n_chunks = max(1, min(n_chunks, len(items)))
+    chunk_size = max(1, math.ceil(len(items) / n_chunks))
+    return [items[start : start + chunk_size] for start in range(0, len(items), chunk_size)]
 
 
 def load_split(data: dict[str, Any], specs: list[ProbeSpec]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -632,6 +640,54 @@ def run_worker(worker_id: int, device: str, specs: list[ProbeSpec], args: argpar
     return subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, text=True, env=env)
 
 
+def run_worker_blocking(worker_id: int, device: str, specs: list[ProbeSpec], args: argparse.Namespace) -> tuple[int, int]:
+    proc = run_worker(worker_id, device, specs, args)
+    return worker_id, proc.wait()
+
+
+def run_dynamic_workers(args: argparse.Namespace, pending: list[ProbeSpec], devices: list[str]) -> None:
+    worker_slots = min(args.jobs, len(devices), len(pending))
+    task_count = min(len(pending), max(worker_slots, len(devices) * args.dynamic_task_multiplier))
+    chunks = chunk_contiguous(pending, task_count)
+    task_queue: queue.Queue[tuple[int, list[ProbeSpec]]] = queue.Queue()
+    for task_id, chunk in enumerate(chunks):
+        task_queue.put((task_id, chunk))
+
+    failures: list[tuple[int, int]] = []
+
+    def worker_loop(slot_id: int) -> None:
+        device = devices[slot_id % len(devices)]
+        while True:
+            try:
+                task_id, chunk = task_queue.get_nowait()
+            except queue.Empty:
+                return
+            worker_id = slot_id * max(1, len(chunks)) + task_id
+            print(
+                json.dumps(
+                    {
+                        "slot": slot_id,
+                        "device": device,
+                        "task": task_id,
+                        "specs": len(chunk),
+                    }
+                ),
+                flush=True,
+            )
+            _worker_id, code = run_worker_blocking(worker_id, device, chunk, args)
+            if code != 0:
+                failures.append((_worker_id, code))
+            task_queue.task_done()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_slots) as executor:
+        futures = [executor.submit(worker_loop, slot_id) for slot_id in range(worker_slots)]
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
+
+    if failures:
+        raise SystemExit(f"Batched workers failed: {failures}")
+
+
 def build_and_write_summary(args: argparse.Namespace, positions: list[str], layers: list[int], eval_names: list[str]) -> None:
     rows = run_position_scan_pilot.build_summary(["linear"], positions, layers, Path(args.out_root), eval_names)
     ranked = sorted(rows, key=lambda row: float(row.get("test_auroc") or float("nan")), reverse=True)
@@ -673,6 +729,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--cpu_threads", type=int, default=4)
     parser.add_argument("--seed", type=int, default=260610)
+    parser.add_argument(
+        "--dynamic_task_multiplier",
+        type=int,
+        default=4,
+        help="Over-partition pending probes into roughly devices*multiplier task chunks and let GPU worker slots pull them dynamically.",
+    )
     parser.add_argument("--worker_specs_json", default=None)
     parser.add_argument("--worker_id", type=int, default=0)
     args = parser.parse_args(argv)
@@ -680,6 +742,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--jobs must be >= 1")
     if args.cpu_threads < 1:
         parser.error("--cpu_threads must be >= 1")
+    if args.dynamic_task_multiplier < 1:
+        parser.error("--dynamic_task_multiplier must be >= 1")
     model_kinds = parse_csv(args.model_kinds)
     if model_kinds != ["linear"]:
         parser.error("Batched scan currently supports --model_kinds linear only.")
@@ -707,17 +771,7 @@ def main(argv: list[str] | None = None) -> None:
     if pending:
         devices = parse_csv(args.devices) if args.devices else [args.device]
         devices = devices or [args.device]
-        chunks = chunk_round_robin(pending, min(len(devices), args.jobs, len(pending)))
-        processes = []
-        for idx, chunk in enumerate(chunks):
-            processes.append((idx, run_worker(idx, devices[idx % len(devices)], chunk, args)))
-        failed = []
-        for idx, proc in processes:
-            code = proc.wait()
-            if code != 0:
-                failed.append((idx, code))
-        if failed:
-            raise SystemExit(f"Batched workers failed: {failed}")
+        run_dynamic_workers(args, pending, devices)
     else:
         print("All requested batched scan jobs already exist; rebuilding summaries only.")
 

@@ -9,7 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from cot_safety.config import dump_config, load_config
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 
 ENV_DEFAULT_RE = re.compile(r"\$\{([^}:]+):-([^}]+)\}")
@@ -103,6 +104,8 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
     hidden_runtime = runtime.get("hidden", {})
     probe_runtime = runtime.get("probes", {})
     probe = config.get("probe", {})
+    single_scan_cfg = probe.get("single_scan", {})
+    hidden_extract_cfg = probe.get("hidden_extraction", {})
     pause = config.get("pause", {})
     data = config.get("data", {})
     paths = stage_paths(config)
@@ -145,6 +148,13 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
         csv(multilayer_positions),
         "--extract_jobs",
         str(hidden_runtime.get("extract_jobs", 1)),
+        "--extract_train_shards",
+        str(
+            hidden_extract_cfg.get(
+                "train_shards",
+                hidden_runtime.get("extract_train_shards", 1),
+            )
+        ),
         "--extract_devices",
         csv(extract_devices),
         "--extract_batch_size",
@@ -177,6 +187,8 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
         str(config.get("hidden", {}).get("save_dtype", "float16")),
         "--hidden_compression",
         str(hidden_runtime.get("compression", config.get("hidden", {}).get("compression", "compressed"))),
+        "--single_scan_backend",
+        str(single_scan_cfg.get("backend", probe_runtime.get("single_scan_backend", "batched"))),
         "--split_strategy",
         str(data.get("split_strategy", "source_label")),
         "--max_prompt_words",
@@ -188,6 +200,9 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
         "--star_min_score",
         str(star_min_score(data)),
     ]
+    dynamic_task_multiplier = probe_runtime.get("dynamic_task_multiplier")
+    if dynamic_task_multiplier is not None:
+        cmd.extend(["--dynamic_task_multiplier", str(dynamic_task_multiplier)])
 
     sources = source_names(data)
     if sources:
@@ -226,7 +241,9 @@ def main() -> None:
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
 
-    repo_root = Path(__file__).resolve().parents[1]
+    from cot_safety.config import dump_config, load_config
+
+    repo_root = REPO_ROOT
     config = resolve_value(load_config(repo_root / args.config))
     runtime = config.get("runtime", {})
     if runtime.get("cuda_visible_devices"):

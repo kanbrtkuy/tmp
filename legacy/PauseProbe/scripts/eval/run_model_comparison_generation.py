@@ -166,6 +166,36 @@ def generate_plain_batch(model: Any, tokenizer: Any, prompts: list[str], args: a
     return decoded
 
 
+def generate_vllm_batch(llm: Any, prompts: list[str], args: argparse.Namespace) -> list[str]:
+    from vllm import SamplingParams
+
+    max_tokens = getattr(args, "vllm_generate_tokens", args.max_new_tokens)
+    outputs = llm.generate(
+        prompts,
+        SamplingParams(
+            temperature=args.temperature,
+            top_p=args.top_p,
+            max_tokens=max_tokens,
+        ),
+    )
+    return [output.outputs[0].text.strip() if output.outputs else "" for output in outputs]
+
+
+def load_vllm_engine(args: argparse.Namespace) -> Any:
+    from vllm import LLM
+
+    return LLM(
+        model=args.model,
+        tokenizer=args.model,
+        dtype=args.torch_dtype,
+        gpu_memory_utilization=args.vllm_gpu_memory_utilization,
+        max_model_len=args.vllm_max_model_len or args.max_input_length + args.max_new_tokens,
+        max_num_seqs=args.vllm_max_num_seqs,
+        trust_remote_code=args.trust_remote_code,
+        seed=args.seed,
+    )
+
+
 def load_model_and_tokenizer(args: argparse.Namespace) -> tuple[Any, Any, Any, Any | None, int | None]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -221,25 +251,45 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--trust_remote_code", action="store_true")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--start_index", type=int, default=0)
+    parser.add_argument("--end_index", type=int, default=0)
+    parser.add_argument("--generation_backend", choices=("transformers", "vllm"), default="transformers")
+    parser.add_argument("--vllm_gpu_memory_utilization", type=float, default=0.90)
+    parser.add_argument("--vllm_max_model_len", type=int, default=0)
+    parser.add_argument("--vllm_max_num_seqs", type=int, default=32)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.model_kind == "steer" and args.generation_backend == "vllm":
+        raise SystemExit("--generation_backend vllm is not supported for --model_kind steer")
     if args.model_kind == "steer" and not args.delta_checkpoint:
         raise SystemExit("--delta_checkpoint is required for --model_kind steer")
     import torch
     from transformers import set_seed
 
     rows = read_jsonl(Path(args.input_jsonl))
+    if args.start_index < 0:
+        raise SystemExit("--start_index must be non-negative")
+    if args.end_index and args.end_index < args.start_index:
+        raise SystemExit("--end_index must be >= --start_index")
+    if args.start_index or args.end_index:
+        rows = rows[args.start_index : args.end_index or None]
     if args.limit > 0:
         rows = rows[: args.limit]
     out = Path(args.output_jsonl)
     out.parent.mkdir(parents=True, exist_ok=True)
-    model, tokenizer, layers, delta, pause_id = load_model_and_tokenizer(args)
+    model = tokenizer = layers = delta = pause_id = None
+    llm = None
+    if args.generation_backend == "vllm":
+        llm = load_vllm_engine(args)
+    else:
+        model, tokenizer, layers, delta, pause_id = load_model_and_tokenizer(args)
 
     with out.open("w", encoding="utf-8") as f:
         for start in range(0, len(rows), args.batch_size):
+            global_start = args.start_index + start
             batch = rows[start : start + args.batch_size]
             base_prompts = [
                 build_prompt(
@@ -254,10 +304,14 @@ def main() -> None:
             ]
             inserted_prefixes = ["" for _ in batch]
             if args.model_kind in {"sft", "steer"} and args.insert_pause_after_cot_tokens >= 0:
-                set_seed(args.seed + start)
+                set_seed(args.seed + global_start)
                 if args.insert_pause_after_cot_tokens > 0:
                     prefix_args = argparse.Namespace(**vars(args))
-                    prefixes = steer.generate_prefix_batch(model, tokenizer, base_prompts, prefix_args)
+                    if args.generation_backend == "vllm":
+                        prefix_args.vllm_generate_tokens = args.insert_pause_after_cot_tokens
+                        prefixes = generate_vllm_batch(llm, base_prompts, prefix_args)
+                    else:
+                        prefixes = steer.generate_prefix_batch(model, tokenizer, base_prompts, prefix_args)
                 else:
                     prefixes = ["" for _ in batch]
                 inserted_prefixes = [
@@ -265,7 +319,7 @@ def main() -> None:
                     for prefix in prefixes
                 ]
             prompts = [prompt + inserted for prompt, inserted in zip(base_prompts, inserted_prefixes)]
-            set_seed(args.seed + start + int(args.alpha * 1000))
+            set_seed(args.seed + global_start + int(args.alpha * 1000))
             if args.model_kind == "steer":
                 gen_args = argparse.Namespace(**vars(args))
                 responses, hook_stats = steer.generate_one_batch(
@@ -280,7 +334,10 @@ def main() -> None:
                     args=gen_args,
                 )
             else:
-                responses = generate_plain_batch(model, tokenizer, prompts, args)
+                if args.generation_backend == "vllm":
+                    responses = generate_vllm_batch(llm, prompts, args)
+                else:
+                    responses = generate_plain_batch(model, tokenizer, prompts, args)
                 hook_stats = [{"alpha": args.alpha, "num_hook_calls_with_pause": 0, "num_pause_tokens_steered": 0} for _ in responses]
             for row, inserted, response, hook_stat in zip(batch, inserted_prefixes, responses, hook_stats):
                 generated = args.forced_prefix + inserted + response
@@ -328,6 +385,9 @@ def main() -> None:
         "num_rows": len(rows),
         "batch_size": args.batch_size,
         "max_new_tokens": args.max_new_tokens,
+        "start_index": args.start_index,
+        "end_index": args.end_index,
+        "generation_backend": args.generation_backend,
     }
     out.with_suffix(".manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
