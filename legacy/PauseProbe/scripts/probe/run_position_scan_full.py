@@ -925,6 +925,8 @@ def main() -> None:
 
     if not args.skip_data_prep:
         run_data_prep(args)
+    if args.dry_run:
+        return
     if not args.skip_hidden_extraction:
         run_hidden_extraction(args, specs, layers)
     if not args.skip_single_scan:

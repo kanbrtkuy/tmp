@@ -264,6 +264,8 @@ def main() -> None:
     legacy_root = Path(args.legacy_root) if args.legacy_root else repo_root / "legacy/PauseProbe"
     cmd = build_command(args, config)
     print("$ " + " ".join(cmd))
+    if args.dry_run:
+        return
     raise SystemExit(subprocess.run(cmd, cwd=legacy_root, env=os.environ.copy()).returncode)
 
 

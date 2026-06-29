@@ -20,7 +20,6 @@ probe:
     layer_combine: first
     position_pool: first
   hidden_extraction:
-    train_shards: 1
     scheduler: dynamic_worker_queue
   multilayer_concat:
     positions: [cot_1, cot_2, cot_3, cot_7, cot_8]
