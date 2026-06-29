@@ -24,6 +24,24 @@ if [[ -d /usr/local/cuda/lib64 ]]; then
   export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}"
 fi
 
+if command -v python3 >/dev/null 2>&1; then
+  cuda13_dir="$(
+    python3 - <<'PY' 2>/dev/null || true
+from pathlib import Path
+import site
+
+for root in site.getsitepackages() + [site.getusersitepackages()]:
+    path = Path(root) / "nvidia" / "cu13" / "lib"
+    if (path / "libnvJitLink.so.13").exists():
+        print(path)
+        break
+PY
+  )"
+  if [[ -n "${cuda13_dir}" ]]; then
+    export LD_LIBRARY_PATH="${cuda13_dir}:${LD_LIBRARY_PATH:-}"
+  fi
+fi
+
 # pip wheels for CUDA libraries sometimes place nvJitLink under
 # site-packages/nvidia/nvjitlink/lib.  Add it when present; this is harmless if
 # the runtime uses system CUDA instead.
