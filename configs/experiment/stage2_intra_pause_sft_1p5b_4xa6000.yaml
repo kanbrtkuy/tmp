@@ -9,5 +9,12 @@ run:
 data:
   input_jsonl: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/trusted_cot_18k/trusted_cot_raw.jsonl
 
+runtime:
+  sft:
+    per_device_train_batch_size: 2
+    per_device_eval_batch_size: 1
+    gradient_accumulation_steps: 2
+    optim: adamw_torch
+
 sft:
   tags: [deepseek_1p5b, intra_pause_cot3, before_cot3, full_sft, a6000_pcie]
