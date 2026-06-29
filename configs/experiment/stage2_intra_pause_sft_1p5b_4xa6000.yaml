@@ -1,0 +1,10 @@
+defaults:
+  - stage2_intra_pause_sft.yaml
+  - ../runtime/a6000_4x.yaml
+
+run:
+  name: stage2_intra_pause_sft_deepseek_1p5b_4xa6000
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot3_trusted_cot_18k_4xa6000
+
+sft:
+  tags: [deepseek_1p5b, intra_pause_cot3, before_cot3, full_sft, a6000_pcie]
