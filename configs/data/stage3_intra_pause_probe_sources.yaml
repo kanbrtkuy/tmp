@@ -1,0 +1,16 @@
+defaults:
+  - stage1_positionscan_sources.yaml
+
+data:
+  recipe_name: stage3_intra_pause_probe_sources
+  pause_layout: intra_cot
+  cap_recipe: full_3to1
+  target_safe_unsafe_ratio: "3:1"
+  full_3to1_counts:
+    total: 11193
+    safe: 8394
+    unsafe: 2799
+  full_1to1_counts:
+    total: 5598
+    safe: 2799
+    unsafe: 2799

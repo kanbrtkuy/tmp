@@ -1,0 +1,23 @@
+data:
+  recipe_name: stage2_trusted_cot_18k
+  label_task: sft_format
+  input_jsonl: ${COT_SAFETY_STAGE2_RAW_JSONL:-/workspace/data/pause_sft/trusted_cot_18k/trusted_cot_raw.jsonl}
+  total_rows: 18000
+  train_rows: 17000
+  val_rows: 500
+  test_rows: 500
+  sources:
+    - name: Sky-T1_data_17k
+      rows: 6000
+      role: high_quality_reasoning
+    - name: Bespoke-Stratos-17k
+      rows: 6000
+      role: high_quality_reasoning
+    - name: OpenThoughts-114k
+      rows: 6000
+      role: high_quality_reasoning
+  output_variants:
+    - intra_pause_cot4
+    - intra_pause_cot3
+    - no_pause
+    - pre_think_pause
