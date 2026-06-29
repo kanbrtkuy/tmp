@@ -646,7 +646,7 @@ def run_worker_blocking(worker_id: int, device: str, specs: list[ProbeSpec], arg
 
 
 def run_dynamic_workers(args: argparse.Namespace, pending: list[ProbeSpec], devices: list[str]) -> None:
-    worker_slots = min(args.jobs, len(devices), len(pending))
+    worker_slots = min(args.jobs, len(devices) * args.worker_slots_per_gpu, len(pending))
     task_count = min(len(pending), max(worker_slots, len(devices) * args.dynamic_task_multiplier))
     chunks = chunk_contiguous(pending, task_count)
     task_queue: queue.Queue[tuple[int, list[ProbeSpec]]] = queue.Queue()
@@ -730,6 +730,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cpu_threads", type=int, default=4)
     parser.add_argument("--seed", type=int, default=260610)
     parser.add_argument(
+        "--worker_slots_per_gpu",
+        type=int,
+        default=1,
+        help="Number of concurrent lightweight probe worker slots to run on each GPU.",
+    )
+    parser.add_argument(
         "--dynamic_task_multiplier",
         type=int,
         default=4,
@@ -742,6 +748,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--jobs must be >= 1")
     if args.cpu_threads < 1:
         parser.error("--cpu_threads must be >= 1")
+    if args.worker_slots_per_gpu < 1:
+        parser.error("--worker_slots_per_gpu must be >= 1")
     if args.dynamic_task_multiplier < 1:
         parser.error("--dynamic_task_multiplier must be >= 1")
     model_kinds = parse_csv(args.model_kinds)

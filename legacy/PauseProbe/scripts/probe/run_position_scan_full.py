@@ -319,6 +319,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scan_patience", type=int, default=8)
     parser.add_argument("--scan_batch_size", type=int, default=256)
     parser.add_argument("--scan_eval_batch_size", type=int, default=1024)
+    parser.add_argument("--scan_worker_slots_per_gpu", type=int, default=1)
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--threshold_max_fpr", type=float, default=0.05)
@@ -363,6 +364,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--extract_train_shards must be >= 1")
     if args.scan_jobs < 1:
         parser.error("--scan_jobs must be >= 1")
+    if args.scan_worker_slots_per_gpu < 1:
+        parser.error("--scan_worker_slots_per_gpu must be >= 1")
     if args.dynamic_task_multiplier < 1:
         parser.error("--dynamic_task_multiplier must be >= 1")
     if args.multilayer_jobs < 1:
@@ -684,6 +687,7 @@ def run_single_scan(args: argparse.Namespace, specs: dict[str, SplitSpec], posit
         cmd.extend(["--devices", args.probe_devices])
     if args.single_scan_backend == "batched":
         cmd.extend(["--dynamic_task_multiplier", str(args.dynamic_task_multiplier)])
+        cmd.extend(["--worker_slots_per_gpu", str(args.scan_worker_slots_per_gpu)])
     if args.skip_existing:
         cmd.append("--skip_existing")
     run_logged(cmd, Path(args.log_dir) / "position_scan_full_single_scan.log", args.dry_run)
