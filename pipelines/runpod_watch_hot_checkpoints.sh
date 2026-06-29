@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 # shellcheck disable=SC1091
-source "${ROOT}/pipelines/runpod_hot_env.sh"
+source "${ROOT}/pipelines/runpod_base_env.sh"
 
 OUTPUT_PATH=""
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-60}"

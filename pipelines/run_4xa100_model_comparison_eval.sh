@@ -8,7 +8,7 @@ PHASE="${PHASE:-all}"
 PYTHON="${PYTHON:-python3}"
 
 # shellcheck disable=SC1091
-source "${ROOT}/pipelines/runpod_hot_env.sh"
+source "${ROOT}/pipelines/runpod_base_env.sh"
 
 cd "$ROOT"
 export PYTHONPATH="${ROOT}/src:${PYTHONPATH:-}"

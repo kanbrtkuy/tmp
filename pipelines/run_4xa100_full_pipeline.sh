@@ -9,7 +9,7 @@ RUN_STAGE2="${RUN_STAGE2:-0}"
 
 cd "$ROOT"
 # shellcheck disable=SC1091
-source "${ROOT}/pipelines/runpod_hot_env.sh"
+source "${ROOT}/pipelines/runpod_base_env.sh"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 mkdir -p "${COT_SAFETY_RUN_ROOT}"

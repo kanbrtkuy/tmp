@@ -75,11 +75,33 @@ Do not use a broad tar exclude such as `--exclude='data'`; it also drops
 `configs/data/` and `src/cot_safety/data/`.  Exclude only the repository root's
 large data directory, for example `--exclude='cot-safety/data'`.
 
-3. Install dependencies:
+3. Install dependencies by stage:
 
 ```bash
+# Stage 1 PositionScan / probe.
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src && PIP_CACHE_DIR=/dev/shm/cot-safety-hot/pip-cache python3 -m pip install -e .'
+
+# Stage 2 SFT.  This is intentionally separate because paged_adamw_8bit needs
+# a working bitsandbytes native CUDA library.
 ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src && PIP_CACHE_DIR=/dev/shm/cot-safety-hot/pip-cache python3 -m pip install -e ".[sft]"'
+
+# Stage 4 vLLM judge/rescore support.  Hook-based steering generation itself
+# should not require vLLM.
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src && PIP_CACHE_DIR=/dev/shm/cot-safety-hot/pip-cache python3 -m pip install -e ".[judge]"'
 ```
+
+Then validate the stage-specific environment before launching that stage:
+
+```bash
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source pipelines/runpod_stage1_env.sh'
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source pipelines/runpod_stage2_env.sh'
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source pipelines/runpod_stage3_env.sh'
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source pipelines/runpod_stage4_env.sh'
+```
+
+If Stage 2 fails here with a bitsandbytes or `libnvJitLink` error, fix the
+CUDA/bitsandbytes environment before training.  Do not switch optimizers unless
+the experiment config explicitly changes `runtime.sft.optim`.
 
 4. Restore prepared data from GDrive to the pod volume.  This is the persistent
 copy.  Do not restore backup archives straight into `/dev/shm`; `/dev/shm` is
@@ -97,7 +119,7 @@ it to `/workspace/data`.
 5. Stage only the needed data from the pod volume to hot storage:
 
 ```bash
-ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source /workspace/secrets/hf.env; source pipelines/runpod_hot_env.sh; bash pipelines/runpod_stage_hot_storage.sh --data pause_sft/trusted_cot_18k_intra_cot4 --data pause_sft/trusted_cot_18k_intra_cot3_control'
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source /workspace/secrets/hf.env; source pipelines/runpod_base_env.sh; bash pipelines/runpod_stage_hot_storage.sh --data pause_sft/trusted_cot_18k_intra_cot4 --data pause_sft/trusted_cot_18k_intra_cot3_control'
 ```
 
 Verify the SFT data path before training:
@@ -120,13 +142,13 @@ snapshot_download(
     max_workers=8,
 )
 PY'
-ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source pipelines/runpod_hot_env.sh; bash pipelines/runpod_stage_hot_storage.sh --model DeepSeek-R1-Distill-Llama-8B'
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source pipelines/runpod_base_env.sh; bash pipelines/runpod_stage_hot_storage.sh --model DeepSeek-R1-Distill-Llama-8B'
 ```
 
 7. Run a dry run and check the printed launch environment:
 
 ```bash
-ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source /workspace/secrets/hf.env; source pipelines/runpod_hot_env.sh; python3 scripts/run_stage2_sft.py --config configs/experiment/<CONFIG>.yaml --skip_existing --dry_run'
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source /workspace/secrets/hf.env; source pipelines/runpod_stage2_env.sh; python3 scripts/run_stage2_sft.py --config configs/experiment/<CONFIG>.yaml --skip_existing --dry_run'
 ```
 
 For the 8B cot4 format-only 250-step run, the dry run should print:
@@ -143,7 +165,7 @@ For the 8B cot4 format-only 250-step run, the dry run should print:
 8. Launch and monitor:
 
 ```bash
-ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; mkdir -p /dev/shm/cot-safety-hot/runs/logs; source /workspace/secrets/hf.env; source pipelines/runpod_hot_env.sh; nohup python3 scripts/run_stage2_sft.py --config configs/experiment/<CONFIG>.yaml --skip_existing > /dev/shm/cot-safety-hot/runs/logs/stage2_sft.log 2>&1 & echo $! > /dev/shm/cot-safety-hot/runs/stage2_sft.pid'
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; mkdir -p /dev/shm/cot-safety-hot/runs/logs; source /workspace/secrets/hf.env; source pipelines/runpod_stage2_env.sh; nohup python3 scripts/run_stage2_sft.py --config configs/experiment/<CONFIG>.yaml --skip_existing > /dev/shm/cot-safety-hot/runs/logs/stage2_sft.log 2>&1 & echo $! > /dev/shm/cot-safety-hot/runs/stage2_sft.pid'
 ssh "${POD_ALIAS}" 'nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu --format=csv,noheader; tail -n 80 /dev/shm/cot-safety-hot/runs/logs/stage2_sft.log'
 ```
 
@@ -182,7 +204,7 @@ These were the deployment issues observed on a fresh 4x A100 SXM pod and the
 fixes that should be applied next time.
 
 | Symptom | Cause | Fix |
-| --- | --- | --- |
+| --- | --- | --- | --- |
 | `git clone https://github.com/kanbrtkuy/cot-safety.git` failed with `could not read Username` | Private repo auth was not configured on the pod. | Prefer GitHub SSH/token clone. If unavailable, transfer a clean source archive and unpack it under `/dev/shm`. |
 | A small code tar unpack on `/workspace` hung in `D` state | `/workspace` was a FUSE-backed RunPod network volume; unpacking many small files and Apple xattrs triggered filesystem I/O wait. | Do not unpack source archives on `/workspace`; use `/dev/shm/cot-safety-src` or local NVMe. Build tarballs with `COPYFILE_DISABLE=1 tar --no-xattrs`. |
 | `tar` tried to preserve local macOS uid/gid and printed ownership errors | The archive was created on macOS. | Use `tar --no-same-owner` when unpacking on Linux, and avoid macOS xattrs. |
@@ -253,7 +275,7 @@ bash pipelines/runpod_stage_hot_storage.sh \
   --data model_comparison_eval/deepseek_8b_stage2
 ```
 
-The pipeline wrappers source `pipelines/runpod_hot_env.sh`, which maps:
+The shared storage environment is `pipelines/runpod_base_env.sh`, which maps:
 
 - `COT_SAFETY_MODEL_ROOT` to `$COT_SAFETY_HOT_ROOT/models`
 - `COT_SAFETY_JUDGE_ROOT` to `$COT_SAFETY_HOT_ROOT/models/judges`
@@ -261,6 +283,19 @@ The pipeline wrappers source `pipelines/runpod_hot_env.sh`, which maps:
 - `COT_SAFETY_OUTPUT_ROOT` to `$COT_SAFETY_HOT_ROOT/outputs`
 - `COT_SAFETY_RUN_ROOT` to `$COT_SAFETY_HOT_ROOT/runs`
 - `HF_HOME` to `$COT_SAFETY_HOT_ROOT/hf_cache`
+
+Stage-specific GPU jobs should source their full stage env instead of the
+base-only env:
+
+| Stage | Environment file | Wrapper | Main extra checks |
+| --- | --- | --- |
+| Stage 1 PositionScan | `pipelines/runpod_stage1_env.sh` | `pipelines/run_4xa100_stage1_positionscan.sh` | Base inference/probe stack only. |
+| Stage 2 SFT | `pipelines/runpod_stage2_env.sh` | `pipelines/run_4xa100_stage2_sft.sh` | TRL/DDP stack and bitsandbytes native CUDA load for `paged_adamw_8bit`. |
+| Stage 3 probe | `pipelines/runpod_stage3_env.sh` | `pipelines/run_4xa100_stage3_probe.sh` | Probe imports for SFT-checkpoint hidden extraction and probe training. |
+| Stage 4 steering/judge | `pipelines/runpod_stage4_env.sh` | `pipelines/run_4xa100_stage4_steering_eval.sh` | Steering generation imports; optional vLLM check with `COT_SAFETY_STAGE4_REQUIRE_VLLM=1`. |
+
+`pipelines/runpod_hot_env.sh` remains as a backward-compatible base alias for
+older utility commands.  Do not use it as proof that Stage 2 is ready.
 
 After a successful run, copy only results/checkpoints that must persist back to
 `/workspace` or GDrive:

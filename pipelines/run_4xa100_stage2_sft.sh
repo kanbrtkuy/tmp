@@ -7,7 +7,7 @@ CONFIG="${CONFIG:-configs/experiment/stage2_intra_pause_format_only_8b_cot4_save
 PYTHON="${PYTHON:-python}"
 
 # shellcheck disable=SC1091
-source "${ROOT}/pipelines/runpod_hot_env.sh"
+source "${ROOT}/pipelines/runpod_stage2_env.sh"
 
 cd "${ROOT}"
 mkdir -p "${COT_SAFETY_RUN_ROOT}" logs
