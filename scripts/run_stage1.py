@@ -243,6 +243,45 @@ def sync_stage1_path(path: Path, pipeline: dict[str, Any]) -> None:
         remove_synced_hot(path, cold_path)
 
 
+def stage1_summary_exists(path: Path) -> bool:
+    return any(
+        (path / filename).exists()
+        for filename in ("summary_grid.tsv", "summary_by_test_auroc.tsv", "summary_by_heldout_auroc.tsv")
+    )
+
+
+def stage1_outputs_complete(config: dict[str, Any], *, require_cold_marker: bool) -> bool:
+    paths = stage1_legacy.stage_paths(config)
+    single_root = resolve_path(paths["single_scan_out_root"])
+    multilayer_root = resolve_path(paths["multilayer_out_root"])
+    run_root = single_root.parent
+    if require_cold_marker and not (run_root / ".synced_to_cold").exists():
+        return False
+    return stage1_summary_exists(single_root) and stage1_summary_exists(multilayer_root)
+
+
+def skip_or_sync_completed_module(
+    args: argparse.Namespace,
+    config: dict[str, Any],
+    pipeline: dict[str, Any],
+    *,
+    label: str,
+) -> bool:
+    if args.dry_run or not args.skip_existing:
+        return False
+    if stage1_outputs_complete(config, require_cold_marker=False):
+        print(f"\n### {label}")
+        print("skip completed hot Stage1 module")
+        sync_stage1_run(config, pipeline)
+        return True
+    cold_config = cold_config_for_hot(config)
+    if stage1_outputs_complete(cold_config, require_cold_marker=True):
+        print(f"\n### {label}")
+        print("skip completed cold-synced Stage1 module")
+        return True
+    return False
+
+
 def read_tsv(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
@@ -564,19 +603,23 @@ def main() -> None:
 
     if "position_scan" in selected and enabled(pipeline, "position_scan"):
         run_config = module_config(config, pipeline, "position_scan")
-        rc = run_one(args, run_config, legacy_root, label="Stage1 position scan")
-        if rc:
-            failures.append(("position_scan", rc))
-        elif not args.dry_run:
-            sync_stage1_run(run_config, pipeline)
+        label = "Stage1 position scan"
+        if not skip_or_sync_completed_module(args, run_config, pipeline, label=label):
+            rc = run_one(args, run_config, legacy_root, label=label)
+            if rc:
+                failures.append(("position_scan", rc))
+            elif not args.dry_run:
+                sync_stage1_run(run_config, pipeline)
 
     if "prompt_baseline" in selected and enabled(pipeline, "prompt_baseline"):
         run_config = module_config(config, pipeline, "prompt_baseline")
-        rc = run_one(args, run_config, legacy_root, label="Stage1b prompt/pre-CoT baseline")
-        if rc:
-            failures.append(("prompt_baseline", rc))
-        elif not args.dry_run:
-            sync_stage1_run(run_config, pipeline)
+        label = "Stage1b prompt/pre-CoT baseline"
+        if not skip_or_sync_completed_module(args, run_config, pipeline, label=label):
+            rc = run_one(args, run_config, legacy_root, label=label)
+            if rc:
+                failures.append(("prompt_baseline", rc))
+            elif not args.dry_run:
+                sync_stage1_run(run_config, pipeline)
 
     if "loso" in selected and enabled(pipeline, "loso"):
         loso = pipeline.get("loso", {})
@@ -602,14 +645,18 @@ def main() -> None:
                 )
                 run_config = stage1_legacy.resolve_value(deep_merge(run_config, loso.get("overrides", {}) or {}))
                 label = f"Stage1 LOSO {module_name} holdout={family_name}"
-                rc = run_one(args, run_config, legacy_root, label=label)
-                if rc:
-                    failures.append((f"loso/{module_name}/{family_name}", rc))
-                else:
-                    cold_config = cold_config_for_hot(run_config)
-                    if not args.dry_run:
-                        sync_stage1_run(run_config, pipeline)
+                cold_config = cold_config_for_hot(run_config)
+                if skip_or_sync_completed_module(args, run_config, pipeline, label=label):
                     loso_completed.append((module_name, family, run_config, cold_config))
+                else:
+                    rc = run_one(args, run_config, legacy_root, label=label)
+                    if rc:
+                        failures.append((f"loso/{module_name}/{family_name}", rc))
+                    else:
+                        if not args.dry_run:
+                            sync_stage1_run(run_config, pipeline)
+                            cold_config = cold_config_for_hot(run_config)
+                        loso_completed.append((module_name, family, run_config, cold_config))
         if not args.dry_run and bool(loso.get("aggregate", True)):
             out_dir = Path(stage1_legacy.resolve_value(pipeline.get("loso", {}).get("summary_dir", "${COT_SAFETY_RUN_ROOT:-runs}/stage1_loso_summary")))
             aggregate_loso(pipeline, loso_completed, out_dir)

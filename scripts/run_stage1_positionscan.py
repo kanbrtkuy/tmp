@@ -161,7 +161,7 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
         "--extract_devices",
         csv(extract_devices),
         "--extract_batch_size",
-        str(hidden_runtime.get("batch_size_per_gpu", 2)),
+        str(hidden_extract_cfg.get("batch_size_per_gpu", hidden_runtime.get("batch_size_per_gpu", 2))),
         "--extract_max_length",
         str(model.get("max_length", 4096)),
         "--pause_token",

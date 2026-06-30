@@ -8,4 +8,5 @@ run:
 
 probe:
   hidden_extraction:
+    batch_size_per_gpu: 24
     train_shards: 1
