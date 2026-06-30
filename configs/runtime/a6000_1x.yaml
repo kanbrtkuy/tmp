@@ -18,6 +18,9 @@ runtime:
     extract_jobs: 1
     extract_train_shards: 1
     batch_size_per_gpu: 4
+    # Prefer faster hot-path writes on local NVMe; completed modules are
+    # persisted to cold storage and cleaned from hot storage by Stage1.
+    compression: uncompressed
   probes:
     single_scan_backend: batched
     # Probe training is made of many small linear/MLP jobs. On a single A6000,
