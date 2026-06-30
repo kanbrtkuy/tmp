@@ -8,8 +8,11 @@ run:
 stage1_pipeline:
   storage:
     # Stage1 hidden-state caches are hot-path artifacts. Keep them on local
-    # ephemeral storage during a run; sync selected results/checkpoints out after.
+    # ephemeral storage during a module/fold; persist and release each completed
+    # module/fold before starting the next one.
     hot_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}
+    sync_to_cold_after_module: true
+    remove_hot_after_sync: true
 
   position_scan:
     enabled: true

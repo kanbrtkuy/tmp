@@ -6,6 +6,7 @@ import csv
 import json
 import math
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -119,6 +120,127 @@ def run_one(
     if args.dry_run:
         return 0
     return subprocess.run(cmd, cwd=legacy_root, env=os.environ.copy()).returncode
+
+
+def resolve_path(path: str | Path) -> Path:
+    return Path(os.path.expandvars(str(path))).expanduser().resolve(strict=False)
+
+
+def cold_root() -> Path:
+    return resolve_path(os.environ.get("COT_SAFETY_COLD_ROOT", "/workspace"))
+
+
+def run_cold_root() -> Path:
+    return cold_root() / "cot-safety" / "runs"
+
+
+def cold_path_for_hot(hot_path: str | Path) -> Path:
+    hot = resolve_path(hot_path)
+    hot_root = resolve_path(os.environ.get("COT_SAFETY_HOT_ROOT", "/dev/shm/cot-safety-hot"))
+    mappings = [
+        (resolve_path(os.environ.get("COT_SAFETY_OUTPUT_ROOT", "/workspace/outputs")), cold_root() / "outputs"),
+        (resolve_path(os.environ.get("COT_SAFETY_DATA_ROOT", "/workspace/data")), cold_root() / "data"),
+        (resolve_path(os.environ.get("COT_SAFETY_RUN_ROOT", str(REPO_ROOT / "runs"))), run_cold_root()),
+        (hot_root / "outputs", cold_root() / "outputs"),
+        (hot_root / "data", cold_root() / "data"),
+        (hot_root / "runs", run_cold_root()),
+    ]
+    for hot_base, cold_base in mappings:
+        try:
+            rel = hot.relative_to(hot_base)
+        except ValueError:
+            continue
+        return cold_base / rel
+    return run_cold_root() / "stage1_misc" / hot.name
+
+
+def same_path(left: Path, right: Path) -> bool:
+    return resolve_path(left) == resolve_path(right)
+
+
+def copy_hot_to_cold(src: Path, dst: Path) -> None:
+    if not src.exists():
+        print(f"skip missing hot path: {src}")
+        return
+    if same_path(src, dst):
+        print(f"skip hot-to-cold sync because path is already cold: {src}")
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    print(f"persisting stage1 hot path: {src} -> {dst}")
+    if shutil.which("rsync"):
+        if src.is_dir():
+            dst.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["rsync", "-a", f"{src}/", f"{dst}/"], check=True)
+        else:
+            subprocess.run(["rsync", "-a", str(src), str(dst)], check=True)
+    elif src.is_dir():
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+    else:
+        shutil.copy2(src, dst)
+    if dst.is_dir():
+        (dst / ".synced_to_cold").write_text("stage1 synced\n", encoding="utf-8")
+
+
+def remove_synced_hot(src: Path, dst: Path) -> None:
+    if not src.exists() or same_path(src, dst):
+        return
+    if dst.is_dir() and not (dst / ".synced_to_cold").exists():
+        raise RuntimeError(f"Refusing to remove hot path without cold marker: {dst}")
+    if not dst.exists():
+        raise RuntimeError(f"Refusing to remove hot path; cold copy is missing: {dst}")
+    print(f"removing synced stage1 hot path: {src}")
+    if src.is_dir():
+        shutil.rmtree(src)
+    else:
+        src.unlink()
+
+
+def stage1_hot_paths(config: dict[str, Any]) -> list[Path]:
+    paths = stage1_legacy.stage_paths(config)
+    return [
+        resolve_path(paths["data_dir"]),
+        resolve_path(paths["hidden_dir"]),
+        resolve_path(paths["log_dir"]),
+        resolve_path(paths["single_scan_out_root"]).parent,
+    ]
+
+
+def cold_config_for_hot(config: dict[str, Any]) -> dict[str, Any]:
+    paths = stage1_legacy.stage_paths(config)
+    cold_config = deepcopy(config)
+    cold_config["legacy"] = {
+        "data_dir": str(cold_path_for_hot(paths["data_dir"])),
+        "hidden_dir": str(cold_path_for_hot(paths["hidden_dir"])),
+        "hidden_prefix": paths["hidden_prefix"],
+        "log_dir": str(cold_path_for_hot(paths["log_dir"])),
+        "single_scan_out_root": str(cold_path_for_hot(paths["single_scan_out_root"])),
+        "multilayer_out_root": str(cold_path_for_hot(paths["multilayer_out_root"])),
+    }
+    return cold_config
+
+
+def sync_stage1_run(config: dict[str, Any], pipeline: dict[str, Any]) -> None:
+    storage = pipeline.get("storage", {})
+    if not bool(storage.get("sync_to_cold_after_module", True)):
+        return
+    remove_hot = bool(storage.get("remove_hot_after_sync", True))
+    for hot_path in stage1_hot_paths(config):
+        cold_path = cold_path_for_hot(hot_path)
+        copy_hot_to_cold(hot_path, cold_path)
+        if remove_hot:
+            remove_synced_hot(hot_path, cold_path)
+
+
+def sync_stage1_path(path: Path, pipeline: dict[str, Any]) -> None:
+    storage = pipeline.get("storage", {})
+    if not bool(storage.get("sync_to_cold_after_module", True)):
+        return
+    cold_path = cold_path_for_hot(path)
+    copy_hot_to_cold(path, cold_path)
+    if bool(storage.get("remove_hot_after_sync", True)):
+        remove_synced_hot(path, cold_path)
 
 
 def read_tsv(path: Path) -> list[dict[str, str]]:
@@ -316,13 +438,15 @@ def enrich_loso_rows(
 
 def aggregate_loso(
     pipeline: dict[str, Any],
-    completed: list[tuple[str, dict[str, Any], dict[str, Any]]],
+    completed: list[tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]],
     out_dir: Path,
 ) -> None:
     all_rows: list[dict[str, Any]] = []
-    for module_name, family, config in completed:
-        paths = stage1_legacy.stage_paths(config)
-        run_name = str(config.get("run", {}).get("name", "stage1_loso"))
+    for module_name, family, hot_config, cold_config in completed:
+        hot_paths = stage1_legacy.stage_paths(hot_config)
+        cold_paths = stage1_legacy.stage_paths(cold_config)
+        paths = cold_paths if Path(cold_paths["single_scan_out_root"]).exists() else hot_paths
+        run_name = str(hot_config.get("run", {}).get("name", "stage1_loso"))
         single_rows = read_tsv(Path(paths["single_scan_out_root"]) / "summary_grid.tsv")
         multi_rows = read_tsv(Path(paths["multilayer_out_root"]) / "summary_grid.tsv")
         all_rows.extend(
@@ -436,19 +560,23 @@ def main() -> None:
     selected = set(args.only or ["position_scan", "prompt_baseline", "loso"])
 
     failures: list[tuple[str, int]] = []
-    loso_completed: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    loso_completed: list[tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
 
     if "position_scan" in selected and enabled(pipeline, "position_scan"):
         run_config = module_config(config, pipeline, "position_scan")
         rc = run_one(args, run_config, legacy_root, label="Stage1 position scan")
         if rc:
             failures.append(("position_scan", rc))
+        elif not args.dry_run:
+            sync_stage1_run(run_config, pipeline)
 
     if "prompt_baseline" in selected and enabled(pipeline, "prompt_baseline"):
         run_config = module_config(config, pipeline, "prompt_baseline")
         rc = run_one(args, run_config, legacy_root, label="Stage1b prompt/pre-CoT baseline")
         if rc:
             failures.append(("prompt_baseline", rc))
+        elif not args.dry_run:
+            sync_stage1_run(run_config, pipeline)
 
     if "loso" in selected and enabled(pipeline, "loso"):
         loso = pipeline.get("loso", {})
@@ -478,10 +606,14 @@ def main() -> None:
                 if rc:
                     failures.append((f"loso/{module_name}/{family_name}", rc))
                 else:
-                    loso_completed.append((module_name, family, run_config))
+                    cold_config = cold_config_for_hot(run_config)
+                    if not args.dry_run:
+                        sync_stage1_run(run_config, pipeline)
+                    loso_completed.append((module_name, family, run_config, cold_config))
         if not args.dry_run and bool(loso.get("aggregate", True)):
             out_dir = Path(stage1_legacy.resolve_value(pipeline.get("loso", {}).get("summary_dir", "${COT_SAFETY_RUN_ROOT:-runs}/stage1_loso_summary")))
             aggregate_loso(pipeline, loso_completed, out_dir)
+            sync_stage1_path(out_dir, pipeline)
 
     if failures:
         for label, rc in failures:

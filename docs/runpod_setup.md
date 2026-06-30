@@ -113,10 +113,14 @@ ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source /workspace/secrets/hf.env
 ```
 
 For debugging a single component, add `--only position_scan`,
-`--only prompt_baseline`, or `--only loso`.  The unified runner writes hot
+`--only prompt_baseline`, or `--only loso`.  The unified runner writes active
 hidden-state caches and probe outputs under
-`${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}` and writes resolved configs
-under `runs/`.  LOSO summaries are aggregated into
+`${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}` while a module is running.
+After each successful position-scan, prompt-baseline, or LOSO fold, it syncs
+that module's hot `data/`, hidden-state cache, logs, and probe output directory
+to `/workspace` and then removes the hot copy after a `.synced_to_cold` marker
+exists.  This keeps `/dev/shm` from accumulating all LOSO folds.  Resolved
+configs are written under `runs/`.  LOSO summaries are aggregated into
 `${COT_SAFETY_RUN_ROOT:-runs}/stage1_loso_summary/`:
 
 - `stage1_loso_summary_grid.tsv/json`
