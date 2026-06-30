@@ -51,7 +51,11 @@ def run_logged(
     cwd: Path,
     env: dict[str, str],
     dry_run: bool,
-) -> None:
+    watcher_cmd: list[str] | None = None,
+    watcher_pid_file: Path | None = None,
+    watcher_log: Path | None = None,
+    watcher_timeout_seconds: int = 900,
+) -> int:
     print("$ " + " ".join(cmd))
     for name in (
         "NPROC_PER_NODE",
@@ -81,8 +85,45 @@ def run_logged(
         if name in env:
             print(f"{name}={env[name]}")
     if dry_run:
-        return
-    raise SystemExit(subprocess.run(cmd, cwd=cwd, env=env).returncode)
+        if watcher_cmd:
+            print("[dry-run] hot checkpoint watcher: " + " ".join(watcher_cmd))
+        return 0
+
+    watcher_proc = None
+    watcher_log_handle = None
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env)
+    try:
+        if watcher_cmd and watcher_pid_file:
+            watcher_pid_file.parent.mkdir(parents=True, exist_ok=True)
+            watcher_pid_file.write_text(str(proc.pid), encoding="utf-8")
+            if watcher_log:
+                watcher_log.parent.mkdir(parents=True, exist_ok=True)
+                watcher_log_handle = watcher_log.open("a", encoding="utf-8")
+            print("[stage2] hot checkpoint watcher: " + " ".join(watcher_cmd))
+            watcher_proc = subprocess.Popen(
+                watcher_cmd,
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                stdout=watcher_log_handle or subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+            )
+        rc = proc.wait()
+        if watcher_proc:
+            try:
+                watcher_proc.wait(timeout=watcher_timeout_seconds)
+            except subprocess.TimeoutExpired:
+                print(
+                    f"[stage2] hot checkpoint watcher did not exit within "
+                    f"{watcher_timeout_seconds}s; terminating it."
+                )
+                watcher_proc.terminate()
+                watcher_proc.wait(timeout=60)
+        return rc
+    finally:
+        if watcher_pid_file:
+            watcher_pid_file.unlink(missing_ok=True)
+        if watcher_log_handle:
+            watcher_log_handle.close()
 
 
 def run_checked(
@@ -283,7 +324,8 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
     if sft.get("resume_from_checkpoint") not in (None, ""):
         env["RESUME_FROM_CHECKPOINT"] = str(resolve_value(sft["resume_from_checkpoint"]))
     format_only = sft.get("format_only", {}) or {}
-    format_only_enabled = str(sft.get("method", "")).lower() == "format_only" or bool(
+    sft_method = str(sft.get("method", "")).lower()
+    format_only_enabled = sft_method in {"format_only", "embedding_only"} or bool(
         format_only.get("enabled", False)
     )
     env["FORMAT_ONLY"] = str(format_only_enabled).lower()
@@ -321,6 +363,100 @@ def train_command(
     ], env
 
 
+def output_dir_from_config(config: dict[str, Any]) -> str:
+    run = config.get("run", {})
+    return str(resolve_value(run.get("output_dir", "/workspace/outputs/stage2_intra_pause_sft")))
+
+
+def relative_to_root(path: str, root: str) -> str | None:
+    path_abs = os.path.abspath(path)
+    root_abs = os.path.abspath(root)
+    try:
+        common = os.path.commonpath([path_abs, root_abs])
+    except ValueError:
+        return None
+    if common != root_abs:
+        return None
+    rel = os.path.relpath(path_abs, root_abs)
+    return "" if rel == "." else rel
+
+
+def bool_config(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def build_hot_checkpoint_watcher(
+    config: dict[str, Any],
+    env: dict[str, str],
+    repo_root: Path,
+    output_dir: str,
+) -> tuple[list[str], Path, Path, int] | None:
+    sft = config.get("sft", {})
+    sync_cfg = sft.get("hot_checkpoint_sync", {}) or {}
+    if str(os.environ.get("COT_SAFETY_DISABLE_HOT_CHECKPOINT_SYNC", "")).lower() in {"1", "true", "yes"}:
+        return None
+    if not bool_config(sync_cfg.get("enabled"), True):
+        return None
+
+    output_root = env.get("COT_SAFETY_OUTPUT_ROOT") or os.environ.get("COT_SAFETY_OUTPUT_ROOT")
+    cold_root = env.get("COT_SAFETY_COLD_ROOT") or os.environ.get("COT_SAFETY_COLD_ROOT", "/workspace")
+    if not output_root:
+        return None
+    output_rel = relative_to_root(output_dir, output_root)
+    if not output_rel:
+        return None
+    cold_outputs = os.path.abspath(os.path.join(cold_root, "outputs"))
+    if os.path.commonpath([os.path.abspath(output_root), cold_outputs]) == cold_outputs:
+        return None
+
+    watcher = repo_root / "pipelines/runpod_watch_hot_checkpoints.sh"
+    if not watcher.exists():
+        return None
+
+    run_name = str(config.get("run", {}).get("name", "stage2_intra_pause_sft"))
+    state_dir = Path(env.get("COT_SAFETY_RUN_ROOT", str(repo_root / "runs"))) / "stage2_hot_sync"
+    pid_file = state_dir / f"{run_name}.train.pid"
+    log_file = state_dir / f"{run_name}.watcher.log"
+    keep_latest = int(sync_cfg.get("keep_latest_hot", 1))
+    keep_best = bool_config(sync_cfg.get("keep_best_hot"), bool_config(sft.get("load_best_model_at_end")))
+    remove_checkpoints = bool_config(sync_cfg.get("remove_hot_after_sync"), True)
+    sync_output_after_stop = bool_config(sync_cfg.get("sync_output_after_stop"), True)
+    remove_output_after_stop = bool_config(sync_cfg.get("remove_hot_output_after_stop"), True)
+    interval = int(sync_cfg.get("interval_seconds", 60))
+    timeout = int(sync_cfg.get("timeout_seconds", 900))
+
+    cmd = [
+        "bash",
+        str(watcher),
+        "--output",
+        output_rel,
+        "--interval",
+        str(interval),
+        "--stop-pid-file",
+        str(pid_file),
+    ]
+    if remove_checkpoints:
+        cmd.append("--remove-hot-after-sync")
+    if keep_latest > 0:
+        cmd.extend(["--keep-latest-hot", str(keep_latest)])
+    if keep_best:
+        cmd.append("--keep-best-hot")
+    if sync_output_after_stop:
+        cmd.append("--sync-output-after-stop")
+    if remove_output_after_stop:
+        cmd.append("--remove-hot-output-after-stop")
+
+    print(
+        "[stage2] hot checkpoint sync enabled: "
+        f"{output_dir} -> {cold_root}/outputs/{output_rel}"
+    )
+    return cmd, pid_file, log_file, timeout
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Stage 2 intra-pause SFT from config.")
     parser.add_argument("--config", default="configs/experiment/stage2_intra_pause_sft.yaml")
@@ -334,6 +470,7 @@ def main() -> None:
     parser.add_argument("--resume_from_checkpoint", default=None)
     parser.add_argument("--disable_save_before_train", action="store_true")
     parser.add_argument("--disable_gradient_checkpointing", action="store_true")
+    parser.add_argument("--disable_hot_checkpoint_sync", action="store_true")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -351,6 +488,9 @@ def main() -> None:
         runtime_config = config.setdefault("runtime", {})
         runtime_sft_config = runtime_config.setdefault("sft", {})
         runtime_sft_config["gradient_checkpointing"] = False
+    if args.disable_hot_checkpoint_sync:
+        sync_config = sft_config.setdefault("hot_checkpoint_sync", {})
+        sync_config["enabled"] = False
     selected_model = model_path(config.get("model", {}))
     paths = stage2_paths(config)
 
@@ -372,7 +512,19 @@ def main() -> None:
         print("[skip] training")
         return
     cmd, env = train_command(config, args, legacy_root, selected_model)
-    run_logged(cmd, cwd=legacy_root, env=env, dry_run=args.dry_run)
+    output_dir = output_dir_from_config(config)
+    watcher = build_hot_checkpoint_watcher(config, env, repo_root, output_dir)
+    rc = run_logged(
+        cmd,
+        cwd=legacy_root,
+        env=env,
+        dry_run=args.dry_run,
+        watcher_cmd=watcher[0] if watcher else None,
+        watcher_pid_file=watcher[1] if watcher else None,
+        watcher_log=watcher[2] if watcher else None,
+        watcher_timeout_seconds=watcher[3] if watcher else 900,
+    )
+    raise SystemExit(rc)
 
 
 if __name__ == "__main__":

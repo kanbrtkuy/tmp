@@ -25,3 +25,14 @@ sft:
   completion_loss_starts_after: assistant_template
   add_special_tokens:
     - "<|pause|>"
+  # When RunPod hot storage is enabled, Stage2 checkpoints are written under
+  # /dev/shm first. The runner automatically syncs complete checkpoints to
+  # /workspace and removes hot copies so long SFT runs do not fill /dev/shm.
+  hot_checkpoint_sync:
+    enabled: true
+    interval_seconds: 60
+    remove_hot_after_sync: true
+    keep_latest_hot: 1
+    keep_best_hot: true
+    sync_output_after_stop: true
+    remove_hot_output_after_stop: true

@@ -41,6 +41,15 @@ cold_run_root() {
   printf '%s/cot-safety/runs' "${COT_SAFETY_COLD_ROOT}"
 }
 
+resolve_path() {
+  python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+print(Path(sys.argv[1]).resolve(strict=False))
+PY
+}
+
 copy_path() {
   local src="$1"
   local dst="$2"
@@ -52,8 +61,8 @@ copy_path() {
 
   mkdir -p "$(dirname "${dst}")"
   local src_real dst_real
-  src_real="$(readlink -f "${src}")"
-  dst_real="$(readlink -m "${dst}")"
+  src_real="$(resolve_path "${src}")"
+  dst_real="$(resolve_path "${dst}")"
   if [[ "${src_real}" == "${dst_real}" ]]; then
     echo "already cold: ${src} -> ${dst}"
     return 0
@@ -62,14 +71,18 @@ copy_path() {
   echo "persisting: ${src} -> ${dst}"
   if command -v rsync >/dev/null 2>&1; then
     local extra=()
+    local progress=()
     if [[ "${DELETE:-0}" == "1" ]]; then
       extra+=(--delete)
     fi
+    if rsync --help 2>/dev/null | grep -q -- '--info='; then
+      progress+=(--info=progress2)
+    fi
     if [[ -d "${src}" ]]; then
       mkdir -p "${dst}"
-      rsync -a "${extra[@]}" --info=progress2 "${src}/" "${dst}/"
+      rsync -a "${extra[@]}" "${progress[@]}" "${src}/" "${dst}/"
     else
-      rsync -a "${extra[@]}" --info=progress2 "${src}" "${dst}"
+      rsync -a "${extra[@]}" "${progress[@]}" "${src}" "${dst}"
     fi
   else
     if [[ "${DELETE:-0}" == "1" ]]; then
@@ -93,8 +106,8 @@ remove_hot_after_sync() {
   local dst="$2"
   local src_real dst_real
 
-  src_real="$(readlink -f "${src}")"
-  dst_real="$(readlink -m "${dst}")"
+  src_real="$(resolve_path "${src}")"
+  dst_real="$(resolve_path "${dst}")"
   if [[ "${src_real}" == "${dst_real}" ]]; then
     echo "not removing hot path because it is already cold: ${src}"
     return 0
