@@ -20,8 +20,17 @@ runtime:
     batch_size_per_gpu: 4
   probes:
     single_scan_backend: batched
-    dynamic_task_multiplier: 4
-    jobs: 12
+    # Probe training is made of many small linear/MLP jobs. On a single A6000,
+    # one worker leaves GPU/CPU mostly idle, so run several small workers in
+    # parallel while keeping per-job CPU threads modest.
+    dynamic_task_multiplier: 8
+    jobs: 32
+    worker_slots_per_gpu: 8
+    jobs_per_gpu: 8
+    scan_batch_size: 1024
+    scan_eval_batch_size: 4096
+    multilayer_jobs: 8
+    cpu_threads_per_job: 2
     device: cuda
   generation:
     workers: 1
