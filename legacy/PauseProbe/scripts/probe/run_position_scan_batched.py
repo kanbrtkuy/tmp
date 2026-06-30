@@ -648,7 +648,10 @@ def run_worker_blocking(worker_id: int, device: str, specs: list[ProbeSpec], arg
 def run_dynamic_workers(args: argparse.Namespace, pending: list[ProbeSpec], devices: list[str]) -> None:
     worker_slots = min(args.jobs, len(devices) * args.worker_slots_per_gpu, len(pending))
     task_count = min(len(pending), max(worker_slots, len(devices) * args.dynamic_task_multiplier))
-    chunks = chunk_contiguous(pending, task_count)
+    # Spread neighboring position/layer probes across chunks. Adjacent specs can
+    # have similar runtime, so contiguous chunks are more likely to create tail
+    # workers than round-robin chunks when a GPU has many worker slots.
+    chunks = chunk_round_robin(pending, task_count)
     task_queue: queue.Queue[tuple[int, list[ProbeSpec]]] = queue.Queue()
     for task_id, chunk in enumerate(chunks):
         task_queue.put((task_id, chunk))
