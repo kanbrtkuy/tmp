@@ -226,6 +226,7 @@ def locate_positions(
     n_pause_tokens: int,
     cot_offsets: list[int],
     cot_fracs: list[float],
+    prompt_positions: list[str],
     require_explicit_think: bool,
     pause_layout: str = "pre_think",
     pre_pause_window: int = 0,
@@ -241,6 +242,12 @@ def locate_positions(
     assistant_end = assistant_start + len(assistant_ids)
     info["assistant_start"] = assistant_start
     info["assistant_end"] = assistant_end
+    if "last_prompt_token" in prompt_positions and assistant_start > 0:
+        positions["last_prompt_token"] = assistant_start - 1
+    if "assistant_start" in prompt_positions:
+        positions["assistant_start"] = assistant_start
+    if "assistant_last" in prompt_positions and assistant_end > assistant_start:
+        positions["assistant_last"] = assistant_end - 1
 
     if not require_explicit_think:
         pause_positions = find_pause_run(input_ids, pause_ids, n_pause_tokens, start=assistant_end)
@@ -288,6 +295,8 @@ def locate_positions(
     if think_start is None:
         info["parse_status"] = "missing_think_token"
         return positions, info
+    if "pre_think" in prompt_positions and think_start > 0:
+        positions["pre_think"] = think_start - 1
     positions["think_last"] = think_start + len(think_ids) - 1
     reasoning_start = think_start + len(think_ids)
 
@@ -420,6 +429,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--layers", type=parse_csv_ints, default=[-1])
     parser.add_argument("--cot_offsets", type=parse_nonnegative_csv_ints, default=[0, 8, 16, 32, 64, 128])
     parser.add_argument("--cot_fracs", type=parse_float_list, default=[])
+    parser.add_argument(
+        "--prompt_positions",
+        default="",
+        help=(
+            "Comma-separated prompt/pre-CoT positions to save, for Stage1b "
+            "prompt-only controls. Supported: last_prompt_token, assistant_start, "
+            "assistant_last, pre_think."
+        ),
+    )
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--max_length", type=int, default=4096)
     parser.add_argument("--limit", type=int, default=None)
@@ -455,6 +473,13 @@ def parse_args() -> argparse.Namespace:
         parser.error("--n_pause_tokens must be non-negative.")
     if args.pre_pause_window < 0 or args.post_pause_window < 0:
         parser.error("--pre_pause_window and --post_pause_window must be non-negative.")
+    args.prompt_positions = [
+        piece.strip() for piece in str(args.prompt_positions).split(",") if piece.strip()
+    ]
+    allowed_prompt_positions = {"last_prompt_token", "assistant_start", "assistant_last", "pre_think"}
+    bad_prompt_positions = sorted(set(args.prompt_positions) - allowed_prompt_positions)
+    if bad_prompt_positions:
+        parser.error(f"Unsupported --prompt_positions values: {bad_prompt_positions}")
     return args
 
 
@@ -515,6 +540,7 @@ def main() -> None:
     label_counts = Counter()
     parse_counts = Counter()
     position_names = []
+    position_names.extend(args.prompt_positions)
     if args.n_pause_tokens > 0 and args.pause_layout != "none":
         position_names.extend(f"pause_{i}" for i in range(args.n_pause_tokens))
     if require_explicit_think:
@@ -561,6 +587,7 @@ def main() -> None:
             n_pause_tokens=args.n_pause_tokens,
             cot_offsets=args.cot_offsets,
             cot_fracs=args.cot_fracs,
+            prompt_positions=args.prompt_positions,
             require_explicit_think=require_explicit_think,
             pause_layout=args.pause_layout,
             pre_pause_window=args.pre_pause_window,
@@ -713,6 +740,7 @@ def main() -> None:
         "layers_requested": args.layers,
         "layer_ids": selected_layer_ids,
         "position_names": position_names,
+        "prompt_positions": args.prompt_positions,
         "label_counts": dict(label_counts),
         "parse_counts": dict(parse_counts),
         "dropped": dict(dropped),

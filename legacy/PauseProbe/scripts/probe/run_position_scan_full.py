@@ -272,6 +272,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--positions", default=",".join(DEFAULT_POSITIONS))
     parser.add_argument("--layers", default=",".join(str(x) for x in DEFAULT_LAYERS))
     parser.add_argument("--cot_offsets", default="0,1,2,3,4,5,6,7,8,9,10,12,16,24,32,48,64,96,128")
+    parser.add_argument(
+        "--prompt_positions",
+        default="",
+        help=(
+            "Comma-separated prompt/pre-CoT positions to include in hidden extraction "
+            "for Stage1b controls."
+        ),
+    )
     parser.add_argument("--pause_token", default="<|pause|>")
     parser.add_argument("--n_pause_tokens", type=int, default=3)
     parser.add_argument(
@@ -484,6 +492,8 @@ def extraction_cmd(args: argparse.Namespace, spec: SplitSpec, layers: list[int],
         ",".join(str(x) for x in layers),
         "--cot_offsets",
         args.cot_offsets,
+        "--prompt_positions",
+        args.prompt_positions,
         "--pause_token",
         args.pause_token,
         "--n_pause_tokens",

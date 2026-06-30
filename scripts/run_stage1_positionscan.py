@@ -113,6 +113,7 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
     selected_model = model_path(model)
     layers = probe.get("layers") or model.get("default_layers")
     positions = probe.get("positions")
+    prompt_positions = probe.get("prompt_positions", [])
     multilayer_positions = (probe.get("multilayer_concat") or {}).get("positions") or positions
     if not layers or not positions:
         raise SystemExit("Stage 1 config must define probe.layers and probe.positions.")
@@ -144,6 +145,8 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
         csv(layers),
         "--positions",
         csv(positions),
+        "--prompt_positions",
+        csv(prompt_positions),
         "--multilayer_positions",
         csv(multilayer_positions),
         "--extract_jobs",

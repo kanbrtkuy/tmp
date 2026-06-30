@@ -17,6 +17,11 @@ class DummyTokenizer:
 def main() -> None:
     for path in [
         "configs/experiment/stage1_positionscan.yaml",
+        "configs/experiment/stage1_positionscan_1p5b_2xa6000.yaml",
+        "configs/experiment/stage1_positionscan_8b_2xa6000.yaml",
+        "configs/experiment/stage1b_prompt_baseline.yaml",
+        "configs/experiment/stage1b_prompt_baseline_1p5b_2xa6000.yaml",
+        "configs/experiment/stage1b_prompt_baseline_8b_2xa6000.yaml",
         "configs/experiment/stage2_intra_pause_sft.yaml",
         "configs/experiment/stage2_intra_pause_sft_8b_4xa100.yaml",
         "configs/experiment/stage2_intra_pause_sft_8b_cot3_control_4xa100.yaml",
