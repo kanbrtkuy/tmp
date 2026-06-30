@@ -99,6 +99,38 @@ ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source pipelines/runpod_stage3_e
 ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source pipelines/runpod_stage4_env.sh'
 ```
 
+Stage 1 now has a unified entry point that can run the position scan,
+prompt/pre-CoT baseline, and leave-one-source-family-out generalization from one
+config.  Use this instead of launching Stage1 and Stage1b separately for formal
+runs:
+
+```bash
+# 1.5B on 2x A6000.
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source /workspace/secrets/hf.env; source pipelines/runpod_stage1_env.sh; python3 scripts/run_stage1.py --config configs/experiment/stage1_unified_1p5b_2xa6000.yaml --skip_existing --dry_run'
+
+# 8B on 2x A6000.
+ssh "${POD_ALIAS}" 'cd /dev/shm/cot-safety-src; source /workspace/secrets/hf.env; source pipelines/runpod_stage1_env.sh; python3 scripts/run_stage1.py --config configs/experiment/stage1_unified_8b_2xa6000.yaml --skip_existing --dry_run'
+```
+
+For debugging a single component, add `--only position_scan`,
+`--only prompt_baseline`, or `--only loso`.  The unified runner writes hot
+hidden-state caches and probe outputs under
+`${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}` and writes resolved configs
+under `runs/`.  LOSO summaries are aggregated into
+`${COT_SAFETY_RUN_ROOT:-runs}/stage1_loso_summary/`:
+
+- `stage1_loso_summary_grid.tsv/json`
+- `stage1_loso_best_by_family.tsv/json`
+- `stage1_loso_prompt_vs_trajectory.tsv/json`
+
+The LOSO aggregation uses combined heldout predictions for a source family when
+available.  This matters because some raw sources are safe-only or unsafe-only,
+so raw per-source AUROC can be undefined.  The default LOSO folds are therefore
+label-balanced heldout folds: mixed-label ReasoningShield splits are held out
+directly, while safe-only families such as STAR/AIDSAFE are paired with the
+HarmThoughts unsafe source and reported as combined family-level metrics.  This
+is the paper-facing number; raw source columns remain available for auditing.
+
 If Stage 2 fails here with a bitsandbytes or `libnvJitLink` error, fix the
 CUDA/bitsandbytes environment before training.  Do not switch optimizers unless
 the experiment config explicitly changes `runtime.sft.optim`.
