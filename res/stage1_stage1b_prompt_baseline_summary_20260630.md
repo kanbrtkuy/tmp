@@ -50,6 +50,21 @@ Paper-facing convention:
 
 Stage1 conclusion: both models have strong early-CoT unsafe/safe signal. The strongest single-layer heldout point is `cot_4` for both current dense scans, while in-domain/test strength remains centered around `cot_3`.
 
+### Consistency With Earlier Stage1 Runs
+
+The latest dense scan is consistent with the previous token-position conclusion: the strongest signal remains in early CoT, especially around `cot_3` and `cot_4`. The exact best layer should not be over-interpreted, because this run used a denser layer grid and the top layer varies by split.
+
+| Model | Selection | Latest strongest point | Consistency note |
+|---|---|---|---|
+| 1.5B | single-layer test | `cot_3` layer 17 | Consistent with the earlier `cot_3` / layer-17-region signal. |
+| 1.5B | single-layer heldout | `cot_4` layer 21 | Token remains in the `cot_3`/`cot_4` neighborhood, with this run leaning more toward `cot_4` on heldout. |
+| 8B | single-layer test | `cot_3` layer 17 | Consistent with the earlier strong `cot_3` / layer-17-region result. |
+| 8B | single-layer heldout | `cot_4` layer 12 | Token-level conclusion is consistent with `cot_4`; the exact best layer shifted from the previously discussed layer-20 region to layer 12 under the denser scan. |
+
+Paper-safe phrasing:
+
+> Across both models, the strongest probe signal consistently appears in early CoT positions, especially around `cot_3` and `cot_4`. The exact best layer varies with scan density and split, but the token-position conclusion is stable.
+
 ## Stage1b Prompt-Only / Pre-CoT Controls
 
 ### 1.5B Across Layers
