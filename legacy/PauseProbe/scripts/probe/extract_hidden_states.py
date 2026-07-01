@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -409,6 +411,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_npz", required=True)
     parser.add_argument("--metadata_jsonl", default=None)
     parser.add_argument("--manifest_json", default=None)
+    parser.add_argument(
+        "--progress_json",
+        default=None,
+        help="Write batch-level extraction progress for monitoring/retry diagnostics.",
+    )
     parser.add_argument("--label_field", default=None)
     parser.add_argument(
         "--task",
@@ -483,8 +490,35 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def atomic_write_json(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+    tmp.replace(path)
+
+
+def write_progress(path: Path | None, **kwargs: Any) -> None:
+    if path is None:
+        return
+    payload = dict(kwargs)
+    payload["updated_at"] = time.time()
+    atomic_write_json(path, payload)
+
+
 def main() -> None:
     args = parse_args()
+    progress_path = Path(args.progress_json) if args.progress_json else Path(args.output_npz).with_suffix(".progress.json")
+    start_time = time.time()
+    write_progress(
+        progress_path,
+        status="starting",
+        input_file=args.input_file,
+        output_npz=args.output_npz,
+        processed_examples=0,
+        total_examples=None,
+        elapsed_seconds=0.0,
+    )
 
     try:
         import torch
@@ -532,6 +566,16 @@ def main() -> None:
     rows = read_rows(Path(args.input_file))
     if args.limit is not None:
         rows = rows[: args.limit]
+    write_progress(
+        progress_path,
+        status="filtering",
+        input_file=args.input_file,
+        output_npz=args.output_npz,
+        raw_rows=len(rows),
+        processed_examples=0,
+        total_examples=None,
+        elapsed_seconds=time.time() - start_time,
+    )
     extraction_task = infer_extraction_task(rows, args.task, args.pause_token, args.n_pause_tokens)
     require_explicit_think = extraction_task == "trajectory"
 
@@ -625,6 +669,20 @@ def main() -> None:
 
     if not examples:
         raise SystemExit(f"No examples left after filtering. Dropped counts: {dict(dropped)}")
+    write_progress(
+        progress_path,
+        status="extracting",
+        input_file=args.input_file,
+        output_npz=args.output_npz,
+        raw_rows=len(rows),
+        total_examples=len(examples),
+        processed_examples=0,
+        total_batches=math.ceil(len(examples) / args.batch_size),
+        batch_size=args.batch_size,
+        dropped=dict(dropped),
+        label_counts=dict(label_counts),
+        elapsed_seconds=time.time() - start_time,
+    )
 
     pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
     all_features: list[np.ndarray] = []
@@ -670,7 +728,30 @@ def main() -> None:
                         )
             all_features.append(batch_features)
             all_valid_masks.append(batch_valid)
+            processed = min(start + len(batch), len(examples))
+            write_progress(
+                progress_path,
+                status="extracting",
+                input_file=args.input_file,
+                output_npz=args.output_npz,
+                raw_rows=len(rows),
+                total_examples=len(examples),
+                processed_examples=processed,
+                total_batches=math.ceil(len(examples) / args.batch_size),
+                completed_batches=math.ceil(processed / args.batch_size),
+                batch_size=args.batch_size,
+                elapsed_seconds=time.time() - start_time,
+            )
 
+    write_progress(
+        progress_path,
+        status="saving",
+        input_file=args.input_file,
+        output_npz=args.output_npz,
+        total_examples=len(examples),
+        processed_examples=len(examples),
+        elapsed_seconds=time.time() - start_time,
+    )
     features = np.concatenate(all_features, axis=0)
     valid_mask = np.concatenate(all_valid_masks, axis=0)
     save_dtype = np.float16 if args.save_dtype == "float16" else np.float32
@@ -751,9 +832,23 @@ def main() -> None:
         "assistant_token_ids": assistant_ids,
         "think_token_ids": think_ids,
         "end_think_token_ids": end_think_ids,
+        "metadata_rows": len(metadata_rows),
+        "status": "complete",
     }
     manifest_path = Path(args.manifest_json) if args.manifest_json else out_npz.with_suffix(".manifest.json")
     write_json(manifest_path, manifest)
+    write_progress(
+        progress_path,
+        status="complete",
+        input_file=args.input_file,
+        output_npz=str(out_npz),
+        manifest_json=str(manifest_path),
+        metadata_jsonl=str(metadata_path),
+        feature_shape=list(features.shape),
+        total_examples=len(examples),
+        processed_examples=len(examples),
+        elapsed_seconds=time.time() - start_time,
+    )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
 

@@ -239,6 +239,43 @@ def require_file(path: Path) -> None:
         raise FileNotFoundError(f"Missing required file: {path}")
 
 
+def count_jsonl_rows(path: Path) -> int:
+    count = 0
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                count += 1
+    return count
+
+
+def extraction_complete(spec: SplitSpec) -> bool:
+    if not spec.output_npz.exists() or not spec.metadata_jsonl.exists() or not spec.manifest_json.exists():
+        return False
+    try:
+        manifest = read_json(spec.manifest_json)
+        feature_shape = manifest.get("feature_shape")
+        if not isinstance(feature_shape, list) or not feature_shape:
+            return False
+        n_examples = int(feature_shape[0])
+        metadata_rows = manifest.get("metadata_rows")
+        if metadata_rows is not None and int(metadata_rows) != n_examples:
+            return False
+        if count_jsonl_rows(spec.metadata_jsonl) != n_examples:
+            return False
+    except Exception as exc:
+        print(f"incomplete extraction marker for {spec.name}: {exc}")
+        return False
+    return True
+
+
+def require_extraction_complete(spec: SplitSpec) -> None:
+    if not extraction_complete(spec):
+        raise RuntimeError(
+            f"Incomplete extraction for {spec.name}. Expected complete files: "
+            f"{spec.output_npz}, {spec.metadata_jsonl}, {spec.manifest_json}"
+        )
+
+
 def model_hidden_sizes(model_kind: str) -> str:
     if model_kind == "linear":
         return ""
@@ -301,6 +338,14 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="Split the train JSON into this many round-robin shards for parallel hidden extraction, then merge.",
+    )
+    parser.add_argument(
+        "--keep_train_shards",
+        action="store_true",
+        help=(
+            "Keep per-shard train hidden files after a verified merged train file exists. "
+            "By default these intermediate files are removed to avoid duplicate disk use."
+        ),
     )
     parser.add_argument("--torch_dtype", choices=("auto", "float32", "float16", "bfloat16"), default="bfloat16")
     parser.add_argument("--save_dtype", choices=("float16", "float32"), default="float16")
@@ -486,6 +531,8 @@ def extraction_cmd(args: argparse.Namespace, spec: SplitSpec, layers: list[int],
         str(spec.metadata_jsonl),
         "--manifest_json",
         str(spec.manifest_json),
+        "--progress_json",
+        str(spec.output_npz.with_suffix(".progress.json")),
         "--label_field",
         "trajectory_safety_label",
         "--layers",
@@ -523,13 +570,15 @@ def run_extraction_one(
     layers: list[int],
     device: str,
 ) -> str:
-    if args.skip_existing and spec.output_npz.exists() and spec.manifest_json.exists():
+    if args.skip_existing and extraction_complete(spec):
         print(f"skip existing extraction: {spec.name} -> {spec.output_npz}")
         return spec.name
     if not args.dry_run:
         require_file(spec.input_json)
     log_path = Path(args.log_dir) / f"position_scan_full_extract_{spec.name}.log"
     run_logged(extraction_cmd(args, spec, layers, device), log_path, args.dry_run)
+    if not args.dry_run:
+        require_extraction_complete(spec)
     return spec.name
 
 
@@ -571,9 +620,13 @@ def train_shard_specs(args: argparse.Namespace, train_spec: SplitSpec, layers: l
 
 
 def merge_train_shards(args: argparse.Namespace, train_spec: SplitSpec, shard_specs: list[SplitSpec]) -> None:
-    if args.skip_existing and train_spec.output_npz.exists() and train_spec.manifest_json.exists():
+    if args.skip_existing and extraction_complete(train_spec):
         print(f"skip existing train shard merge: {train_spec.output_npz}")
+        cleanup_train_shards(args, train_spec, shard_specs)
         return
+    if not args.dry_run:
+        for shard_spec in shard_specs:
+            require_extraction_complete(shard_spec)
     cmd = [
         args.python,
         "scripts/probe/merge_hidden_shards.py",
@@ -589,6 +642,36 @@ def merge_train_shards(args: argparse.Namespace, train_spec: SplitSpec, shard_sp
     if args.hidden_compression == "compressed":
         cmd.append("--compressed")
     run_logged(cmd, Path(args.log_dir) / "position_scan_full_extract_train_merge.log", args.dry_run)
+    if not args.dry_run:
+        require_extraction_complete(train_spec)
+    cleanup_train_shards(args, train_spec, shard_specs)
+
+
+def cleanup_train_shards(args: argparse.Namespace, train_spec: SplitSpec, shard_specs: list[SplitSpec]) -> None:
+    if args.keep_train_shards or args.dry_run:
+        return
+    require_extraction_complete(train_spec)
+    removed = 0
+    removed_bytes = 0
+    for shard_spec in shard_specs:
+        for path in (
+            shard_spec.output_npz,
+            shard_spec.metadata_jsonl,
+            shard_spec.manifest_json,
+            shard_spec.output_npz.with_suffix(".progress.json"),
+        ):
+            if not path.exists():
+                continue
+            try:
+                removed_bytes += path.stat().st_size
+                path.unlink()
+                removed += 1
+            except FileNotFoundError:
+                pass
+    print(
+        "removed train shard intermediate files after verified merge: "
+        f"files={removed} bytes={removed_bytes}"
+    )
 
 
 def run_hidden_extraction(args: argparse.Namespace, specs: dict[str, SplitSpec], layers: list[int]) -> None:
@@ -597,7 +680,7 @@ def run_hidden_extraction(args: argparse.Namespace, specs: dict[str, SplitSpec],
     jobs = list(specs.values())
     if args.extract_train_shards > 1 and "train" in specs:
         train_spec = specs["train"]
-        if args.skip_existing and train_spec.output_npz.exists() and train_spec.manifest_json.exists():
+        if args.skip_existing and extraction_complete(train_spec):
             print(f"skip train sharding because merged train extraction exists: {train_spec.output_npz}")
         else:
             train_shards = train_shard_specs(args, train_spec, layers)
@@ -639,10 +722,10 @@ def eval_npz_args(specs: dict[str, SplitSpec]) -> list[str]:
 def run_single_scan(args: argparse.Namespace, specs: dict[str, SplitSpec], positions: list[str], layers: list[int]) -> None:
     if not args.dry_run:
         for name in ("train", "val", "test"):
-            require_file(specs[name].output_npz)
+            require_extraction_complete(specs[name])
         for spec in specs.values():
             if spec.name.startswith("source_heldout_"):
-                require_file(spec.output_npz)
+                require_extraction_complete(spec)
     scan_script = (
         "scripts/probe/run_position_scan_batched.py"
         if args.single_scan_backend == "batched"
@@ -881,7 +964,7 @@ def run_multilayer(
 ) -> None:
     if not args.dry_run:
         for name in ("train", "val", "test"):
-            require_file(specs[name].output_npz)
+            require_extraction_complete(specs[name])
     jobs = [(position, layer_combine, model_kind) for model_kind in model_kinds for layer_combine in layer_combines for position in positions]
     probe_devices = parse_csv(args.probe_devices) if args.probe_devices else [args.probe_device]
     if not probe_devices:

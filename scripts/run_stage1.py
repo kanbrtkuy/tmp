@@ -587,6 +587,11 @@ def main() -> None:
     parser.add_argument("--skip_single_scan", action="store_true")
     parser.add_argument("--skip_multilayer", action="store_true")
     parser.add_argument("--skip_existing", action="store_true")
+    parser.add_argument(
+        "--continue_on_failure",
+        action="store_true",
+        help="Continue later modules after a module fails. Defaults to fail-fast to avoid mixed incomplete results.",
+    )
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
 
@@ -601,13 +606,19 @@ def main() -> None:
     failures: list[tuple[str, int]] = []
     loso_completed: list[tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
 
+    def record_failure(label: str, rc: int) -> None:
+        failures.append((label, rc))
+        print(f"FAILED {label}: exit={rc}", file=sys.stderr)
+        if not args.continue_on_failure:
+            raise SystemExit(rc)
+
     if "position_scan" in selected and enabled(pipeline, "position_scan"):
         run_config = module_config(config, pipeline, "position_scan")
         label = "Stage1 position scan"
         if not skip_or_sync_completed_module(args, run_config, pipeline, label=label):
             rc = run_one(args, run_config, legacy_root, label=label)
             if rc:
-                failures.append(("position_scan", rc))
+                record_failure("position_scan", rc)
             elif not args.dry_run:
                 sync_stage1_run(run_config, pipeline)
 
@@ -617,7 +628,7 @@ def main() -> None:
         if not skip_or_sync_completed_module(args, run_config, pipeline, label=label):
             rc = run_one(args, run_config, legacy_root, label=label)
             if rc:
-                failures.append(("prompt_baseline", rc))
+                record_failure("prompt_baseline", rc)
             elif not args.dry_run:
                 sync_stage1_run(run_config, pipeline)
 
@@ -651,13 +662,13 @@ def main() -> None:
                 else:
                     rc = run_one(args, run_config, legacy_root, label=label)
                     if rc:
-                        failures.append((f"loso/{module_name}/{family_name}", rc))
+                        record_failure(f"loso/{module_name}/{family_name}", rc)
                     else:
                         if not args.dry_run:
                             sync_stage1_run(run_config, pipeline)
                             cold_config = cold_config_for_hot(run_config)
                         loso_completed.append((module_name, family, run_config, cold_config))
-        if not args.dry_run and bool(loso.get("aggregate", True)):
+        if not failures and not args.dry_run and bool(loso.get("aggregate", True)):
             out_dir = Path(stage1_legacy.resolve_value(pipeline.get("loso", {}).get("summary_dir", "${COT_SAFETY_RUN_ROOT:-runs}/stage1_loso_summary")))
             aggregate_loso(pipeline, loso_completed, out_dir)
             sync_stage1_path(out_dir, pipeline)
