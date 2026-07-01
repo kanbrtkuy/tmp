@@ -177,5 +177,8 @@ Complete Stage1 + Stage1b remote archive:
 
 2026-07-01 R2 archive update:
 
-- 1.5B Stage1/Stage1b + LOSO tarstream archive has been migrated to Cloudflare R2: `cloudflare_r2_cot_safety:cot-safety/runpod-backups/20260701-stage1-1p5b-a6000-tarstream/`
-- 8B Stage1/Stage1b + LOSO hidden archive is being continuously migrated to Cloudflare R2: `cloudflare_r2_cot_safety:cot-safety/runpod-backups/20260701-stage1-8b-a6000-stage1/`
+- Cloudflare R2 canonical archive root: `cloudflare_r2_cot_safety:cot-safety/stage1/20260701-a6000/`
+- Current verified size: 69 objects, 708.598 GiB.
+- 1.5B archive: `deepseek-1p5b/` contains `data/`, `runs/results/`, `runs/hidden/`, and `runs/logs/` (55 objects, 152.862 GiB).
+- 8B archive: `deepseek-8b/` currently contains `runs/hidden/` only (14 objects, 555.736 GiB). 8B result summaries are tracked in GitHub under `res/deepseek-8b/` and this Stage1/Stage1b summary; the original RunPod 8B `runs/results/` and `runs/logs/` tar archives were not present in the R2 source backup.
+- The old `runpod-backups/20260701-stage1-1p5b-a6000-tarstream/` and `runpod-backups/20260701-stage1-8b-a6000-stage1/` prefixes were deleted after verifying the canonical archive.

@@ -179,5 +179,8 @@ LOSO 结果支持两个层面的结论：
 
 2026-07-01 R2 归档更新：
 
-- 1.5B Stage1/Stage1b + LOSO tarstream archive 已迁移到 Cloudflare R2：`cloudflare_r2_cot_safety:cot-safety/runpod-backups/20260701-stage1-1p5b-a6000-tarstream/`
-- 8B Stage1/Stage1b + LOSO hidden archive 正在持续迁移到 Cloudflare R2：`cloudflare_r2_cot_safety:cot-safety/runpod-backups/20260701-stage1-8b-a6000-stage1/`
+- Cloudflare R2 canonical archive root：`cloudflare_r2_cot_safety:cot-safety/stage1/20260701-a6000/`
+- 当前校验后的大小：69 objects，708.598 GiB。
+- 1.5B archive：`deepseek-1p5b/` 包含 `data/`、`runs/results/`、`runs/hidden/` 和 `runs/logs/`（55 objects，152.862 GiB）。
+- 8B archive：`deepseek-8b/` 当前只包含 `runs/hidden/`（14 objects，555.736 GiB）。8B 的结果摘要已记录在 GitHub 的 `res/deepseek-8b/` 和本 Stage1/Stage1b summary 中；原始 RunPod 8B `runs/results/` 与 `runs/logs/` tar archives 没有出现在本次 R2 源备份中。
+- 旧的 `runpod-backups/20260701-stage1-1p5b-a6000-tarstream/` 和 `runpod-backups/20260701-stage1-8b-a6000-stage1/` prefixes 已在校验 canonical archive 后删除。

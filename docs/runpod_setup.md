@@ -385,6 +385,63 @@ bash pipelines/runpod_stage_hot_storage.sh \
   --data pause_sft/trusted_cot_18k_intra_cot4
 ```
 
+## Cloudflare R2 Archives
+
+Stage1/Stage1b A6000 archives are stored in Cloudflare R2 under one canonical
+prefix:
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1/20260701-a6000/
+├── deepseek-1p5b/
+│   ├── data/
+│   └── runs/
+│       ├── hidden/
+│       ├── logs/
+│       └── results/
+└── deepseek-8b/
+    └── runs/
+        └── hidden/
+```
+
+Verified size after removing the old duplicated `runpod-backups/` prefixes:
+
+```text
+deepseek-1p5b: 55 objects, 152.862 GiB
+deepseek-8b:   14 objects, 555.736 GiB
+total:         69 objects, 708.598 GiB
+```
+
+The 8B R2 archive currently contains hidden-state tar files only.  The 8B
+Stage1/Stage1b result summaries are tracked in GitHub under `res/deepseek-8b/`
+and `res/stage1_stage1b_prompt_baseline_summary_20260630*.md`; original 8B
+RunPod `runs/results/` and `runs/logs/` tar archives were not present in the
+source backup that was migrated to R2.
+
+Configure the R2 remote on a fresh machine without putting secrets in shell
+history:
+
+```bash
+export R2_ACCESS_KEY_ID='<access-key-id>'
+export R2_SECRET_ACCESS_KEY='<secret-access-key>'
+export R2_ENDPOINT='https://<account-id>.r2.cloudflarestorage.com'
+bash scripts/ops/configure_r2_remote_from_env.sh
+```
+
+List or restore from the canonical archive:
+
+```bash
+rclone lsf cloudflare_r2_cot_safety:cot-safety/stage1/20260701-a6000/ --recursive --max-depth 4
+rclone copy \
+  cloudflare_r2_cot_safety:cot-safety/stage1/20260701-a6000/deepseek-1p5b/runs/results \
+  /workspace/cot-safety/runs/results \
+  --transfers=16 --checkers=32 --fast-list --progress
+```
+
+The helper script `scripts/ops/organize_r2_stage1_backups.sh` documents the
+canonical R2 layout and can be reused if future backups first land under a
+temporary prefix.  Keep old prefixes until the new target is verified with
+`rclone size`; delete them only after the canonical archive size matches.
+
 ## D-State Triage
 
 If `nvidia-smi` shows idle GPUs while a Python job still exists, check whether it
