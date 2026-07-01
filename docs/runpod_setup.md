@@ -5,7 +5,8 @@
 1. Confirm GPU count and storage mounts.
 2. Install code without unpacking many small files on `/workspace`.
 3. Create Python environments or install the editable package.
-4. Inject Hugging Face token and rclone config.
+4. Inject Hugging Face token and rclone config, including the Cloudflare R2
+   remote `cloudflare_r2_cot_safety`.
 5. Restore prepared experiment data from GDrive to the pod volume.
 6. Download base and judge models to the pod volume if they will be reused.
 7. Stage only the active working set from the pod volume to hot storage.
@@ -43,7 +44,32 @@ p = Path("/workspace/secrets/hf.env")
 p.write_text(f"export HF_TOKEN={t}\nexport HUGGING_FACE_HUB_TOKEN={t}\n", encoding="utf-8")
 p.chmod(0o600)
 PY'
+ssh "${POD_ALIAS}" 'rclone lsd cloudflare_r2_cot_safety:cot-safety >/dev/null && echo "Cloudflare R2 remote OK"'
 ```
+
+Before copying `~/.config/rclone/rclone.conf`, make sure the local rclone config
+contains the Cloudflare R2 remote.  Store the R2 credentials outside the repo,
+for example in `~/.safechain_secrets/r2.env`, and source them only in the shell
+that configures rclone:
+
+```bash
+# Run once on the local machine, or whenever the R2 token is rotated.
+cd <LOCAL_COT_SAFETY_REPO>
+source ~/.safechain_secrets/r2.env
+bash scripts/ops/configure_r2_remote_from_env.sh
+rclone lsd cloudflare_r2_cot_safety:cot-safety
+```
+
+Expected variables in `~/.safechain_secrets/r2.env`:
+
+```bash
+export R2_ACCESS_KEY_ID='<access-key-id>'
+export R2_SECRET_ACCESS_KEY='<secret-access-key>'
+export R2_ENDPOINT='https://<account-id>.r2.cloudflarestorage.com'
+```
+
+Do not commit `r2.env`, paste R2 secrets into experiment logs, or pass the
+secret key directly as a command-line argument on shared machines.
 
 2. Install code into hot storage.
 
@@ -253,30 +279,49 @@ fixes that should be applied next time.
 | GPU utilization was low after launch | The job was still in CPU-side dataset map/tokenization. | Wait for `Starting training` and the step progress bar before judging GPU utilization. |
 | `rclone ls` over the full backup was slow | It recursively listed large checkpoint trees. | Use known archive paths, `rclone lsf --dirs-only`, `rclone size`, or direct `rclone cat .../archives/data.tar.gz`. |
 
-## Token Injection
+## Token And R2 Injection
 
-Do not write the real token into GitHub, docs, shell history, or logs.
+Do not write real Hugging Face or Cloudflare R2 secrets into GitHub, docs,
+shell history, command-line arguments, or logs.
 
-Local private token file:
+Local private secret files:
 
 ```bash
 mkdir -p ~/.safechain_secrets
 chmod 700 ~/.safechain_secrets
 printf '%s\n' '<PASTE_HF_TOKEN_HERE>' > ~/.safechain_secrets/hf_token
 chmod 600 ~/.safechain_secrets/hf_token
+cat > ~/.safechain_secrets/r2.env <<'EOF'
+export R2_ACCESS_KEY_ID='<access-key-id>'
+export R2_SECRET_ACCESS_KEY='<secret-access-key>'
+export R2_ENDPOINT='https://<account-id>.r2.cloudflarestorage.com'
+EOF
+chmod 600 ~/.safechain_secrets/r2.env
+```
+
+Configure local rclone once, then copy the resulting rclone config to each pod:
+
+```bash
+cd <LOCAL_COT_SAFETY_REPO>
+source ~/.safechain_secrets/r2.env
+bash scripts/ops/configure_r2_remote_from_env.sh
+rclone lsd cloudflare_r2_cot_safety:cot-safety
 ```
 
 Install on a pod:
 
 ```bash
 POD_ALIAS=<new-runpod-ssh-alias>
-ssh "${POD_ALIAS}" 'mkdir -p /workspace/secrets /workspace/hf_cache /root/.cache/huggingface && chmod 700 /workspace/secrets /root/.cache/huggingface && umask 077 && TOKEN=$(cat) && printf "export HF_TOKEN=%s\nexport HUGGING_FACE_HUB_TOKEN=%s\nexport HF_HOME=/workspace/hf_cache\n" "$TOKEN" "$TOKEN" > /workspace/secrets/hf.env && printf "%s" "$TOKEN" > /root/.cache/huggingface/token' < ~/.safechain_secrets/hf_token
+ssh "${POD_ALIAS}" 'mkdir -p /workspace/secrets /workspace/hf_cache /root/.cache/huggingface /root/.config/rclone && chmod 700 /workspace/secrets /root/.cache/huggingface /root/.config/rclone && umask 077 && TOKEN=$(cat) && printf "export HF_TOKEN=%s\nexport HUGGING_FACE_HUB_TOKEN=%s\nexport HF_HOME=/workspace/hf_cache\n" "$TOKEN" "$TOKEN" > /workspace/secrets/hf.env && printf "%s" "$TOKEN" > /root/.cache/huggingface/token' < ~/.safechain_secrets/hf_token
+scp ~/.config/rclone/rclone.conf "${POD_ALIAS}:/root/.config/rclone/rclone.conf"
+ssh "${POD_ALIAS}" 'chmod 600 /root/.config/rclone/rclone.conf && rclone lsd cloudflare_r2_cot_safety:cot-safety >/dev/null && echo "Cloudflare R2 remote OK"'
 ```
 
 Load for remote commands:
 
 ```bash
 source /workspace/secrets/hf.env
+rclone size cloudflare_r2_cot_safety:cot-safety/stage1/20260701-a6000 --fast-list
 ```
 
 ## Storage Layout
