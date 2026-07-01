@@ -17,6 +17,8 @@ hf_token
 data/
 !configs/data/
 !configs/data/*.yaml
+!scripts/data/
+!scripts/data/*.py
 !legacy/COTPauseToken/configs/data/
 !legacy/COTPauseToken/configs/data/*.yaml
 !legacy/PauseProbe/scripts/data/
