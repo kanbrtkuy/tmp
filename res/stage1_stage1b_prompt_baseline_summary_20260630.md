@@ -103,13 +103,54 @@ Paper-safe phrasing:
 
 > Prompt-conditioned risk signal is already present before CoT, but it is substantially sharpened during early CoT. Therefore, Stage1 is not merely prompt classification; it identifies trajectory positions where unsafe/safe separability becomes stronger.
 
+## Leave-One-Source-Out Generalization
+
+Update on 2026-07-01: Stage1/Stage1b now includes source-family leave-one-out evaluation. Each family is held out and evaluated with family-level AUROC. For 1.5B, multi-source family results were recomputed by merging restored `predictions.jsonl` files from the R2 archive. For 8B, the latest `stage1_loso_summary` aggregate is used.
+
+### 1.5B LOSO
+
+| Heldout family | Position-scan best | AUROC | Prompt-baseline module best | AUROC | Trajectory - prompt gap |
+|---|---|---:|---|---:|---:|
+| `reasoningshield_train_sft` | `cot_3 / layer16` single | 0.908 | `cot_7 / layer22` single | 0.898 | +0.062 |
+| `reasoningshield_train_dpo` | `cot_1 / concat` multilayer | 0.787 | `assistant_last / layer17` single | 0.798 | -0.006 |
+| `reasoningshield_test` | `cot_4 / layer17` single | 0.932 | `cot_4 / concat` multilayer | 0.933 | +0.079 |
+| `star_vs_harmthoughts` | `cot_4 / layer17` single | 0.933 | `cot_4 / layer17` single | 0.934 | +0.015 |
+| `aidsafe_vs_harmthoughts` | `cot_0 / layer4` single | 1.000 | `cot_2 / layer4` single | 1.000 | +0.120 |
+| `unsafechain_vs_harmthoughts` | `cot_1 / layer7` single | 0.995 | `cot_2 / layer22` single | 0.981 | +0.083 |
+
+1.5B position-scan LOSO mean AUROC: 0.926; std: 0.071.
+
+### 8B LOSO
+
+| Heldout family | Position-scan best | AUROC | Prompt-baseline module best | AUROC | Trajectory - prompt gap |
+|---|---|---:|---|---:|---:|
+| `reasoningshield_train_sft` | `cot_3 / layer18` single | 0.909 | `cot_2 / layer14` single | 0.852 | +0.001 |
+| `reasoningshield_train_dpo` | `cot_3 / concat` multilayer | 0.807 | `cot_3 / concat` multilayer | 0.807 | +0.013 |
+| `reasoningshield_test` | `cot_3 / layer14` single | 0.920 | `cot_3 / layer12` single | 0.924 | +0.066 |
+| `star_vs_harmthoughts` | `cot_4 / layer12` single | 0.929 | `cot_4 / layer16` single | 0.933 | +0.012 |
+| `aidsafe_vs_harmthoughts` | `cot_0 / layer4` single | 1.000 | `cot_2 / layer14` single | 0.999 | +0.118 |
+| `unsafechain_vs_harmthoughts` | `cot_0 / layer6` single | 0.995 | `cot_2 / layer12` single | 0.985 | +0.086 |
+
+8B position-scan LOSO mean AUROC: 0.927; std: 0.064.
+
+### LOSO Conclusion
+
+The LOSO results support two separate points:
+
+- On ReasoningShield-style families, the strongest transferable signal remains in early CoT, especially around `cot_3` / `cot_4`. This is consistent with the main Stage1 / Stage1b conclusion.
+- `aidsafe_vs_harmthoughts` and `unsafechain_vs_harmthoughts` show near-perfect separability at `cot_0`, which likely reflects source or format artifacts. These splits are useful diagnostics, but should not be treated as pure trajectory-monitoring evidence.
+
+Paper-safe phrasing:
+
+> Leave-one-source-out evaluation shows that early-CoT risk signals transfer across ReasoningShield-style heldout families. Some mixed-source families are nearly separable at the first CoT token, indicating source or format artifacts; we therefore report them separately and avoid over-claiming trajectory specificity on those splits.
+
 ## What This Does Not Yet Prove
 
-This result addresses the prompt-only / pre-CoT construct-validity concern. It does not yet fully address leave-one-source-out generalization. Current heldout evidence uses ReasoningShield test as the heldout source. The next required robustness check is leave-one-source-out across all training sources, reporting mean and variance across heldout sources.
+This result addresses the prompt-only / pre-CoT construct-validity concern and adds source-family LOSO generalization evidence. The remaining caution is that LOSO families are not equally clean: some mixed-source families show strong source / format artifacts. In paper writing, ReasoningShield-style families should be treated as the primary transfer evidence, while `aidsafe` / `unsafechain` families should be marked as artifact-prone diagnostic splits.
 
 ## Pipeline Status
 
-The current Stage1 + Stage1b code is reusable through config files and has completed full 1.5B and 8B runs on a 2x A6000 RunPod node. The latest runner archives each stage from `/dev/shm` to `/workspace/stage1-results` and cleans hidden arrays after each stage, avoiding the previous `/dev/shm` accumulation failure.
+The current Stage1 + Stage1b code is reusable through config files and has completed full 1.5B and 8B runs on A6000 RunPod nodes. The latest runner archives each stage from hot storage to cold storage and cleans hidden arrays after each stage, avoiding the previous `/dev/shm` or hot-path accumulation failures.
 
 Operationally, the pipeline is now close to production/reusable experiment infrastructure for Stage1 and Stage1b:
 
@@ -121,7 +162,6 @@ Operationally, the pipeline is now close to production/reusable experiment infra
 
 Remaining hardening before calling it fully industrial-grade:
 
-- Add leave-one-source-out Stage1 generalization as a first-class config/module.
 - Add automated post-run sanity checks that assert required summary files exist and contain all requested positions.
 - Add a one-command backup target that works even on fresh pods by injecting only the required rclone remote.
 - Add CI/smoke tests for config parsing and output-schema compatibility.
@@ -134,3 +174,8 @@ Complete Stage1 + Stage1b remote archive:
 - Size: 248 MB
 - SHA256: `3fc07550bca30c5d28ee63c49eee4d970076169abde96c5cad969067105b9c87`
 - GDrive target: `safechain_gdrive:Research/cot-safety/runpod_backups/stage1_stage1b/`
+
+2026-07-01 R2 archive update:
+
+- 1.5B Stage1/Stage1b + LOSO tarstream archive has been migrated to Cloudflare R2: `cloudflare_r2_cot_safety:cot-safety/runpod-backups/20260701-stage1-1p5b-a6000-tarstream/`
+- 8B Stage1/Stage1b + LOSO hidden archive is being continuously migrated to Cloudflare R2: `cloudflare_r2_cot_safety:cot-safety/runpod-backups/20260701-stage1-8b-a6000-stage1/`
