@@ -124,13 +124,21 @@ Fable5 确认的 Stage 1 数据组成如下：
 
 ## 当前下一步
 
-在以下本地检查通过前，不启动 CPU baselines 或 GPU runs：
+已完成的本地测试工作：
 
-1. Completeness flags 和 filtering invariants 的 unit tests。
-2. Tiny synthetic manifest freeze/export dry-run。
-3. 对 clean A-prime/B-prime manifests 做 prompt-group split freeze。
-4. 使用 `reasoning_only` manifest mode 导出 Stage 1 rows。
-5. Text/surface baselines 和 prompt-only controls。
+- 新增 `tests/test_stage1_manifest_freeze_export.py`。
+- `python3 -m py_compile` 已通过，覆盖新增测试和两个 freeze/export 脚本。
+- 临时 synthetic CLI dry-run 已通过：3 个 prompt groups、4 个 pairs、4 条
+  export rows，并确认 prompt hash mismatch 会被拒绝。
+- `python3 -m pytest cot-safety/tests/test_stage1_manifest_freeze_export.py`
+  在本机无法运行，因为当前环境没有安装 `pytest`。
+
+在以下剩余本地检查和数据导出通过前，不启动 CPU baselines 或 GPU runs：
+
+1. 在安装 dev 依赖的环境中运行对应 pytest target。
+2. 对 clean A-prime/B-prime manifests 做 prompt-group split freeze。
+3. 使用 `reasoning_only` manifest mode 导出 Stage 1 rows。
+4. Text/surface baselines 和 prompt-only controls。
 
 这些完成后，第一个 GPU-facing task 才是 clean A-prime 上的 hidden-state
 extraction / probe training。

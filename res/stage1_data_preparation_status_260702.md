@@ -127,13 +127,23 @@ Important constraints:
 
 ## Current Next Steps
 
-No CPU baselines or GPU runs should start until these local checks pass:
+Completed local test work:
 
-1. Unit tests for completeness flags and filtering invariants.
-2. Tiny synthetic manifest freeze/export dry-run.
-3. Prompt-group split freeze over the clean A-prime/B-prime manifests.
-4. Stage 1 export using `reasoning_only` manifest mode.
-5. Text/surface baselines and prompt-only controls.
+- Added `tests/test_stage1_manifest_freeze_export.py`.
+- `python3 -m py_compile` passed for the new test and the two freeze/export
+  scripts.
+- A temporary synthetic CLI dry-run passed: 3 prompt groups, 4 pairs, 4
+  exported rows, and prompt-hash mismatch rejection.
+- `python3 -m pytest cot-safety/tests/test_stage1_manifest_freeze_export.py`
+  could not run on this machine because `pytest` is not installed.
+
+No CPU baselines or GPU runs should start until these remaining local checks
+and data exports pass:
+
+1. Run the pytest target in an environment with dev dependencies installed.
+2. Prompt-group split freeze over the clean A-prime/B-prime manifests.
+3. Stage 1 export using `reasoning_only` manifest mode.
+4. Text/surface baselines and prompt-only controls.
 
 After those pass, the first GPU-facing task is hidden-state extraction/probe
 training on clean A-prime.

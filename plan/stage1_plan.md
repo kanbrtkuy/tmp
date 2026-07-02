@@ -66,9 +66,10 @@ prompts used elsewhere.
 - [x] Freeze original A-prime and B-prime manifests.
 - [x] Audit structural completeness.
 - [x] Produce completeness-clean manifests.
+- [x] Add manifest freeze/export unit tests and pass a tiny synthetic dry-run.
+- [ ] Run the pytest target in an environment with dev dependencies installed.
 - [ ] Freeze Stage 1 prompt-group splits on the clean manifests.
 - [ ] Export Stage 1 teacher-forcing JSONL from the clean manifests.
-- [ ] Run unit tests plus tiny synthetic freeze/export dry-run.
 - [ ] Run CPU/text baselines.
 - [ ] Run GPU hidden-state extraction and probe training.
 

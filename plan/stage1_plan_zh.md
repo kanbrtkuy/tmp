@@ -65,9 +65,10 @@ context-passage QA 格式，和当前 chat-style prompt 分布差异过大。
 - [x] 冻结原始 A-prime 和 B-prime manifests。
 - [x] 执行 structural completeness audit。
 - [x] 生成 completeness-clean manifests。
+- [x] 新增 manifest freeze/export unit tests，并通过 tiny synthetic dry-run。
+- [ ] 在安装 dev 依赖的环境中运行对应 pytest target。
 - [ ] 基于 clean manifests 冻结 Stage 1 prompt-group splits。
 - [ ] 从 clean manifests 导出 Stage 1 teacher-forcing JSONL。
-- [ ] 编写并运行 unit tests + tiny synthetic freeze/export dry-run。
 - [ ] 运行 CPU/text baselines。
 - [ ] 运行 GPU hidden-state extraction 和 probe training。
 
