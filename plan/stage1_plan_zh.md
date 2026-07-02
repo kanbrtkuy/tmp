@@ -186,7 +186,7 @@ python3 scripts/data/freeze_stage1_prompt_splits.py \
   --input-manifest runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/A_prime_manifest.jsonl \
   --input-manifest runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/B_prime_manifest.jsonl \
   --output-jsonl runs/stage1_clean_prompt_splits/stage1_prompt_splits.jsonl \
-  --output-summary runs/stage1_clean_prompt_splits/stage1_prompt_splits_summary.json
+  --summary-json runs/stage1_clean_prompt_splits/stage1_prompt_splits_summary.json
 ```
 
 导出 A-prime Stage 1 rows：
@@ -207,7 +207,9 @@ python3 scripts/data/export_safe_rewrite_pairs_for_stage1.py \
   --output-dir runs/stage1_exports/B_prime_reasoning_only
 ```
 
-在 unit tests 和 tiny synthetic freeze/export dry-run 通过前，不启动 CPU
+执行顺序固定为：先跑 freeze/export tests 和 tiny synthetic dry-run，再基于
+clean manifests 冻结真实 prompt-group splits，然后导出真实 Stage 1
+`reasoning_only` rows。在真实 split/export artifacts 生成前，不启动 CPU
 baselines 或 GPU extraction。
 
 ## Stage 1 gate criteria

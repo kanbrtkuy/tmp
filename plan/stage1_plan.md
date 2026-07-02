@@ -189,7 +189,7 @@ python3 scripts/data/freeze_stage1_prompt_splits.py \
   --input-manifest runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/A_prime_manifest.jsonl \
   --input-manifest runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/B_prime_manifest.jsonl \
   --output-jsonl runs/stage1_clean_prompt_splits/stage1_prompt_splits.jsonl \
-  --output-summary runs/stage1_clean_prompt_splits/stage1_prompt_splits_summary.json
+  --summary-json runs/stage1_clean_prompt_splits/stage1_prompt_splits_summary.json
 ```
 
 Export Stage 1 rows for A-prime:
@@ -210,8 +210,10 @@ python3 scripts/data/export_safe_rewrite_pairs_for_stage1.py \
   --output-dir runs/stage1_exports/B_prime_reasoning_only
 ```
 
-Do not start CPU baselines or GPU extraction until the unit tests and tiny
-synthetic freeze/export dry-run pass.
+Execution order is fixed: first run the freeze/export tests and tiny synthetic
+dry-run, then freeze real prompt-group splits on the clean manifests, then
+export real Stage 1 `reasoning_only` rows. Do not start CPU baselines or GPU
+extraction until the real split/export artifacts exist.
 
 ## Stage 1 Gate Criteria
 

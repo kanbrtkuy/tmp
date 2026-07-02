@@ -259,12 +259,13 @@ python3 scripts/data/freeze_stage1_prompt_splits.py \
   --input-manifest runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/A_prime_manifest.jsonl \
   --input-manifest runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/B_prime_manifest.jsonl \
   --output-jsonl runs/stage1_clean_prompt_splits/stage1_prompt_splits.jsonl \
-  --output-summary runs/stage1_clean_prompt_splits/stage1_prompt_splits_summary.json
+  --summary-json runs/stage1_clean_prompt_splits/stage1_prompt_splits_summary.json
 ```
 
 Status:
 
-- Pending unit tests and tiny synthetic dry-run.
+- Tiny synthetic dry-run passed.
+- Real clean-manifest prompt split freeze has not been run yet.
 
 ### 7. Stage 1 Export
 
@@ -307,7 +308,7 @@ python3 scripts/data/export_safe_rewrite_pairs_for_stage1.py \
 
 Status:
 
-- Pending unit tests and tiny synthetic dry-run.
+- Pending the real clean-manifest prompt split artifact.
 
 ### 8. External Review Bundle
 
@@ -355,5 +356,7 @@ split.
   `res/stage1_data_preparation_status_260702.md` to verify local copies.
 - Do not overwrite original frozen manifests. Use the completeness-clean
   directory for Stage 1.
-- Do not start CPU baselines or GPU extraction until local unit tests and a
-  tiny synthetic freeze/export dry-run pass.
+- Execution order is: local freeze/export tests and tiny synthetic dry-run,
+  then real clean-manifest prompt split freeze, then real `reasoning_only`
+  Stage 1 export. Do not start CPU baselines or GPU extraction until the real
+  split/export artifacts exist.

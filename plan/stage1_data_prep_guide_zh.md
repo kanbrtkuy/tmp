@@ -256,12 +256,13 @@ python3 scripts/data/freeze_stage1_prompt_splits.py \
   --input-manifest runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/A_prime_manifest.jsonl \
   --input-manifest runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/B_prime_manifest.jsonl \
   --output-jsonl runs/stage1_clean_prompt_splits/stage1_prompt_splits.jsonl \
-  --output-summary runs/stage1_clean_prompt_splits/stage1_prompt_splits_summary.json
+  --summary-json runs/stage1_clean_prompt_splits/stage1_prompt_splits_summary.json
 ```
 
 状态：
 
-- 等待 unit tests 和 tiny synthetic dry-run。
+- Tiny synthetic dry-run 已通过。
+- 真实 clean-manifest prompt split freeze 尚未执行。
 
 ### 7. Stage 1 export
 
@@ -303,7 +304,7 @@ python3 scripts/data/export_safe_rewrite_pairs_for_stage1.py \
 
 状态：
 
-- 等待 unit tests 和 tiny synthetic dry-run。
+- 等待真实 clean-manifest prompt split artifact。
 
 ### 8. External review bundle
 
@@ -349,5 +350,7 @@ Primary paired data 已经准备好，但 `S->S` diagnostic data 仍待准备。
   track，请使用 `res/stage1_data_preparation_status_260702.md` 或中文版本中的
   SHA-256 校验本地副本。
 - 不要覆盖原始 frozen manifests。Stage 1 应使用 completeness-clean directory。
-- 在 local unit tests 和 tiny synthetic freeze/export dry-run 通过前，不启动
-  CPU baselines 或 GPU extraction。
+- 执行顺序是：local freeze/export tests 和 tiny synthetic dry-run，真实
+  clean-manifest prompt split freeze，真实 `reasoning_only` Stage 1 export。
+  在真实 split/export artifacts 生成前，不启动 CPU baselines 或 GPU
+  extraction。
