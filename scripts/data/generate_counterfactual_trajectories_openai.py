@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 import re
 import sys
@@ -18,6 +17,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from cot_safety.config import dump_config, load_config
 from cot_safety.utils.io import read_jsonl, write_json
+from cot_safety.utils.secrets import env_required
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 OPENAI_FILES_URL = "https://api.openai.com/v1/files"
@@ -65,13 +65,6 @@ Return JSON only.
 """
 
 
-def env_required(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise RuntimeError(f"{name} is not set")
-    return value
-
-
 def http_json(
     url: str,
     *,
@@ -81,7 +74,7 @@ def http_json(
     timeout: int = 120,
     retries: int = 2,
 ) -> dict[str, Any]:
-    key = env_required("OPENAI_API_KEY")
+    key = env_required("OPENAI_API_KEY", repo_root=REPO_ROOT)
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     request_headers = {
         "Authorization": "Bearer " + key,
@@ -109,7 +102,7 @@ def http_json(
 
 
 def multipart_upload_file(path: Path, *, purpose: str, timeout: int, retries: int) -> dict[str, Any]:
-    key = env_required("OPENAI_API_KEY")
+    key = env_required("OPENAI_API_KEY", repo_root=REPO_ROOT)
     boundary = "----cot-safety-openai-boundary"
     chunks: list[bytes] = []
     chunks.append(
@@ -362,7 +355,7 @@ def submit_batch(config: dict[str, Any], *, allow_external_api: bool) -> None:
 
 
 def get_file_content(file_id: str, *, timeout: int, retries: int) -> str:
-    key = env_required("OPENAI_API_KEY")
+    key = env_required("OPENAI_API_KEY", repo_root=REPO_ROOT)
     url = f"{OPENAI_FILES_URL}/{file_id}/content"
     last_error: Exception | None = None
     for attempt in range(retries + 1):

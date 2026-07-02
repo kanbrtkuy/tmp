@@ -1,0 +1,80 @@
+run:
+  name: unsafe_to_safe_rewrite_pilot
+  resolved_config: ${COT_SAFETY_RUN_ROOT:-runs}/unsafe_to_safe_rewrite_pilot/resolved.yaml
+
+prompt_version: unsafe_to_safe_rewrite_v3_style_profiled
+
+data:
+  input_jsonl: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/unsafe_trajectory_seeds.jsonl
+  output_pairs_jsonl: ${COT_SAFETY_RUN_ROOT:-runs}/unsafe_to_safe_rewrite_pilot/pairs.jsonl
+  output_long_jsonl: ${COT_SAFETY_RUN_ROOT:-runs}/unsafe_to_safe_rewrite_pilot/long_format.jsonl
+  include_unsafe_trajectory: true
+  id_fields:
+    - id
+    - prompt_id
+    - source_id
+  prompt_fields:
+    - prompt
+    - question
+    - instruction
+    - query
+  unsafe_trajectory_fields:
+    - unsafe_trajectory
+    - trajectory
+    - reasoning
+    - cot
+    - response
+    - completion
+  unsafe_final_answer_fields:
+    - unsafe_final_answer
+    - final_answer
+    - answer
+
+selection:
+  seed: 260701
+  n_rows: 3
+  shuffle: true
+  require_unsafe_label: false
+  # Set require_unsafe_label: true when the input has labels that can be
+  # canonicalized by cot_safety.data.labels.label_from_row.
+  label_field:
+  allowed_sources: []
+
+generation:
+  provider: openai
+  model: gpt-4.1
+  temperature: 0.2
+  max_output_tokens: 2200
+  max_unsafe_excerpt_chars: 3500
+  timeout_seconds: 120
+  retries: 2
+  style_profiles:
+    enabled: true
+    seed: 260701
+    choices:
+      - defensive_technical
+      - risk_assessment
+      - incident_response
+      - user_boundary
+      - benign_alternative
+      - balanced_safe_redirect
+  length_matching:
+    enabled: true
+    min_ratio: 0.75
+    max_ratio: 1.10
+    min_reasoning_words: 250
+    max_reasoning_words: 450
+  length_repair:
+    enabled: true
+    max_rounds: 3
+    temperature: 0.2
+    max_output_tokens: 2200
+    auto_after_batch_collect: false
+
+batch:
+  request_jsonl: ${COT_SAFETY_RUN_ROOT:-runs}/unsafe_to_safe_rewrite_pilot/openai_batch_requests.jsonl
+  status_json: ${COT_SAFETY_RUN_ROOT:-runs}/unsafe_to_safe_rewrite_pilot/openai_batch_status.json
+  completion_window: 24h
+  metadata:
+    project: cot-safety
+    stage: unsafe_to_safe_rewrite_pilot

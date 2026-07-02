@@ -1,0 +1,31 @@
+defaults:
+  - unsafe_to_safe_rewrite_harmthoughts_remaining233.yaml
+
+run:
+  name: unsafe_to_safe_rewrite_harmthoughts_remaining233_v4_polish_v3
+  resolved_config: runs/unsafe_to_safe_rewrite_harmthoughts_remaining233_v4/resolved_polish_v3.yaml
+
+data:
+  polish_input_pairs_jsonl: runs/unsafe_to_safe_rewrite_harmthoughts_remaining233_v4/pairs_polished.jsonl
+  polish_output_pairs_jsonl: runs/unsafe_to_safe_rewrite_harmthoughts_remaining233_v4/pairs_polished_v3.jsonl
+  polish_output_long_jsonl: runs/unsafe_to_safe_rewrite_harmthoughts_remaining233_v4/long_format_polished_v3.jsonl
+
+generation:
+  polish:
+    enabled: true
+    prompt_version: safe_polish_v3_explicit_refusal_sweep
+    candidate_mode: explicit_refusal
+    include_boilerplate_candidates: false
+    temperature: 0.2
+    max_output_tokens: 2200
+    min_reasoning_words: 300
+    preserve_length_margin_words: 25
+    max_reasoning_words: 430
+    max_final_words: 80
+
+batch:
+  polish_request_jsonl: runs/unsafe_to_safe_rewrite_harmthoughts_remaining233_v4/openai_polish_v3_round{round}_requests.jsonl
+  polish_status_json: runs/unsafe_to_safe_rewrite_harmthoughts_remaining233_v4/openai_polish_v3_round1_status.json
+  metadata:
+    project: cot-safety
+    stage: safe_polish_harmthoughts_remaining233_v3_explicit_refusal_sweep

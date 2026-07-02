@@ -1,0 +1,42 @@
+run:
+  name: unsafe_to_safe_rewrite_harmthoughts_all1018_v5_controlled_clean
+  resolved_config: runs/unsafe_to_safe_rewrite_harmthoughts_all1018_v4/resolved_polish_v5_controlled_clean.yaml
+
+data:
+  output_pairs_jsonl: runs/unsafe_to_safe_rewrite_harmthoughts_all1018_v4/pairs_polished_v4.jsonl
+  polish_input_pairs_jsonl: runs/unsafe_to_safe_rewrite_harmthoughts_all1018_v4/pairs_polished_v4.jsonl
+  polish_output_pairs_jsonl: runs/unsafe_to_safe_rewrite_harmthoughts_all1018_v4/pairs_polished_v5_controlled_clean.jsonl
+  polish_output_long_jsonl: runs/unsafe_to_safe_rewrite_harmthoughts_all1018_v4/long_format_polished_v5_controlled_clean.jsonl
+
+generation:
+  model: gpt-4.1
+  temperature: 0.2
+  max_output_tokens: 2200
+  timeout_seconds: 120
+  retries: 2
+  polish:
+    enabled: true
+    prompt_version: safe_polish_v5_controlled_clean
+    candidate_mode: controlled_clean
+    controlled_clean: true
+    include_boilerplate_candidates: false
+    hard_boilerplate_reduction: false
+    temperature: 0.2
+    max_output_tokens: 2200
+    min_reasoning_words: 170
+    preserve_length_margin_words: 25
+    max_reasoning_words: 460
+    max_final_words: 80
+    controlled_clean_flags:
+      - persona_prefix
+      - rewrite_meta
+      - think_tags
+      - long_final_answer
+
+batch:
+  completion_window: 24h
+  polish_request_jsonl: runs/unsafe_to_safe_rewrite_harmthoughts_all1018_v4/openai_polish_v5_controlled_clean_round{round}_requests.jsonl
+  polish_status_json: runs/unsafe_to_safe_rewrite_harmthoughts_all1018_v4/openai_polish_v5_controlled_clean_round1_status.json
+  metadata:
+    project: cot-safety
+    stage: safe_polish_harmthoughts_all1018_v5_controlled_clean

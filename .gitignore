@@ -8,6 +8,8 @@ venv/
 
 # Local secrets
 .env
+.env.*
+!.env.example
 *.env
 secrets/
 hf_token
@@ -15,6 +17,8 @@ hf_token
 
 # Large experiment artifacts
 data/
+!src/cot_safety/data/
+!src/cot_safety/data/*.py
 !configs/data/
 !configs/data/*.yaml
 !scripts/data/

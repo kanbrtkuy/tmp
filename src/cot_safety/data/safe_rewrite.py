@@ -27,6 +27,7 @@ DEFAULT_ID_FIELDS = ("id", "prompt_id", "source_id", "uid")
 THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
 DEFAULT_STYLE_PROFILE = "balanced_safe_redirect"
+MIN_GENERATED_SAFE_REASONING_WORDS = 20
 
 STYLE_PROFILES = {
     "balanced_safe_redirect": (
@@ -722,6 +723,11 @@ def update_pair_record_with_generated_safe(
 ) -> dict[str, Any]:
     normalized = normalize_generated_rewrite(generated)
     safe_reasoning_words = word_count(normalized["safe_reasoning"])
+    if safe_reasoning_words < MIN_GENERATED_SAFE_REASONING_WORDS:
+        raise ValueError(
+            "generated safe reasoning is empty or too short "
+            f"({safe_reasoning_words} words; min={MIN_GENERATED_SAFE_REASONING_WORDS})"
+        )
     unsafe_words = int(record.get("unsafe_word_count") or word_count(record.get("unsafe_trajectory", "")))
     target = record.get("length_target", {}) or {}
     generated_style_profile = (
