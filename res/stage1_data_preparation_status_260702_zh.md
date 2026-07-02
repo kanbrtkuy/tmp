@@ -140,7 +140,7 @@ extraction / probe training。
 代码级说明见：
 
 - `scripts/data/README_stage1_data_prep.md`
-- `scripts/data/README_stage1_data_prep_zh.md`
+- `plan/stage1_data_prep_guide_zh.md`
 
 当前 primary 数据准备涉及的主要脚本：
 

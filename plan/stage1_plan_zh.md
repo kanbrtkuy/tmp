@@ -106,6 +106,8 @@ Completeness filtering 删除了 1 条 A-prime row，因为它的 `unsafe_reason
 ## 数据准备代码结构
 
 所有 Stage 1 数据准备代码都位于 `scripts/data/`。
+中文代码用法说明见 `plan/stage1_data_prep_guide_zh.md`；英文代码旁说明见
+`scripts/data/README_stage1_data_prep.md`。
 
 ### Source extraction
 
