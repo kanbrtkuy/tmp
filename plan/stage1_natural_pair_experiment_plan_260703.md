@@ -29,7 +29,7 @@ The natural generated/generated experiments now include four completed generator
 |---|---|---|---|
 | R1-8B | R1-1.5B | Completed | Small extractor diagnostic on 8B natural pairs |
 | R1-8B | R1-8B | Completed | Matched generator/extractor baseline |
-| R1-8B | R1-32B | Completed | Cross-size extractor diagnostic; this was missing from the previous written summary |
+| R1-8B | R1-32B | Completed | Cross-size extractor diagnostic; tests whether 8B-generated trajectory signals remain readable in 32B representations |
 | R1-32B | R1-32B | Completed | Matched 32B generator/extractor diagnostic |
 | R1-32B | R1-8B | Not yet run | Reverse cross-size transfer check |
 

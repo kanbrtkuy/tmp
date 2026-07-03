@@ -51,7 +51,7 @@ The tables below show top rows sorted by test AUROC. These are useful diagnostic
 | Natural 8B generated/generated Stage1b | R1-1.5B | cot_4 / layer18 | 0.7328 | Early CoT signal; prompt/pre-CoT positions are near random |
 | Natural 8B generated/generated Stage1 | R1-8B | cot_128 / layer10 | 0.8403 | Strongest test maxima are late CoT positions |
 | Natural 8B generated/generated Stage1b | R1-8B | cot_7 / layer20 | 0.7462 | Early CoT signal remains visible |
-| Natural 8B generated/generated Stage1 | R1-32B | cot_128 / layer32 | 0.8648 | Cross-size extractor diagnostic; omitted from the previous summary |
+| Natural 8B generated/generated Stage1 | R1-32B | cot_128 / layer32 | 0.8648 | Cross-size extractor diagnostic; 8B-generated late-CoT signal remains readable in 32B representations and is slightly stronger than the matched 8B extractor test maximum |
 | Natural 8B generated/generated Stage1b | R1-32B | cot_4 / layer60 | 0.7375 | Early-CoT signal is similar to the 8B-extractor Stage1b result |
 | Natural 32B generated/generated Stage1 | R1-32B | cot_128 / layer32 | 0.8441 | Representation-scale diagnostic |
 | Natural 32B generated/generated Stage1b | R1-32B | cot_4 / layer44 | 0.8164 | Prompt/pre-CoT baseline remains near random; early CoT signal is strong |
@@ -99,7 +99,7 @@ The 32B generation node was idle during the rescan. It contained 13,905 generate
 
 - Natural same-prompt pairs reduce the most obvious prompt-classification concern: prompt-only text and pre-CoT hidden baselines are near random in the completed natural-pair runs.
 - CoT-position hidden states contain measurable safe/unsafe signal across 1.5B, 8B, and 32B extractors.
-- The omitted cross-size run, R1-8B CoTs with a 32B hidden extractor, is complete and shows a comparable or slightly stronger late-CoT Stage1 test maximum.
+- The cross-size run, R1-8B CoTs with a 32B hidden extractor, shows a comparable or slightly stronger late-CoT Stage1 test maximum.
 - The strongest test-set positions often move later in Stage1 scans, while Stage1b early-CoT positions remain informative.
 - Surface baselines are also strong. This is the main limitation: current results show separability, but not yet clean semantic separability.
 - The next decisive experiments are source-balanced LOSO, token-matched truncation, embedding-based surface baselines, and validation-selected hidden-probe reporting.

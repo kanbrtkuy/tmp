@@ -29,7 +29,7 @@ Stage 1 的目标是验证 safe 与 unsafe reasoning trajectory 是否在模型 
 |---|---|---|---|
 | R1-8B | R1-1.5B | 已完成 | 在 8B natural pairs 上的小模型 extractor diagnostic |
 | R1-8B | R1-8B | 已完成 | generator/extractor 匹配基线 |
-| R1-8B | R1-32B | 已完成 | 跨模型大小 extractor diagnostic；上一版总结漏写了这一组 |
+| R1-8B | R1-32B | 已完成 | 跨模型大小 extractor diagnostic；检验 8B 生成轨迹中的信号能否在 32B 表征中读出 |
 | R1-32B | R1-32B | 已完成 | 32B generator/extractor 匹配 diagnostic |
 | R1-32B | R1-8B | 尚未运行 | 反方向跨模型大小 transfer 检查 |
 
