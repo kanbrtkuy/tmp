@@ -27,6 +27,7 @@ code_snapshot/
 logs/
 manifest/
 runs/
+shm/
 ```
 
 | Prefix | 内容 |
@@ -40,6 +41,10 @@ runs/
 | `logs/cot_natural_env_setup/` | A100 节点环境配置日志。 |
 | `code_snapshot/` | remaining run 和 surface controls 使用到的小型 config、judge prompt 和 script 快照。 |
 | `manifest/` | 源端磁盘占用、源端文件清单、备份元数据和 R2 size 记录。 |
+| `shm/cot-safety-smoke/` | 8B A100 节点 `/dev/shm/cot-safety-smoke` 下的 smoke hidden-state extraction artifacts。 |
+
+备份时也检查了 `/dev/shm/cot-safety-hot/`，其中只有空目录结构，因此没有需要复制到 object store 的文件。
+`/dev/shm` 的 inventory 已记录在 `manifest/` 下。
 
 ## 8B Remaining Run 结果
 
@@ -74,11 +79,17 @@ code snapshot 的两个补充文件完成于：
 2026-07-03T16:48:42Z
 ```
 
+`/dev/shm/cot-safety-smoke` artifacts 的备份和校验完成于：
+
+```text
+2026-07-03T16:51:45Z
+```
+
 清理测试 marker 后的 R2 size：
 
 ```text
-Total objects: 226
-Total size: 1.040 GiB (1116468084 Byte)
+Total objects: 244
+Total size: 1.409 GiB (1512944797 Byte)
 ```
 
 size-only 校验结果：
@@ -88,6 +99,7 @@ size-only 校验结果：
 | `/workspace/cot-safety/runs/natural_cot_pair_full_n100_8b_remaining_v1` | `runs/natural_cot_pair_full_n100_8b_remaining_v1` | `0 differences`，55 个文件匹配 |
 | `/workspace/logs/natural_cot_full_n100_8b_remaining_v1` | `logs/natural_cot_full_n100_8b_remaining_v1` | `0 differences`，44 个文件匹配 |
 | `/workspace/cot-safety/runs/stage1_loso_surface` | `runs/stage1_loso_surface` | `0 differences`，76 个文件匹配 |
+| `/dev/shm/cot-safety-smoke` | `shm/cot-safety-smoke` | `0 differences`，16 个文件匹配 |
 
 操作说明：当前 Cloudflare R2 token 会拒绝 bucket create/check 操作，因此上传使用了
 `--s3-no-check-bucket`。直接 object upload 和 size-only verification 均成功。

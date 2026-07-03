@@ -29,6 +29,7 @@ code_snapshot/
 logs/
 manifest/
 runs/
+shm/
 ```
 
 | Prefix | Contents |
@@ -42,6 +43,11 @@ runs/
 | `logs/cot_natural_env_setup/` | Environment setup logs from the A100 node. |
 | `code_snapshot/` | Small snapshot of the config, judge prompt, and scripts used for the remaining run and surface controls. |
 | `manifest/` | Source disk usage, source file inventory, backup metadata, and R2 size record. |
+| `shm/cot-safety-smoke/` | `/dev/shm/cot-safety-smoke` smoke hidden-state extraction artifacts from the 8B A100 node. |
+
+`/dev/shm/cot-safety-hot/` was checked during backup and contained only empty
+directory scaffolding, so there were no object-store files to copy for that
+path. The `/dev/shm` inventory is stored under `manifest/`.
 
 ## 8B Remaining Run Result
 
@@ -76,11 +82,17 @@ The code snapshot was completed with two post-check additions at:
 2026-07-03T16:48:42Z
 ```
 
+The `/dev/shm/cot-safety-smoke` artifacts were backed up and checked at:
+
+```text
+2026-07-03T16:51:45Z
+```
+
 R2 size after cleanup:
 
 ```text
-Total objects: 226
-Total size: 1.040 GiB (1116468084 Byte)
+Total objects: 244
+Total size: 1.409 GiB (1512944797 Byte)
 ```
 
 Size-only checks:
@@ -90,6 +102,7 @@ Size-only checks:
 | `/workspace/cot-safety/runs/natural_cot_pair_full_n100_8b_remaining_v1` | `runs/natural_cot_pair_full_n100_8b_remaining_v1` | `0 differences`, 55 matching files |
 | `/workspace/logs/natural_cot_full_n100_8b_remaining_v1` | `logs/natural_cot_full_n100_8b_remaining_v1` | `0 differences`, 44 matching files |
 | `/workspace/cot-safety/runs/stage1_loso_surface` | `runs/stage1_loso_surface` | `0 differences`, 76 matching files |
+| `/dev/shm/cot-safety-smoke` | `shm/cot-safety-smoke` | `0 differences`, 16 matching files |
 
 Operational note: Cloudflare R2 rejected bucket create/check operations for the
 available token, so the upload used `--s3-no-check-bucket`. Direct object upload
