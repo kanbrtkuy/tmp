@@ -72,6 +72,18 @@ cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/
 `docs/stage1_paired_r2_archive_260703_zh.md`。该归档也已从自然 pair 结果文档
 `res/stage1_natural_pair_experiment_results_260703_zh.md` 互链。
 
+2026-07-04 的 R1-8B remaining-prompt follow-up 和小型 surface-control 产物已作为增量归档备份到：
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260704-a100-8b-remaining-n100/
+```
+
+该增量归档记录在
+`docs/stage1_paired_8b_remaining_r2_archive_260704.md` 和
+`docs/stage1_paired_8b_remaining_r2_archive_260704_zh.md`。它包含已完成的
+remaining-prompt run，将合并后的 R1-8B safe/original pairs 从 663 提升到
+746，同时包含日志、manifest 和小型代码快照。
+
 ## 当前解释原则
 
 - A prime 更像是失败案例：它说明当 rewrite/style artifact 存在时，hidden probe 可以接近完美。

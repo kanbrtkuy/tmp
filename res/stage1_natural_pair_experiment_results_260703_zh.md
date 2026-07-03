@@ -20,6 +20,14 @@
 | 32B generated-safe + generated-unsafe，双方都 quality-pass | 406 pairs | 只是生成库存；还不是已冻结的 hidden-probe export |
 | 32B generated-safe + original unsafe reference | 607 pairs | 只是生成库存；还不是已冻结的 hidden-probe export |
 
+已完成的 R1-8B remaining-prompt follow-up inventory：
+
+| 生成库存项目 | 数量 | 说明 |
+|---|---:|---|
+| 额外采样的 remaining prompts | 613 | follow-up run 使用 sample indices 50-99 |
+| 新选出的 high-quality R1-8B safe/original pairs | 83 | judge 28,300 个 candidates 后筛选得到 |
+| 合并后的 R1-8B generated-safe/original-unsafe pairs | 746 | 663 inherited + 83 newly selected |
+
 ## Cloudflare R2 归档
 
 这些 run 对应的 A100 natural-pair workspace 快照已归档到：
@@ -32,6 +40,15 @@ cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/
 `docs/stage1_paired_r2_archive_260703.md` 与
 `docs/stage1_paired_r2_archive_260703_zh.md`。对应计划文档为
 `plan/stage1_natural_pair_experiment_plan_260703_zh.md`。
+
+后续完成的 R1-8B remaining-prompt follow-up run 已单独增量归档到：
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260704-a100-8b-remaining-n100/
+```
+
+详见 `docs/stage1_paired_8b_remaining_r2_archive_260704.md` 与
+`docs/stage1_paired_8b_remaining_r2_archive_260704_zh.md`。
 
 ## CPU 表层 Baselines
 

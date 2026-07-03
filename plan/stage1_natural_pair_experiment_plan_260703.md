@@ -72,6 +72,19 @@ Archive layout, verification notes, and restore commands are documented in
 `docs/stage1_paired_r2_archive_260703_zh.md`. The archive is cross-linked from
 the natural-pair result note in `res/stage1_natural_pair_experiment_results_260703.md`.
 
+The 2026-07-04 R1-8B remaining-prompt follow-up and small surface-control
+artifacts are archived incrementally at:
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260704-a100-8b-remaining-n100/
+```
+
+That archive is documented in
+`docs/stage1_paired_8b_remaining_r2_archive_260704.md` and
+`docs/stage1_paired_8b_remaining_r2_archive_260704_zh.md`. It contains the
+completed remaining-prompt run that increased merged R1-8B safe/original pairs
+from 663 to 746, plus run logs, manifest files, and a small code snapshot.
+
 ## Current Interpretation Rules
 
 - A prime is useful as a failure case: it shows that hidden probes can become near-perfect when rewrite/style artifacts are present.

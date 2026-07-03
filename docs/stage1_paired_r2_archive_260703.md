@@ -93,6 +93,16 @@ performed:
   `/workspace/logs/natural_cot_full_n100_8b_remaining_v1/`
 - backup logs that were appended after their first upload.
 
+The R1-8B remaining run and small post-backup control artifacts were later
+archived separately as an incremental snapshot:
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260704-a100-8b-remaining-n100/
+```
+
+See `docs/stage1_paired_8b_remaining_r2_archive_260704.md` and
+`docs/stage1_paired_8b_remaining_r2_archive_260704_zh.md`.
+
 ## Related GitHub Documents
 
 Planning:
@@ -112,6 +122,8 @@ Results:
 Operational setup:
 
 - `docs/runpod_setup.md`
+- `docs/stage1_paired_8b_remaining_r2_archive_260704.md`
+- `docs/stage1_paired_8b_remaining_r2_archive_260704_zh.md`
 - `docs/stage1_paired_r2_archive_260703_zh.md`
 
 ## Restore Examples

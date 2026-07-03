@@ -89,6 +89,16 @@ Cloudflare dashboard 之前在 `stage1-paired/` 下显示的 `1-a6000/...`
   `/workspace/logs/natural_cot_full_n100_8b_remaining_v1/`
 - 首次上传后继续追加的 backup logs。
 
+其中 R1-8B remaining run 和小型 post-backup control artifacts 后续已经作为
+incremental snapshot 单独归档到：
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260704-a100-8b-remaining-n100/
+```
+
+详见 `docs/stage1_paired_8b_remaining_r2_archive_260704.md` 与
+`docs/stage1_paired_8b_remaining_r2_archive_260704_zh.md`。
+
 ## 相关 GitHub 文档
 
 计划文档：
@@ -108,6 +118,8 @@ Cloudflare dashboard 之前在 `stage1-paired/` 下显示的 `1-a6000/...`
 运行与恢复说明：
 
 - `docs/runpod_setup.md`
+- `docs/stage1_paired_8b_remaining_r2_archive_260704.md`
+- `docs/stage1_paired_8b_remaining_r2_archive_260704_zh.md`
 - `docs/stage1_paired_r2_archive_260703.md`
 
 ## 恢复示例
