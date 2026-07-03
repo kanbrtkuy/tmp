@@ -51,8 +51,20 @@ The tables below show top rows sorted by test AUROC. These are useful diagnostic
 | Natural 8B generated/generated Stage1b | R1-1.5B | cot_4 / layer18 | 0.7328 | Early CoT signal; prompt/pre-CoT positions are near random |
 | Natural 8B generated/generated Stage1 | R1-8B | cot_128 / layer10 | 0.8403 | Strongest test maxima are late CoT positions |
 | Natural 8B generated/generated Stage1b | R1-8B | cot_7 / layer20 | 0.7462 | Early CoT signal remains visible |
+| Natural 8B generated/generated Stage1 | R1-32B | cot_128 / layer32 | 0.8648 | Cross-size extractor diagnostic; omitted from the previous summary |
+| Natural 8B generated/generated Stage1b | R1-32B | cot_4 / layer60 | 0.7375 | Early-CoT signal is similar to the 8B-extractor Stage1b result |
 | Natural 32B generated/generated Stage1 | R1-32B | cot_128 / layer32 | 0.8441 | Representation-scale diagnostic |
 | Natural 32B generated/generated Stage1b | R1-32B | cot_4 / layer44 | 0.8164 | Prompt/pre-CoT baseline remains near random; early CoT signal is strong |
+
+### Generator-vs-Extractor Coverage
+
+| CoT generator | Hidden extractor | Stage1 top test AUROC | Stage1b top test AUROC | Status |
+|---|---|---:|---:|---|
+| R1-8B | R1-1.5B | 0.8384 | 0.7328 | Completed |
+| R1-8B | R1-8B | 0.8403 | 0.7462 | Completed |
+| R1-8B | R1-32B | 0.8648 | 0.7375 | Completed |
+| R1-32B | R1-32B | 0.8441 | 0.8164 | Completed |
+| R1-32B | R1-8B | n/a | n/a | Not yet run |
 
 ## Source Provenance / LOSO Status
 
@@ -79,11 +91,15 @@ Experiment:
 
 As of the last status check, train hidden extraction had completed and the job had entered validation hidden extraction. Final Stage1/Stage1b probe metrics are still pending.
 
+After a later remote rescan, train/validation/test hidden extraction had completed for this run and the single-position scan had started. Final Stage1/Stage1b summary files were still pending at that point.
+
+The 32B generation node was idle during the rescan. It contained 13,905 generated candidate rows, of which 11,405 had been judged. The current 32B pair exports therefore use the judged 11,405-row snapshot, not the full unjudged candidate file.
+
 ## Main Takeaways
 
 - Natural same-prompt pairs reduce the most obvious prompt-classification concern: prompt-only text and pre-CoT hidden baselines are near random in the completed natural-pair runs.
 - CoT-position hidden states contain measurable safe/unsafe signal across 1.5B, 8B, and 32B extractors.
+- The omitted cross-size run, R1-8B CoTs with a 32B hidden extractor, is complete and shows a comparable or slightly stronger late-CoT Stage1 test maximum.
 - The strongest test-set positions often move later in Stage1 scans, while Stage1b early-CoT positions remain informative.
 - Surface baselines are also strong. This is the main limitation: current results show separability, but not yet clean semantic separability.
 - The next decisive experiments are source-balanced LOSO, token-matched truncation, embedding-based surface baselines, and validation-selected hidden-probe reporting.
-

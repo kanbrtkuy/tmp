@@ -21,6 +21,18 @@ Stage 1 的目标是验证 safe 与 unsafe reasoning trajectory 是否在模型 
 | Natural 32B generated/generated | 同一个 prompt 下，R1-32B 生成 safe CoT vs R1-32B 生成 unsafe CoT | 模型规模/生成器规模 diagnostic | 当前 partial snapshot 上 32B-hidden Stage1/Stage1b 已完成 |
 | Natural 32B generated-safe/original-unsafe | R1-32B 生成 safe CoT vs 原始数据集 unsafe reference CoT | 当前正在做的 robustness 实验 | 32B hidden extractor 的 Stage1/Stage1b 正在运行 |
 
+## Generator-vs-Extractor 矩阵
+
+自然 generated/generated 实验目前已经完成四组 generator/extractor 组合：
+
+| CoT generator | Hidden extractor | 状态 | 用途 |
+|---|---|---|---|
+| R1-8B | R1-1.5B | 已完成 | 在 8B natural pairs 上的小模型 extractor diagnostic |
+| R1-8B | R1-8B | 已完成 | generator/extractor 匹配基线 |
+| R1-8B | R1-32B | 已完成 | 跨模型大小 extractor diagnostic；上一版总结漏写了这一组 |
+| R1-32B | R1-32B | 已完成 | 32B generator/extractor 匹配 diagnostic |
+| R1-32B | R1-8B | 尚未运行 | 反方向跨模型大小 transfer 检查 |
+
 ## 已完成检查
 
 - Stage1b 已加入 prompt-only 和 pre-CoT baseline。
@@ -36,6 +48,7 @@ Stage 1 的目标是验证 safe 与 unsafe reasoning trajectory 是否在模型 
   - A prime OpenAI rewrite + 1.5B hidden extractor
   - natural 8B generated/generated + 1.5B hidden extractor
   - natural 8B generated/generated + 8B hidden extractor
+  - natural 8B generated/generated + 32B hidden extractor
   - natural 32B generated/generated + 32B hidden extractor
 
 ## 当前解释原则
@@ -51,9 +64,10 @@ Stage 1 的目标是验证 safe 与 unsafe reasoning trajectory 是否在模型 
 
 1. 完成 natural 32B generated-safe/original-unsafe 的 Stage1/Stage1b。
 2. 如果要直接对比 generated/generated 与 generated-safe/original-unsafe，需要补跑 natural 8B generated-safe/original-unsafe 的 hidden probe。
-3. 构建 source-balanced natural pairs，或者恢复更完整的 source-family provenance。
-4. 当至少两个 source family 有足够 pair 后，跑真正的 leave-one-source-out。
-5. 每个 fold 都报告：
+3. 补跑缺失的反方向跨模型实验：natural 32B generated/generated CoTs + 8B hidden extractor。
+4. 构建 source-balanced natural pairs，或者恢复更完整的 source-family provenance。
+5. 当至少两个 source family 有足够 pair 后，跑真正的 leave-one-source-out。
+6. 每个 fold 都报告：
    - prompt-only/pre-CoT hidden baseline
    - CoT-position hidden probe
    - length-only baseline
@@ -61,9 +75,9 @@ Stage 1 的目标是验证 safe 与 unsafe reasoning trajectory 是否在模型 
    - first-sentence-removed baseline
    - token-matched truncation baseline
    - embedding-based surface baseline
-6. 使用 paired bootstrap confidence intervals。
-7. 报告 validation-selected position/layer，而不是 post-hoc test maxima。
-8. 持续显式报告残余混淆因素：length、refusal style、answer template、source family、generator model、judge selection bias。
+7. 使用 paired bootstrap confidence intervals。
+8. 报告 validation-selected position/layer，而不是 post-hoc test maxima。
+9. 持续显式报告残余混淆因素：length、refusal style、answer template、source family、generator model、judge selection bias。
 
 ## 当前 Claim 边界
 
@@ -72,4 +86,3 @@ Stage 1 的目标是验证 safe 与 unsafe reasoning trajectory 是否在模型 
 > 在 same-prompt natural-pair 设置下，prompt-only hidden states 基本接近随机，而 CoT-position hidden states 往往包含 safe/unsafe signal。但是浅层 CoT 文本 baseline 也很强，所以还不能把这个 signal 干净地解释为 safety semantics，而不是 trajectory style、length 或 generation artifacts。
 
 更强的 claim，也就是 Stage 1 找到了 safety-relevant latent manifold，需要等 source-transfer 和 surface-control 实验补齐之后再下。
-
