@@ -4,12 +4,21 @@
 
 ## 数据快照
 
-| 数据版本 | Pair 数 | Train/val/test pairs | 说明 |
+下面的 hidden-probe 结果使用的是冻结后的 export。32B 生成任务在这些 export 之后还继续运行，所以最新生成库存单独记录。
+
+| 数据版本 | Hidden probe 使用的 pair 数 | Train/val/test pairs | 说明 |
 |---|---:|---:|---|
 | Natural 8B generated/generated | 467 | 374 / 47 / 46 | 同一个 prompt 下，safe/unsafe 两边都由 R1-8B 生成；每个 prompt 最多 50 次采样后筛选 |
 | Natural 8B generated-safe/original-unsafe | 663 | 530 / 66 / 67 | R1-8B 生成 safe candidate，配原始数据集 unsafe reference |
-| Natural 32B generated/generated | 359 | 287 / 36 / 36 | 当前 32B partial snapshot，用于 32B-hidden diagnostic |
-| Natural 32B generated-safe/original-unsafe | 555 | 444 / 56 / 55 | 当前 32B partial snapshot；Stage1/Stage1b 正在运行 |
+| Natural 32B generated/generated | 359 | 287 / 36 / 36 | 当前冻结的 32B export，用于 dense hidden-probe scan |
+| Natural 32B generated-safe/original-unsafe | 555 | 444 / 56 / 55 | 当前冻结的 export，用于已完成的 32B safe/original robustness run |
+
+冻结 export 之后，32B 生成节点上观察到的最新 judged inventory：
+
+| 生成库存项目 | 当前数量 | 说明 |
+|---|---:|---|
+| 32B generated-safe + generated-unsafe，双方都 quality-pass | 406 pairs | 只是生成库存；还不是已冻结的 hidden-probe export |
+| 32B generated-safe + original unsafe reference | 607 pairs | 只是生成库存；还不是已冻结的 hidden-probe export |
 
 ## CPU 表层 Baselines
 
@@ -41,30 +50,54 @@
 
 ## Hidden-State Probe 结果
 
-下表按 test AUROC 的 top row 记录，适合作为 diagnostic。正式主结果应该使用 validation-selected position/layer，而不是 test-set max。
+下表记录 diagnostic top rows。`test-max` 适合用来定位信号，但论文主结果应该用 validation-selected position/layer。
 
-| 实验 | Extractor | Test AUROC 最高位置/层 | Test AUROC | 说明 |
+### Natural Generated/Generated Pairs
+
+| 实验 | Extractor | Test-max 位置/层 | Test-max AUROC | Validation-selected 位置/层 | Validation-selected test AUROC | 说明 |
+|---|---|---|---:|---|---:|---|
+| A prime OpenAI rewrite Stage1 | R1-1.5B | cot_2 / layer14 | 0.9886 | n/a | n/a | confound diagnostic，不作为主证据 |
+| A prime OpenAI rewrite Stage1b | R1-1.5B | cot_2 / layer14 | 0.9844 | n/a | n/a | Stage1b 下仍接近完美，说明 artifact 很强 |
+| Natural 8B generated/generated Stage1 | R1-1.5B | cot_96 / layer18 | 0.8384 | n/a | n/a | prompt-only 接近随机，但 CoT-position 有信号 |
+| Natural 8B generated/generated Stage1b | R1-1.5B | cot_4 / layer18 | 0.7328 | n/a | n/a | 早期 CoT 有信号；prompt/pre-CoT 接近随机 |
+| Natural 8B generated/generated Stage1 dense | R1-8B | cot_120 / layer15 | 0.8913 | cot_120 / layer20 | 0.8318 | dense rerun；最强信号在 late-CoT |
+| Natural 8B generated/generated Stage1b dense | R1-8B | cot_16 / layer14 | 0.7632 | cot_5 / layer14 | 0.6983 | early-CoT 信号弱于 late-CoT Stage1 |
+| Natural 8B generated/generated Stage1 | R1-32B | cot_128 / layer32 | 0.8648 | n/a | n/a | 早期 sparse grid 的跨模型大小 extractor diagnostic |
+| Natural 8B generated/generated Stage1b | R1-32B | cot_4 / layer60 | 0.7375 | n/a | n/a | 早期 sparse grid 的跨模型大小 extractor diagnostic |
+| Natural 32B generated/generated Stage1 dense | R1-8B | cot_160 / layer14 | 0.8841 | cot_8 / layer6 | 0.7488 | 反方向跨模型大小 diagnostic；all-feature val-selected test 为 0.6975 |
+| Natural 32B generated/generated Stage1b dense | R1-8B | cot_9 / layer8 | 0.8044 | cot_9 / layer10 | 0.7188 | 反方向跨模型大小 diagnostic；all-feature val-selected test 为 0.6975 |
+| Natural 32B generated/generated Stage1 dense | R1-32B | cot_160 / layer30 | 0.8944 | cot_144 / layer36 | 0.7654 | 32B matched diagnostic；test-max 与 val-selected 差距较大 |
+| Natural 32B generated/generated Stage1b dense | R1-32B | cot_4 / layer52 | 0.8148 | cot_9 / layer32 | 0.7890 | early-CoT signal 较强；prompt/pre-CoT controls 接近随机 |
+
+### Natural Generated-Safe / Original-Unsafe Robustness
+
+| 实验 | Extractor | Top 位置/层 | Test AUROC | 说明 |
 |---|---|---|---:|---|
-| A prime OpenAI rewrite Stage1 | R1-1.5B | cot_2 / layer14 | 0.9886 | confound diagnostic，不作为主证据 |
-| A prime OpenAI rewrite Stage1b | R1-1.5B | cot_2 / layer14 | 0.9844 | Stage1b 下仍接近完美，说明 artifact 很强 |
-| Natural 8B generated/generated Stage1 | R1-1.5B | cot_96 / layer18 | 0.8384 | prompt-only 接近随机，但 CoT-position 有信号 |
-| Natural 8B generated/generated Stage1b | R1-1.5B | cot_4 / layer18 | 0.7328 | 早期 CoT 有信号；prompt/pre-CoT 接近随机 |
-| Natural 8B generated/generated Stage1 | R1-8B | cot_128 / layer10 | 0.8403 | test max 主要出现在较后 CoT 位置 |
-| Natural 8B generated/generated Stage1b | R1-8B | cot_7 / layer20 | 0.7462 | 早期 CoT signal 仍然存在 |
-| Natural 8B generated/generated Stage1 | R1-32B | cot_128 / layer32 | 0.8648 | 跨模型大小 extractor diagnostic；8B 生成轨迹中的 late-CoT signal 在 32B 表征中仍可读出，并且略高于 8B matched extractor 的 test maximum |
-| Natural 8B generated/generated Stage1b | R1-32B | cot_4 / layer60 | 0.7375 | 早期 CoT signal 与 8B extractor 的 Stage1b 结果接近 |
-| Natural 32B generated/generated Stage1 | R1-32B | cot_128 / layer32 | 0.8441 | representation-scale diagnostic |
-| Natural 32B generated/generated Stage1b | R1-32B | cot_4 / layer44 | 0.8164 | prompt/pre-CoT baseline 仍接近随机；早期 CoT signal 较强 |
+| Natural 32B generated-safe/original-unsafe Stage1 | R1-32B | cot_5 / layer28 | 0.7661 | 555-pair 冻结 export 上已完成的 robustness run |
+| Natural 32B generated-safe/original-unsafe Stage1b linear | R1-32B | cot_4 / layer20 | 0.7579 | early-CoT signal 仍然存在 |
+| Natural 32B generated-safe/original-unsafe Stage1b multilayer | R1-32B | cot_4 / mean layers | 0.7516 | multilayer summary 与 single-layer 结果接近 |
 
-### Generator-vs-Extractor 覆盖情况
+## Prompt / Pre-CoT Controls
+
+Dense Stage1b controls 直接回应 probe 是否只是在分类 prompt 的问题。
+
+| 数据 | Extractor | 最强 prompt/pre-CoT AUROC | 解释 |
+|---|---|---:|---|
+| Natural 8B generated/generated | R1-8B | 0.5000 | prompt/pre-CoT 位置接近随机 |
+| Natural 32B generated/generated | R1-8B | 0.5000 | prompt/pre-CoT 位置接近随机 |
+| Natural 32B generated/generated | R1-32B | 约 0.51 | prompt/pre-CoT 位置基本接近随机 |
+
+因此，在这些 natural-pair runs 中，CoT-position probes 不能用 prompt-only hidden states 解释。但这还不能排除 CoT 内部的表层混淆，例如长度、风格、refusal pattern 或 generation artifacts。
+
+## Generator-vs-Extractor 覆盖情况
 
 | CoT generator | Hidden extractor | Stage1 top test AUROC | Stage1b top test AUROC | 状态 |
 |---|---|---:|---:|---|
 | R1-8B | R1-1.5B | 0.8384 | 0.7328 | 已完成 |
-| R1-8B | R1-8B | 0.8403 | 0.7462 | 已完成 |
-| R1-8B | R1-32B | 0.8648 | 0.7375 | 已完成 |
-| R1-32B | R1-32B | 0.8441 | 0.8164 | 已完成 |
-| R1-32B | R1-8B | n/a | n/a | 尚未运行 |
+| R1-8B | R1-8B | 0.8913 | 0.7632 | 已完成；dense rerun |
+| R1-8B | R1-32B | 0.8648 | 0.7375 | 已完成；早期 sparse grid |
+| R1-32B | R1-8B | 0.8841 | 0.8044 | 已完成；dense rerun |
+| R1-32B | R1-32B | 0.8944 | 0.8148 | 已完成；dense rerun |
 
 ## Source Provenance / LOSO 状态
 
@@ -76,30 +109,14 @@ natural 8B generated/generated 的 provenance re-join 成功覆盖 934 rows / 46
 
 因此，这个 snapshot 还不能做真正的 leave-one-source-out。下一轮数据构建需要更均衡的 source family，或者恢复更完整的 provenance。
 
-## 当前正在运行的实验
-
-实验：
-
-- 数据：natural 32B generated-safe/original-unsafe
-- Pair 数：555
-- Split：444 / 56 / 55 pairs
-- Extractor：DeepSeek-R1-Distill-Qwen-32B
-- Pipeline：`pipelines/runpod_stage1_natural_pairs_32b_safeorig_32b_a100_1x.sh`
-- Configs：
-  - `configs/experiment/stage1_natural_pairs_32b_safeorig_32b_a100_1x.yaml`
-  - `configs/experiment/stage1b_natural_pairs_32b_safeorig_32b_a100_1x.yaml`
-
-最后一次状态检查时，train hidden extraction 已完成，作业已进入 validation hidden extraction。最终 Stage1/Stage1b probe metrics 尚未产出。
-
-后续远端重扫时，这个 run 的 train/validation/test hidden extraction 都已经完成，并且 single-position scan 已经开始。重扫时最终 Stage1/Stage1b summary 文件仍未产出。
-
-32B 生成节点在重扫时处于空闲状态。节点上有 13,905 条 generated candidate rows，其中 11,405 条已经 judge。因此当前 32B pair exports 使用的是这 11,405 条已 judge snapshot，而不是包含未 judge rows 的完整 candidate 文件。
-
 ## 主要结论
 
 - 自然 same-prompt pairs 能显著缓解 prompt-classification 的担忧：已完成的 natural-pair runs 中，prompt-only text 和 pre-CoT hidden baselines 基本接近随机。
-- 在 1.5B、8B、32B extractors 上，CoT-position hidden states 都能看到 safe/unsafe signal。
-- 跨模型大小实验，也就是 R1-8B CoTs + 32B hidden extractor，显示 late-CoT Stage1 test maximum 与其他结果相当或略强。
-- Stage1 的 test-set max 经常出现在更靠后的 CoT 位置，而 Stage1b 的早期 CoT 位置也保持有信息量。
-- 但是 surface baselines 同样很强，这是当前最大限制：目前结果能说明 separability 存在，但还不能干净说明它是 safety semantics，而不是风格、长度或生成 artifact。
-- 下一步最关键的是 source-balanced LOSO、token-matched truncation、embedding-based surface baselines，以及 validation-selected hidden-probe reporting。
+- dense rerun 进一步加强了这一点：prompt/pre-CoT controls 仍然接近随机，而 CoT-position hidden states 有清晰信号。
+- Stage1 的 test maxima 经常移动到更靠后的 CoT 位置，dense scan 中尤其集中在 cot_120 到 cot_160 附近。
+- Stage1b 的 early-CoT 位置仍然有信息量，通常在 cot_4 到 cot_9 附近，但整体弱于 late-CoT Stage1 signal。
+- 跨模型大小 diagnostic 比较积极：32B 生成的 pair 可以被 8B hidden extractor 读出，8B 生成的 pair 也可以被 32B extractor 读出。
+- generated-safe/original-unsafe robustness 在 32B extractor 上弱于 generated/generated，但仍明显高于随机。
+- surface baselines 同样很强，这是当前最大限制：目前结果能说明 separability 存在，但还不能干净说明它是 safety semantics。
+- 多个 dense scans 中 test-set max 和 validation-selected test score 差距较大。主结果应该报告 validation-selected position/layer，而不是 post-hoc test maximum。
+- 下一步最关键的是 source-balanced LOSO、token-matched truncation、embedding-based surface baselines、paired bootstrap confidence intervals，以及 validation-selected hidden-probe reporting。
