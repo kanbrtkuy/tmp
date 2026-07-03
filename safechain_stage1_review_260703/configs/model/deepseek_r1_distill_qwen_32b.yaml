@@ -1,0 +1,18 @@
+defaults:
+  - template_deepseek_r1_distill.yaml
+
+model:
+  name: deepseek_r1_distill_qwen_32b
+  base_model: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+  local_base_model: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Qwen-32B
+  sft_checkpoint: null
+  tokenizer: null
+  trust_remote_code: false
+  max_length: 4096
+  # Qwen-32B has substantially more layers than the 1.5B/8B extractors.
+  # This grid keeps comparable relative-depth checkpoints while staying small
+  # enough for a one-A100 diagnostic pass.
+  default_layers: [8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64]
+
+pause:
+  cot_offset: 4

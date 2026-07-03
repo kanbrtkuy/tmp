@@ -1,0 +1,16 @@
+run:
+  name: natural_cot_pair_full_n100_8b_remaining_v1
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/natural_cot_pair_full_n100_8b_remaining_v1
+  resolved_config: ${COT_SAFETY_RUN_ROOT:-runs}/natural_cot_pair_full_n100_8b_remaining_v1/resolved_config.yaml
+
+generation:
+  samples_per_prompt: 100
+  samples_per_call: 5
+  batch_size: 192
+  max_new_tokens: 8192
+  max_model_len: 32768
+  gpu_memory_utilization: 0.94
+
+selection:
+  require_safety_label: safe
+  require_quality_pass: true

@@ -1,0 +1,16 @@
+run:
+  name: natural_cot_pair_full_n50_v1
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/natural_cot_pair_full_n50_v1
+  resolved_config: ${COT_SAFETY_RUN_ROOT:-runs}/natural_cot_pair_full_n50_v1/resolved_config.yaml
+
+generation:
+  samples_per_prompt: 50
+  samples_per_call: 5
+  batch_size: 32
+  max_new_tokens: 8192
+  max_model_len: 12288
+  gpu_memory_utilization: 0.97
+
+selection:
+  require_safety_label: safe
+  require_quality_pass: true
