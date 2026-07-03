@@ -20,6 +20,19 @@
 | 32B generated-safe + generated-unsafe，双方都 quality-pass | 406 pairs | 只是生成库存；还不是已冻结的 hidden-probe export |
 | 32B generated-safe + original unsafe reference | 607 pairs | 只是生成库存；还不是已冻结的 hidden-probe export |
 
+## Cloudflare R2 归档
+
+这些 run 对应的 A100 natural-pair workspace 快照已归档到：
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/
+```
+
+归档结构、校验结果、恢复命令和已知备份后差异见
+`docs/stage1_paired_r2_archive_260703.md` 与
+`docs/stage1_paired_r2_archive_260703_zh.md`。对应计划文档为
+`plan/stage1_natural_pair_experiment_plan_260703_zh.md`。
+
 ## CPU 表层 Baselines
 
 ### Natural 8B generated/generated

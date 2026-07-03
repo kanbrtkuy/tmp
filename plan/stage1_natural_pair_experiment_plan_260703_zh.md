@@ -59,6 +59,19 @@ Stage 1 的目标是验证 safe 与 unsafe reasoning trajectory 是否在模型 
   - natural 32B generated/generated + 32B hidden extractor
   - natural 32B generated-safe/original-unsafe + 32B hidden extractor
 
+## Cloudflare R2 归档
+
+2026-07-03 A100 natural-pair workspace 快照已归档到：
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/
+```
+
+归档结构、校验结果和恢复命令记录在
+`docs/stage1_paired_r2_archive_260703.md` 和
+`docs/stage1_paired_r2_archive_260703_zh.md`。该归档也已从自然 pair 结果文档
+`res/stage1_natural_pair_experiment_results_260703_zh.md` 互链。
+
 ## 当前解释原则
 
 - A prime 更像是失败案例：它说明当 rewrite/style artifact 存在时，hidden probe 可以接近完美。

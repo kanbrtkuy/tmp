@@ -27,6 +27,11 @@ Primary paired data 所需的 OpenAI API 工作已经完成：
 
 Safe-prompt diagnostic data (`S->S`) 尚未准备。
 
+后续 2026-07-03 natural-pair 工作已归档到 Cloudflare R2：
+`cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/`。
+归档结构见 `docs/stage1_paired_r2_archive_260703_zh.md`；natural-pair 结果记录在
+`res/stage1_natural_pair_experiment_results_260703_zh.md`。
+
 ## Primary clean manifests
 
 Stage 1 推荐使用 completeness-clean manifests：
@@ -124,24 +129,63 @@ Fable5 确认的 Stage 1 数据组成如下：
 
 ## 当前下一步
 
-已完成的本地测试工作：
+已完成的本地 / RunPod 验证工作：
 
 - 新增 `tests/test_stage1_manifest_freeze_export.py`。
 - `python3 -m py_compile` 已通过，覆盖新增测试和两个 freeze/export 脚本。
 - 临时 synthetic CLI dry-run 已通过：3 个 prompt groups、4 个 pairs、4 条
   export rows，并确认 prompt hash mismatch 会被拒绝。
-- `python3 -m pytest cot-safety/tests/test_stage1_manifest_freeze_export.py`
-  在本机无法运行，因为当前环境没有安装 `pytest`。
+- manifest freeze/export pytest target 已在 RunPod CPU 节点通过：
+  `3 passed`。
+- 真实 clean-manifest prompt split freeze 已在 RunPod 完成：
+  2556 pairs、1670 prompt groups，train/val/test prompt groups =
+  1503/84/83。
+- 真实 `reasoning_only` Stage 1 export 已在 RunPod 完成：
+  A-prime = 2192 rows / 1096 pairs，B-prime = 2920 rows / 1460 pairs。
+- 新增 `scripts/data/run_stage1_text_baselines.py` 和
+  `tests/test_stage1_text_baselines.py`。
+- text-baseline readiness pytest target 已在 RunPod 通过：`2 passed`。
+- 真实 CPU/text baselines 已在 A6000 RunPod 节点完成，并同步回本地：
+  - `runs/stage1_text_baselines/A_prime/`
+  - `runs/stage1_text_baselines/B_prime/`
 
-在以下剩余本地检查和数据导出通过前，不启动 CPU baselines 或 GPU runs：
+CPU/text baseline 主要结果：
 
-1. 在安装 dev 依赖的环境中运行对应 pytest target。
-2. 对 clean A-prime/B-prime manifests 做 prompt-group split freeze。
-3. 使用 `reasoning_only` manifest mode 导出 Stage 1 rows。
-4. Text/surface baselines 和 prompt-only controls。
+| Dataset | Baseline | Test balanced accuracy |
+|---|---|---:|
+| A-prime | prompt-only TF-IDF | 0.500000 |
+| A-prime | length-only | 0.953846 |
+| A-prime | word TF-IDF | 1.000000 |
+| A-prime | word BoW | 1.000000 |
+| A-prime | char TF-IDF | 1.000000 |
+| A-prime | first-sentence-removed TF-IDF | 1.000000 |
+| B-prime | prompt-only TF-IDF | 0.500000 |
+| B-prime | length-only | 0.869565 |
+| B-prime | word TF-IDF | 1.000000 |
+| B-prime | word BoW | 1.000000 |
+| B-prime | char TF-IDF | 1.000000 |
+| B-prime | first-sentence-removed TF-IDF | 1.000000 |
 
-这些完成后，第一个 GPU-facing task 才是 clean A-prime 上的 hidden-state
-extraction / probe training。
+在 review 这些 CPU/text baseline 结果之前，不启动 GPU hidden-state
+extraction，因为浅层 reasoning-text baselines 已经接近完美。
+
+随后又运行并同步回本地了 CPU-only surface audits：
+
+- `runs/stage1_surface_audit/A_prime/`
+- `runs/stage1_surface_audit/B_prime/`
+- Summary:
+  `analysis_reports/stage1_surface_audit_summary_260702.md`
+
+这些 audit 没有发现可用的 early prefix window。只看 reasoning 前 4 个词，
+A-prime 所有 surface baseline 的 test balanced accuracy 已经超过 `0.90`，
+B-prime 已经超过 `0.96`。Cross-source transfer 也接近完美。因此当前
+A-prime/B-prime as-is 仍然不应启动 GPU hidden-state extraction。
+
+剩余 Stage 1 CPU-side 工作：
+
+1. original-unsafe vs OpenAI-paraphrased provenance classifier 继续跳过，直到
+   有经过 review 且 pair-id 对齐的 original unsafe source。
+2. 设计 A-double-prime：两边对称处理、pairwise length targeting、格式和风格统一。
 
 ## 代码索引
 
@@ -165,3 +209,4 @@ extraction / probe training。
 - `scripts/data/filter_frozen_manifests_by_completeness.py`
 - `scripts/data/freeze_stage1_prompt_splits.py`
 - `scripts/data/export_safe_rewrite_pairs_for_stage1.py`
+- `scripts/data/run_stage1_text_baselines.py`

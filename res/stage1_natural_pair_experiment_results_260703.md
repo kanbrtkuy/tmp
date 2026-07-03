@@ -20,6 +20,19 @@ Latest judged 32B generation inventory observed after the frozen exports:
 | 32B generated-safe + generated-unsafe, both quality-pass | 406 pairs | Generation inventory only; not yet the frozen hidden-probe export |
 | 32B generated-safe + original unsafe reference | 607 pairs | Generation inventory only; not yet the frozen hidden-probe export |
 
+## Cloudflare R2 Archive
+
+The A100 natural-pair workspace snapshot for these runs is archived at:
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/
+```
+
+See `docs/stage1_paired_r2_archive_260703.md` and
+`docs/stage1_paired_r2_archive_260703_zh.md` for the archive structure,
+verification notes, restore commands, and known post-backup differences.
+The corresponding plan is `plan/stage1_natural_pair_experiment_plan_260703.md`.
+
 ## CPU Surface Baselines
 
 ### Natural 8B generated/generated

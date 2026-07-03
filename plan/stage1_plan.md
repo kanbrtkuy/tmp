@@ -67,10 +67,13 @@ prompts used elsewhere.
 - [x] Audit structural completeness.
 - [x] Produce completeness-clean manifests.
 - [x] Add manifest freeze/export unit tests and pass a tiny synthetic dry-run.
-- [ ] Run the pytest target in an environment with dev dependencies installed.
-- [ ] Freeze Stage 1 prompt-group splits on the clean manifests.
-- [ ] Export Stage 1 teacher-forcing JSONL from the clean manifests.
-- [ ] Run CPU/text baselines.
+- [x] Run the manifest freeze/export pytest target on the RunPod CPU node.
+- [x] Freeze Stage 1 prompt-group splits on the clean manifests.
+- [x] Export Stage 1 teacher-forcing JSONL from the clean manifests.
+- [x] Add CPU text-baseline readiness script and tiny fixture tests.
+- [x] Run CPU/text baselines.
+- [x] Run CPU-only surface audits: feature audit, length matching, truncation
+  curves, and cross-source transfer.
 - [ ] Run GPU hidden-state extraction and probe training.
 
 ### Safe-Prompt Diagnostic Data
@@ -104,6 +107,77 @@ One A-prime row was dropped by completeness filtering because
   `runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/completeness_dropped_manifest.jsonl`
 - dropped manifest sha256:
   `471c3c5828effa922ddd26e5d03260f27231ce4144b27a18c1528eb5f6224ed3`
+
+## Related Natural-Pair Archive
+
+The later 2026-07-03 natural-pair Stage 1 workspace snapshot is archived in
+Cloudflare R2 under:
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/
+```
+
+See `docs/stage1_paired_r2_archive_260703.md` for archive structure and
+restore commands. Natural-pair planning and results are tracked in
+`plan/stage1_natural_pair_experiment_plan_260703.md` and
+`res/stage1_natural_pair_experiment_results_260703.md`.
+
+## CPU/Text Baseline Snapshot
+
+Run artifacts:
+
+- `runs/stage1_text_baselines/A_prime/`
+- `runs/stage1_text_baselines/B_prime/`
+
+Headline result:
+
+- Prompt-only TF-IDF is at chance on A-prime and B-prime test splits
+  (`balanced_accuracy = 0.5`).
+- Length-only is already high:
+  - A-prime test balanced accuracy: `0.953846`
+  - B-prime test balanced accuracy: `0.869565`
+- Reasoning-text baselines are near-perfect or perfect:
+  - word TF-IDF / BoW test balanced accuracy: `1.0` on both A-prime and B-prime.
+  - char TF-IDF test balanced accuracy: `1.0` on both A-prime and B-prime.
+  - first-sentence-removed TF-IDF test balanced accuracy: `1.0` on both
+    A-prime and B-prime.
+
+Interpretation: prompt confounding is controlled in the paired split, but the
+safe/unsafe reasoning texts remain separable by shallow surface features. Any
+hidden-state probe result must therefore be compared against these baselines and
+should not be claimed as evidence of latent safety monitoring without additional
+controls.
+
+## Surface Audit Snapshot
+
+Run artifacts:
+
+- `runs/stage1_surface_audit/A_prime/`
+- `runs/stage1_surface_audit/B_prime/`
+
+Summary report:
+
+- `analysis_reports/stage1_surface_audit_summary_260702.md`
+
+Key result:
+
+- The first 4 reasoning words are already highly separable by surface baselines:
+  - A-prime test BA: word TF-IDF `0.907692`, word BoW `0.953846`, char TF-IDF
+    `0.923077`.
+  - B-prime test BA: word TF-IDF `0.963768`, word BoW `0.971014`, char TF-IDF
+    `0.978261`.
+- Strict +/-10% pairwise length matching retained very few pairs:
+  - A-prime train/val/test retained pairs: `82/4/3`.
+  - B-prime train/val/test retained pairs: `155/2/7`.
+- Cross-source word TF-IDF transfer remained near-perfect:
+  - A-prime HarmThoughts -> ReasoningShield BA: `0.996111`; reverse: `1.0`.
+  - B-prime HarmThoughts -> ReasoningShield BA: `0.997927`; reverse: `1.0`.
+
+Decision: do not run GPU hidden-state extraction on A-prime/B-prime as-is. The
+current data fails the informative-window gate and should be treated as a
+diagnostic for rewrite/provenance confounds. Next step is A-double-prime data
+design with symmetric processing, length targeting, and format/style
+harmonization.
 
 ## Code Layout For Data Preparation
 
@@ -155,6 +229,13 @@ All Stage 1 data-preparation code lives under `scripts/data/`.
     - unsafe side: `manifest.unsafe_reasoning`
     - safe side: `manifest.safe_reasoning`
     - default render mode: `reasoning_only`
+- `scripts/data/run_stage1_text_baselines.py`
+  - Runs Stage 1 CPU surface baselines from exported
+    `normalized/{train,val,test}.jsonl` rows.
+  - Supported by default: length-only, prompt-only TF-IDF, word TF-IDF,
+    word BoW, char n-gram TF-IDF, and first-sentence-removed TF-IDF.
+  - The original-unsafe vs OpenAI-paraphrased provenance classifier is skipped
+    unless a reviewed pair-id-aligned original unsafe source is provided.
 
 ### Review / Audit Bundle
 

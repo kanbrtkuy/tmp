@@ -487,6 +487,17 @@ canonical R2 layout and can be reused if future backups first land under a
 temporary prefix.  Keep old prefixes until the new target is verified with
 `rclone size`; delete them only after the canonical archive size matches.
 
+The later A100 natural-pair Stage 1 workspace snapshot is stored separately:
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/
+```
+
+Its layout, verification status, restore examples, and links to the relevant
+`plan/` and `res/` documents are recorded in
+`docs/stage1_paired_r2_archive_260703.md` and
+`docs/stage1_paired_r2_archive_260703_zh.md`.
+
 ## D-State Triage
 
 If `nvidia-smi` shows idle GPUs while a Python job still exists, check whether it

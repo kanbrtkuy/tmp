@@ -59,6 +59,19 @@ The natural generated/generated experiments now include five completed generator
   - natural 32B generated/generated with 32B hidden extractor
   - natural 32B generated-safe/original-unsafe with 32B hidden extractor
 
+## Cloudflare R2 Archive
+
+The 2026-07-03 A100 natural-pair workspace snapshot is archived at:
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/
+```
+
+Archive layout, verification notes, and restore commands are documented in
+`docs/stage1_paired_r2_archive_260703.md` and
+`docs/stage1_paired_r2_archive_260703_zh.md`. The archive is cross-linked from
+the natural-pair result note in `res/stage1_natural_pair_experiment_results_260703.md`.
+
 ## Current Interpretation Rules
 
 - A prime is useful as a failure case: it shows that hidden probes can become near-perfect when rewrite/style artifacts are present.

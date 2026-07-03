@@ -66,10 +66,13 @@ context-passage QA 格式，和当前 chat-style prompt 分布差异过大。
 - [x] 执行 structural completeness audit。
 - [x] 生成 completeness-clean manifests。
 - [x] 新增 manifest freeze/export unit tests，并通过 tiny synthetic dry-run。
-- [ ] 在安装 dev 依赖的环境中运行对应 pytest target。
-- [ ] 基于 clean manifests 冻结 Stage 1 prompt-group splits。
-- [ ] 从 clean manifests 导出 Stage 1 teacher-forcing JSONL。
-- [ ] 运行 CPU/text baselines。
+- [x] 在 RunPod CPU 节点运行 manifest freeze/export pytest target。
+- [x] 基于 clean manifests 冻结 Stage 1 prompt-group splits。
+- [x] 从 clean manifests 导出 Stage 1 teacher-forcing JSONL。
+- [x] 新增 CPU text-baseline readiness 脚本和 tiny fixture tests。
+- [x] 运行 CPU/text baselines。
+- [x] 运行 CPU-only surface audits：feature audit、length matching、
+  truncation curves 和 cross-source transfer。
 - [ ] 运行 GPU hidden-state extraction 和 probe training。
 
 ### Safe-prompt diagnostic 数据
@@ -103,6 +106,71 @@ Completeness filtering 删除了 1 条 A-prime row，因为它的 `unsafe_reason
   `runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/completeness_dropped_manifest.jsonl`
 - dropped manifest sha256:
   `471c3c5828effa922ddd26e5d03260f27231ce4144b27a18c1528eb5f6224ed3`
+
+## 相关 Natural-Pair 归档
+
+后续 2026-07-03 natural-pair Stage 1 workspace 快照已归档到 Cloudflare R2：
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/
+```
+
+归档结构和恢复命令见 `docs/stage1_paired_r2_archive_260703_zh.md`。Natural-pair
+计划和结果分别记录在 `plan/stage1_natural_pair_experiment_plan_260703_zh.md`
+与 `res/stage1_natural_pair_experiment_results_260703_zh.md`。
+
+## CPU/Text baseline 快照
+
+Run artifacts：
+
+- `runs/stage1_text_baselines/A_prime/`
+- `runs/stage1_text_baselines/B_prime/`
+
+主要结果：
+
+- Prompt-only TF-IDF 在 A-prime 和 B-prime test split 上都是 chance
+  (`balanced_accuracy = 0.5`)。
+- Length-only 已经很高：
+  - A-prime test balanced accuracy：`0.953846`
+  - B-prime test balanced accuracy：`0.869565`
+- Reasoning-text baselines 几乎完美：
+  - word TF-IDF / BoW 在 A-prime 和 B-prime test 上都是 `1.0`。
+  - char TF-IDF 在 A-prime 和 B-prime test 上都是 `1.0`。
+  - first-sentence-removed TF-IDF 在 A-prime 和 B-prime test 上都是 `1.0`。
+
+解释：paired split 已经控制住 prompt confounding，但 safe/unsafe reasoning
+文本本身仍然可以被浅层 surface features 区分。后续 hidden-state probe 结果必须
+和这些 baseline 对比；在没有额外控制前，不能把 probe 高分直接解释成 latent
+safety monitoring。
+
+## Surface audit 快照
+
+Run artifacts：
+
+- `runs/stage1_surface_audit/A_prime/`
+- `runs/stage1_surface_audit/B_prime/`
+
+Summary report：
+
+- `analysis_reports/stage1_surface_audit_summary_260702.md`
+
+关键结果：
+
+- 只看 reasoning 前 4 个词，surface baselines 已经很高：
+  - A-prime test BA：word TF-IDF `0.907692`，word BoW `0.953846`，
+    char TF-IDF `0.923077`。
+  - B-prime test BA：word TF-IDF `0.963768`，word BoW `0.971014`，
+    char TF-IDF `0.978261`。
+- 严格 +/-10% pairwise length matching 后只保留很少 pairs：
+  - A-prime train/val/test retained pairs：`82/4/3`。
+  - B-prime train/val/test retained pairs：`155/2/7`。
+- Cross-source word TF-IDF transfer 仍然接近完美：
+  - A-prime HarmThoughts -> ReasoningShield BA：`0.996111`；反向：`1.0`。
+  - B-prime HarmThoughts -> ReasoningShield BA：`0.997927`；反向：`1.0`。
+
+决策：不要在当前 A-prime/B-prime 上运行 GPU hidden-state extraction。当前数据
+没有通过 informative-window gate，应视为 rewrite/provenance confound 的诊断数据。
+下一步应设计 A-double-prime：两边对称处理、长度目标匹配、格式和风格统一。
 
 ## 数据准备代码结构
 
@@ -152,6 +220,13 @@ Completeness filtering 删除了 1 条 A-prime row，因为它的 `unsafe_reason
     - unsafe side: `manifest.unsafe_reasoning`
     - safe side: `manifest.safe_reasoning`
     - 默认 render mode: `reasoning_only`
+- `scripts/data/run_stage1_text_baselines.py`
+  - 从导出的 `normalized/{train,val,test}.jsonl` rows 运行 Stage 1 CPU
+    surface baselines。
+  - 默认支持：length-only、prompt-only TF-IDF、word TF-IDF、word BoW、char
+    n-gram TF-IDF、first-sentence-removed TF-IDF。
+  - original-unsafe vs OpenAI-paraphrased provenance classifier 默认跳过；
+    只有提供经过 review 且 pair-id 对齐的 original unsafe source 后才启用。
 
 ### Review / audit bundle
 

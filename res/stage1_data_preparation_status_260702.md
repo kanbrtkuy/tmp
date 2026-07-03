@@ -28,6 +28,12 @@ OpenAI API work for the primary paired data is complete:
 
 Safe-prompt diagnostic data (`S->S`) is not yet prepared.
 
+Related later natural-pair work from 2026-07-03 is archived in Cloudflare R2 at
+`cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260703-a100-natural-pairs/`.
+The archive layout is documented in `docs/stage1_paired_r2_archive_260703.md`;
+natural-pair results are tracked in
+`res/stage1_natural_pair_experiment_results_260703.md`.
+
 ## Primary Clean Manifests
 
 The recommended Stage 1 inputs are the completeness-clean manifests:
@@ -127,26 +133,67 @@ Important constraints:
 
 ## Current Next Steps
 
-Completed local test work:
+Completed local/RunPod validation work:
 
 - Added `tests/test_stage1_manifest_freeze_export.py`.
 - `python3 -m py_compile` passed for the new test and the two freeze/export
   scripts.
 - A temporary synthetic CLI dry-run passed: 3 prompt groups, 4 pairs, 4
   exported rows, and prompt-hash mismatch rejection.
-- `python3 -m pytest cot-safety/tests/test_stage1_manifest_freeze_export.py`
-  could not run on this machine because `pytest` is not installed.
+- The manifest freeze/export pytest target passed on the RunPod CPU node:
+  `3 passed`.
+- Real clean-manifest prompt split freeze completed on RunPod:
+  2556 pairs, 1670 prompt groups, train/val/test prompt groups =
+  1503/84/83.
+- Real `reasoning_only` Stage 1 export completed on RunPod:
+  A-prime = 2192 rows / 1096 pairs, B-prime = 2920 rows / 1460 pairs.
+- Added `scripts/data/run_stage1_text_baselines.py` and
+  `tests/test_stage1_text_baselines.py`.
+- The text-baseline readiness pytest target passed on RunPod: `2 passed`.
+- Real CPU/text baselines completed on the A6000 RunPod node and were synced
+  back locally:
+  - `runs/stage1_text_baselines/A_prime/`
+  - `runs/stage1_text_baselines/B_prime/`
 
-No CPU baselines or GPU runs should start until these remaining local checks
-and data exports pass:
+CPU/text baseline headline:
 
-1. Run the pytest target in an environment with dev dependencies installed.
-2. Prompt-group split freeze over the clean A-prime/B-prime manifests.
-3. Stage 1 export using `reasoning_only` manifest mode.
-4. Text/surface baselines and prompt-only controls.
+| Dataset | Baseline | Test balanced accuracy |
+|---|---|---:|
+| A-prime | prompt-only TF-IDF | 0.500000 |
+| A-prime | length-only | 0.953846 |
+| A-prime | word TF-IDF | 1.000000 |
+| A-prime | word BoW | 1.000000 |
+| A-prime | char TF-IDF | 1.000000 |
+| A-prime | first-sentence-removed TF-IDF | 1.000000 |
+| B-prime | prompt-only TF-IDF | 0.500000 |
+| B-prime | length-only | 0.869565 |
+| B-prime | word TF-IDF | 1.000000 |
+| B-prime | word BoW | 1.000000 |
+| B-prime | char TF-IDF | 1.000000 |
+| B-prime | first-sentence-removed TF-IDF | 1.000000 |
 
-After those pass, the first GPU-facing task is hidden-state extraction/probe
-training on clean A-prime.
+Do not start GPU hidden-state extraction until these CPU/text baseline results
+have been reviewed, because shallow reasoning-text baselines are already
+near-perfect.
+
+Additional CPU-only surface audits were then run and synced locally:
+
+- `runs/stage1_surface_audit/A_prime/`
+- `runs/stage1_surface_audit/B_prime/`
+- Summary:
+  `analysis_reports/stage1_surface_audit_summary_260702.md`
+
+These audits found no useful early prefix window. At k=4 reasoning words, all
+surface baselines were already above `0.90` test balanced accuracy on A-prime
+and above `0.96` on B-prime. Cross-source transfer was also near-perfect.
+Therefore GPU hidden-state extraction remains paused for A-prime/B-prime as-is.
+
+Remaining Stage 1 CPU-side work:
+
+1. Keep original-unsafe vs OpenAI-paraphrased provenance classifier skipped
+   until a reviewed pair-id-aligned original unsafe source is available.
+2. Design A-double-prime with symmetric processing, pairwise length targeting,
+   and format/style harmonization.
 
 ## Code Index
 
@@ -169,3 +216,4 @@ The main scripts used for the prepared primary data are:
 - `scripts/data/filter_frozen_manifests_by_completeness.py`
 - `scripts/data/freeze_stage1_prompt_splits.py`
 - `scripts/data/export_safe_rewrite_pairs_for_stage1.py`
+- `scripts/data/run_stage1_text_baselines.py`
