@@ -24,6 +24,9 @@ The key distinction we want reviewed:
 
 - `fable_review_prompt.md`: full external-review prompt with aggregate metrics,
   professor concerns, current results, and specific review questions.
+- `followup_user_questions_for_fable5.md`: follow-up prompt mapping the user's
+  concrete questions to the latest aggregate results, for a stricter
+  point-by-point review.
 
 ## Data Disclosure Boundary
 

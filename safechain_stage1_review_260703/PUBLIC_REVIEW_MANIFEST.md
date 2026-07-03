@@ -9,6 +9,9 @@ natural-pair experiments.
   - high-level disclosure boundary and review goal.
 - `fable_review_prompt.md`
   - aggregate-only prompt for external review.
+- `followup_user_questions_for_fable5.md`
+  - aggregate-only follow-up prompt that maps the user's concrete questions to
+    the current results and asks for point-by-point judgments.
 - `plan/`
   - Stage 1 natural-pair experiment plan in English and Chinese.
 - `res/`
