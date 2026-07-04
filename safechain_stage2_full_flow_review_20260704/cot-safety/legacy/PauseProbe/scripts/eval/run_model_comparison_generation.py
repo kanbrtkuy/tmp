@@ -134,6 +134,15 @@ def generation_mode(args: argparse.Namespace) -> str:
     return "natural"
 
 
+def strip_terminal_eos(text: str, eos_token: str | None) -> str:
+    if not eos_token:
+        return text
+    stripped = text.strip()
+    while stripped.endswith(eos_token):
+        stripped = stripped[: -len(eos_token)].rstrip()
+    return stripped
+
+
 def task_suffix(row: dict[str, Any]) -> str:
     if row.get("task_type") != "capability":
         return ""
@@ -254,6 +263,8 @@ def generate_vllm_batch(llm: Any, prompts: list[str], args: argparse.Namespace) 
             temperature=args.temperature,
             top_p=args.top_p,
             max_tokens=max_tokens,
+            skip_special_tokens=False,
+            spaces_between_special_tokens=False,
         ),
     )
     return [output.outputs[0].text.strip() if output.outputs else "" for output in outputs]
@@ -371,6 +382,7 @@ def main() -> None:
         except Exception:
             metric_tokenizer = None
     gen_mode = generation_mode(args)
+    eos_token_text = getattr(metric_tokenizer, "eos_token", None)
 
     with out.open("w", encoding="utf-8") as f:
         for start in range(0, len(rows), args.batch_size):
@@ -397,6 +409,7 @@ def main() -> None:
                         prefixes = generate_vllm_batch(llm, base_prompts, prefix_args)
                     else:
                         prefixes = steer.generate_prefix_batch(model, tokenizer, base_prompts, prefix_args)
+                    prefixes = [strip_terminal_eos(prefix, eos_token_text) for prefix in prefixes]
                 else:
                     prefixes = ["" for _ in batch]
                 inserted_prefixes = [
@@ -425,6 +438,7 @@ def main() -> None:
                     responses = generate_plain_batch(model, tokenizer, prompts, args)
                 hook_stats = [{"alpha": args.alpha, "num_hook_calls_with_pause": 0, "num_pause_tokens_steered": 0} for _ in responses]
             for row, inserted, response, hook_stat in zip(batch, inserted_prefixes, responses, hook_stats):
+                response = strip_terminal_eos(response, eos_token_text)
                 generated = args.forced_prefix + inserted + response
                 natural_generated = args.forced_prefix + response
                 pred = predicted_answer(row, generated)

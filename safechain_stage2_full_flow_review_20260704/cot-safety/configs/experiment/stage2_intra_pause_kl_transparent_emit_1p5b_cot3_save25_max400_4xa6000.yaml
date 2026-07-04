@@ -30,11 +30,11 @@ sft:
   eval_steps: 50
   save_total_limit: 20
   save_before_train: true
-  load_best_model_at_end: true
+  load_best_model_at_end: false
   metric_for_best_model: eval_loss
   greater_is_better: false
   early_stopping:
-    enabled: true
+    enabled: false
     patience: 4
     threshold: 0.001
   format_only:

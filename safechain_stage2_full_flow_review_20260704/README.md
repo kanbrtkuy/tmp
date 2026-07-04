@@ -105,6 +105,23 @@ the review's C1-C8 items:
   `configs/model/template_deepseek_r1_distill.yaml` and
   `pipelines/runpod_base_env.sh`.
 
+## Round 3 Fixes After Fable Round 2
+
+Fable Round 2 is saved at `CLAUDE_FABLE5_ROUND2_REVIEW.md`. It found two
+remaining blockers, both now addressed in this packet:
+
+- NEW-B1: 1.5B config had `save_steps: 25`, `eval_steps: 50`, and
+  `load_best_model_at_end: true`, which is invalid for Hugging Face
+  `TrainingArguments`. The config now keeps checkpoint density at
+  `save_steps: 25`, keeps `eval_steps: 50`, and sets
+  `load_best_model_at_end: false` with early stopping disabled. Checkpoint
+  selection is expected to happen via the eval battery, not composite
+  eval-loss best-model loading.
+- NEW-B2: vLLM generation used default special-token stripping, which would
+  erase natural `<|pause|>` emissions. `SamplingParams` now sets
+  `skip_special_tokens=False` and `spaces_between_special_tokens=False`, and
+  generated terminal EOS text is stripped before metrics/judge output.
+
 ## Local Verification Already Run
 
 From `/Users/baby/Documents/SafeChain`:
@@ -138,6 +155,26 @@ env PYTHONPATH=src python3 scripts/run_model_comparison_eval.py \
 
 env PYTHONPATH=src python3 scripts/run_model_comparison_eval.py \
   --config configs/experiment/stage2_model_comparison_eval_8b_kl_transparent_emit_cot4_4xa100.yaml \
+  --phase generate --dry_run
+```
+
+After Round 2 fixes:
+
+```bash
+python3 -m py_compile \
+  cot-safety/legacy/COTPauseToken/src/utils/pause_kl_trainer.py \
+  cot-safety/legacy/PauseProbe/scripts/eval/run_model_comparison_generation.py \
+  cot-safety/legacy/PauseProbe/scripts/eval/summarize_model_comparison_eval.py \
+  cot-safety/scripts/run_stage2_sft.py \
+  cot-safety/scripts/run_model_comparison_eval.py \
+  cot-safety/tests/test_stage2_pause_kl_trainer.py
+
+env PYTHONPATH=src python3 scripts/run_stage2_sft.py \
+  --config configs/experiment/stage2_intra_pause_kl_transparent_emit_1p5b_cot3_save25_max400_4xa6000.yaml \
+  --dry_run --skip_data_prep
+
+env PYTHONPATH=src python3 scripts/run_model_comparison_eval.py \
+  --config configs/experiment/stage2_model_comparison_eval_1p5b_kl_transparent_emit_cot3_4xa6000.yaml \
   --phase generate --dry_run
 ```
 
