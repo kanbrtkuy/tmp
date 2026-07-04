@@ -144,6 +144,46 @@ if missing:
 PY
 }
 
+verify_frozen_loso_sources() {
+  local summary_json="$1"
+  local required_sources="$2"
+  local min_pairs="$3"
+  "${PYTHON}" - "${summary_json}" "${required_sources}" "${min_pairs}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+summary_path = Path(sys.argv[1])
+required = [item.strip() for item in sys.argv[2].split(",") if item.strip()]
+min_pairs = int(sys.argv[3])
+if not summary_path.exists():
+    raise SystemExit(f"missing LOSO freeze summary: {summary_path}")
+
+summary = json.loads(summary_path.read_text())
+counts = summary.get("keep_pairs_by_source") or {}
+post_freeze_counts = {source: int(counts.get(source, 0)) for source in required}
+failing = [source for source, count in post_freeze_counts.items() if count < min_pairs]
+print(
+    json.dumps(
+        {
+            "stage": "post_freeze_loso_source_gate",
+            "summary_json": str(summary_path),
+            "required_sources": required,
+            "min_pairs": min_pairs,
+            "post_freeze_keep_pairs_by_source": post_freeze_counts,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+)
+if failing:
+    raise SystemExit(
+        "post-freeze LOSO source gate failed; freeze dropped at least one source below floor. "
+        + json.dumps({"failing_sources": failing, "post_freeze_keep_pairs_by_source": post_freeze_counts}, sort_keys=True)
+    )
+PY
+}
+
 check_cpu_deps() {
   "${PYTHON}" - <<'PY'
 import importlib
@@ -289,6 +329,7 @@ run_step "build_loso_freeze_${fixed_tag}" "${PYTHON}" scripts/data/build_stage1_
   --output-dir "${FREEZE_DIR}" \
   --wjb-trainval-cap "${WJB_TRAINVAL_CAP}" \
   --force
+verify_frozen_loso_sources "${FREEZE_DIR}/stage1_loso_freeze_summary.json" "${REQUIRED_LOSO_SOURCES}" "${MIN_LOSO_SOURCE_PAIRS}"
 
 QA_DIR="${STAGE1_OUT_ROOT}/human_qa_${fixed_tag}"
 run_step "sample_human_qa_${fixed_tag}" "${PYTHON}" scripts/data/sample_stage1_human_qa.py \

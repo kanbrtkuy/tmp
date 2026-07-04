@@ -44,6 +44,43 @@ After the fix, the focused Stage1 test suite passed:
 
 Result: `19 passed`.
 
+## Post-Freeze Source Gate Fix
+
+Fable's narrow source-gate review found one blocking issue: the orchestrator
+checked the per-source floor only on the raw combined pair inputs, but
+`build_stage1_loso_freeze.py` can still drop pairs because of missing arms,
+ambiguous source families, unregistered source families, or duplicate
+`pair_id`s across inputs.
+
+Additional change:
+
+- `pipelines/runpod_stage1_post_hb_freeze_then_loso.sh`
+  - adds `verify_frozen_loso_sources`
+  - after `build_loso_freeze_${fixed_tag}`, reads
+    `stage1_loso_freeze_summary.json`
+  - fails closed unless `keep_pairs_by_source` has at least
+    `MIN_LOSO_SOURCE_PAIRS` for every source in `REQUIRED_LOSO_SOURCES`
+
+This directly addresses Fable's B1 blocker: the source floor is now enforced
+both before freeze and after freeze on kept pairs.
+
+Verification after this fix:
+
+```bash
+bash -n pipelines/runpod_stage1_post_hb_freeze_then_loso.sh
+
+.venv-stage1-test/bin/python -m pytest \
+  tests/test_fixed_budget_gen_gen_selection.py \
+  tests/test_embedding_dedup_audit.py \
+  tests/test_stage1_pair_freeze_audit.py \
+  tests/test_stage1_text_baselines.py \
+  tests/test_stage1_surface_audit.py \
+  tests/test_stage1_loso_freeze_build.py \
+  tests/test_stage1_aux_audits.py
+```
+
+Result: `19 passed`.
+
 ## LOSO Source Gate Addendum
 
 After checking the live RunPod source-expansion manifest, we found that the
