@@ -1,0 +1,6 @@
+judge:
+  name: prometheus
+  model: prometheus-eval/prometheus-7b-v2.0
+  max_new_tokens: 512
+  batch_size: 1
+  torch_dtype: bfloat16

@@ -1,0 +1,6 @@
+judge:
+  name: harmbench
+  model: cais/HarmBench-Llama-2-13b-cls
+  max_new_tokens: 8
+  batch_size: 1
+  torch_dtype: bfloat16

@@ -1,0 +1,133 @@
+{
+  "out_root": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627",
+  "generation_glob": "*/*/*/generations.jsonl",
+  "normalized_filename": "open_judges_normalized.jsonl",
+  "num_shards": 12,
+  "num_joined_rows": 3150,
+  "shards": [
+    {
+      "dataset": "or_bench_hard_safe",
+      "seed": "260621",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_hard_safe/seed_260621/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_hard_safe/seed_260621/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 300,
+      "judge_rows": 300,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "or_bench_hard_safe",
+      "seed": "260622",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_hard_safe/seed_260622/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_hard_safe/seed_260622/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 300,
+      "judge_rows": 300,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "or_bench_hard_safe",
+      "seed": "260623",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_hard_safe/seed_260623/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_hard_safe/seed_260623/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 300,
+      "judge_rows": 300,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "or_bench_toxic_unsafe",
+      "seed": "260621",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_toxic_unsafe/seed_260621/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_toxic_unsafe/seed_260621/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 300,
+      "judge_rows": 300,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "or_bench_toxic_unsafe",
+      "seed": "260622",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_toxic_unsafe/seed_260622/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_toxic_unsafe/seed_260622/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 300,
+      "judge_rows": 300,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "or_bench_toxic_unsafe",
+      "seed": "260623",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_toxic_unsafe/seed_260623/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/or_bench_toxic_unsafe/seed_260623/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 300,
+      "judge_rows": 300,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "xstest_contrast_unsafe",
+      "seed": "260621",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_contrast_unsafe/seed_260621/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_contrast_unsafe/seed_260621/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 200,
+      "judge_rows": 200,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "xstest_contrast_unsafe",
+      "seed": "260622",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_contrast_unsafe/seed_260622/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_contrast_unsafe/seed_260622/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 200,
+      "judge_rows": 200,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "xstest_contrast_unsafe",
+      "seed": "260623",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_contrast_unsafe/seed_260623/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_contrast_unsafe/seed_260623/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 200,
+      "judge_rows": 200,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "xstest_safe",
+      "seed": "260621",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_safe/seed_260621/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_safe/seed_260621/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 250,
+      "judge_rows": 250,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "xstest_safe",
+      "seed": "260622",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_safe/seed_260622/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_safe/seed_260622/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 250,
+      "judge_rows": 250,
+      "missing_judge_rows": 0
+    },
+    {
+      "dataset": "xstest_safe",
+      "seed": "260623",
+      "alpha_shard": "0",
+      "generation_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_safe/seed_260623/alpha_0/generations.jsonl",
+      "normalized_file": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/xstest_safe/seed_260623/alpha_0/open_judges_normalized.jsonl",
+      "generation_rows": 250,
+      "judge_rows": 250,
+      "missing_judge_rows": 0
+    }
+  ],
+  "joined_csv": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/full_steering_joined_rows.csv",
+  "summary_csv": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/full_steering_summary.csv",
+  "manifest_json": "/dev/shm/cot-safety-hot/runs/steering/base_model_hardsafe_reference_eval_8b_20260627/full_steering_summary_manifest.json",
+  "num_summary_rows": 44
+}

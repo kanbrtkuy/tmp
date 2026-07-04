@@ -1,0 +1,22 @@
+data:
+  recipe_name: stage4_steering_eval_sources
+  unsafe_eval_sources:
+    - in_domain_unsafe
+    - source_heldout_unsafe
+    - strongreject
+    - harmbench_behaviors
+    - jailbreakbench
+  safe_eval_sources:
+    - in_domain_safe
+    - source_heldout_safe
+    - xtest_hard_safe
+    - or_bench_hard_safe
+    - squad_benign
+  capability_sources:
+    - gsm8k
+    - math500
+  default_limits:
+    unsafe_per_source: 300
+    safe_per_source: 300
+    gsm8k: 500
+    math500: 300

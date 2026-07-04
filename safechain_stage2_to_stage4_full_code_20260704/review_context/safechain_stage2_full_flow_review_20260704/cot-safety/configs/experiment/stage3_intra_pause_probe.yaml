@@ -1,0 +1,32 @@
+defaults:
+  - ../model/deepseek_r1_distill_qwen_1_5b.yaml
+  - ../data/stage3_intra_pause_probe_sources.yaml
+  - ../runtime/a6000_1x.yaml
+
+run:
+  name: stage3_intra_pause_probe_deepseek_1p5b
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_deepseek_1p5b
+
+hidden:
+  layers: [7, 14, 17, 21, 22, 28]
+  positions:
+    main: [pause_0, pause_1, pause_2]
+    diagnostics: [pre_pause_1, pre_pause_2, pre_pause_3, post_pause_1, post_pause_2, post_pause_3, control_cot_3, control_cot_4, cot_3, cot_4, cot_7, cot_8]
+  pre_pause_window: 3
+  post_pause_window: 3
+  cot_offsets: [3, 4, 7, 8]
+  extraction:
+    train_shards: 1
+    scheduler: dynamic_worker_queue
+
+probe:
+  model_kinds: [linear, mlp]
+  sample_weight_mode: source_label
+  threshold_max_fpr: 0.05
+  scan:
+    single_scan_backend: batched
+    single_position_single_layer: true
+    pause_span_pool: [mean, concat]
+    layer_combine: [first, concat]
+    pooled_scheduler: dynamic_worker_queue
+  metrics: [auroc, balanced_accuracy, recall, fpr, heldout_generalization]

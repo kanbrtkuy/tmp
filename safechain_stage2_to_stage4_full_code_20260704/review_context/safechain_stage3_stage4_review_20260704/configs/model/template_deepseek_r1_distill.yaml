@@ -1,0 +1,26 @@
+model_template:
+  name: deepseek_r1_distill
+  bos_token: "<｜begin▁of▁sentence｜>"
+  user_template: "<｜User｜>"
+  assistant_template: "<｜Assistant｜>"
+  think_open: "<think>"
+  think_close: "</think>"
+
+pause:
+  pause_token: "<|pause|>"
+  n_pause_tokens: 3
+  separator: ""
+  placement: intra_think_before_cot
+  cot_offset: 3
+
+generation:
+  forced_prefix: "<think>\n"
+  temperature: 0.6
+  top_p: 0.95
+  do_sample: true
+  max_new_tokens: 2048
+
+hidden:
+  layer_indexing: hf_hidden_states
+  dtype: bfloat16
+  save_dtype: float16

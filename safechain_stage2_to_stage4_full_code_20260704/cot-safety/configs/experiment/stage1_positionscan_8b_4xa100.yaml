@@ -1,0 +1,25 @@
+defaults:
+  - stage1_positionscan.yaml
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage1_positionscan_deepseek_8b_4xa100
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1_positionscan_deepseek_8b_4xa100
+
+probe:
+  # Preserve prior key layers and add a denser even-layer grid for smoother
+  # token x layer maps.
+  layers: [4, 6, 7, 8, 10, 12, 14, 16, 17, 18, 20, 21, 22, 24, 25, 26, 28, 30, 32]
+  single_scan:
+    backend: batched
+  hidden_extraction:
+    train_shards: 8
+
+legacy:
+  data_dir: data/external_probe_v0_8b
+  hidden_dir: data/hidden_8b
+  hidden_prefix: external_8b
+  log_dir: logs/stage1_positionscan_deepseek_8b_4xa100
+  single_scan_out_root: runs/probes/stage1_positionscan_deepseek_8b_4xa100_linear
+  multilayer_out_root: runs/probes/stage1_positionscan_deepseek_8b_4xa100_multilayer

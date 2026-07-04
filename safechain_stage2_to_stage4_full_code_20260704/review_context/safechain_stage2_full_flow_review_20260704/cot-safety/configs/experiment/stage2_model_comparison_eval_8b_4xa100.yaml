@@ -1,0 +1,39 @@
+defaults:
+  - stage2_model_comparison_eval.yaml
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage2_model_comparison_eval_deepseek_8b_4xa100
+  output_dir: ${COT_SAFETY_RUN_ROOT:-/workspace/cot-safety/runs}/eval/stage2_model_comparison_deepseek_8b_4xa100
+
+eval:
+  devices: ["0", "1", "2", "3"]
+  model_conditions:
+    - label: base
+      kind: base
+      path: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Llama-8B
+      insert_pause_after_cot_tokens: -1
+      n_insert_pauses: 0
+      batch_size: 32
+    - label: cot4_pause_sft
+      kind: sft
+      path: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot4_trusted_cot_18k/final
+      insert_pause_after_cot_tokens: 4
+      n_insert_pauses: 3
+      batch_size: 32
+    - label: cot3_pause_sft_control
+      kind: sft
+      path: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot3_control_trusted_cot_18k/final
+      insert_pause_after_cot_tokens: 3
+      n_insert_pauses: 3
+      batch_size: 32
+  data:
+    prepared_dir: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/model_comparison_eval/deepseek_8b_stage2
+  judging:
+    batch_size:
+      wildguard: 16
+      llamaguard: 16
+      harmbench: 4
+    device_map:
+      llamaguard: auto

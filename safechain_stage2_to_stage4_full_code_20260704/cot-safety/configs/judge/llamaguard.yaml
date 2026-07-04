@@ -1,0 +1,6 @@
+judge:
+  name: llamaguard
+  model: meta-llama/Llama-Guard-3-8B
+  max_new_tokens: 100
+  batch_size: 1
+  torch_dtype: bfloat16

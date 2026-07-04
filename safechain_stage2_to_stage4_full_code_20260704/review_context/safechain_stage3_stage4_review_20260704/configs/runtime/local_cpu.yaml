@@ -1,0 +1,26 @@
+runtime:
+  name: local_cpu
+  num_gpus: 0
+  cuda_visible_devices: ""
+  hf_home: ${HF_HOME:-~/.cache/huggingface}
+  hf_env_file: ""
+  workdir: .
+  data_root: data
+  output_root: outputs
+  run_root: runs
+  torch_dtype: float32
+  hidden:
+    extract_jobs: 1
+    extract_train_shards: 1
+    batch_size_per_gpu: 1
+  probes:
+    single_scan_backend: batched
+    dynamic_task_multiplier: 1
+    jobs: 1
+    device: cpu
+  generation:
+    workers: 1
+    batch_size_per_gpu: 1
+  judging:
+    workers: 1
+    batch_size_per_gpu: 1

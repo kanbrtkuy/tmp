@@ -1,0 +1,15 @@
+defaults:
+  - stage1_positionscan.yaml
+  - ../runtime/a6000_2x.yaml
+
+run:
+  name: stage1_positionscan_deepseek_1p5b_2xa6000
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1_positionscan_deepseek_1p5b_2xa6000
+
+legacy:
+  data_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/data/stage1_positionscan_deepseek_1p5b_2xa6000
+  hidden_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/hidden/stage1_positionscan_deepseek_1p5b_2xa6000
+  hidden_prefix: external_1p5b
+  log_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/logs/stage1_positionscan_deepseek_1p5b_2xa6000
+  single_scan_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1_positionscan_deepseek_1p5b_2xa6000/linear
+  multilayer_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1_positionscan_deepseek_1p5b_2xa6000/multilayer

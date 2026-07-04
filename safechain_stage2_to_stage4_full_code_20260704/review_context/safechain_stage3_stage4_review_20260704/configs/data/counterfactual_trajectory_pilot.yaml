@@ -1,0 +1,36 @@
+run:
+  name: counterfactual_trajectory_pilot
+  resolved_config: ${COT_SAFETY_RUN_ROOT:-runs}/counterfactual_pilot/resolved.yaml
+
+prompt_version: counterfactual_trajectory_v1
+
+data:
+  input_jsonl: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/stage1_unified_deepseek_8b_1xa6000_loso_position_scan_reasoningshield_train_dpo/normalized/source_heldout_reasoningshield_train_dpo.jsonl
+  output_jsonl: ${COT_SAFETY_RUN_ROOT:-runs}/counterfactual_pilot/reasoningshield_train_dpo_counterfactual_pilot.jsonl
+
+selection:
+  seed: 260701
+  n_prompts: 3
+
+variants:
+  - safe
+  - partial
+  - unsafe_redacted
+
+generation:
+  provider: openai
+  model: gpt-4o-mini
+  temperature: 0.2
+  max_output_tokens: 1200
+  max_reasoning_excerpt_chars: 3500
+  timeout_seconds: 120
+  retries: 2
+
+batch:
+  request_jsonl: ${COT_SAFETY_RUN_ROOT:-runs}/counterfactual_pilot/openai_batch_requests.jsonl
+  status_json: ${COT_SAFETY_RUN_ROOT:-runs}/counterfactual_pilot/openai_batch_status.json
+  completion_window: 24h
+  metadata:
+    project: cot-safety
+    stage: counterfactual_trajectory_pilot
+    dataset: reasoningshield_train_dpo

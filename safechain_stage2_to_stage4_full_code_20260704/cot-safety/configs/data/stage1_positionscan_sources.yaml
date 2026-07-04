@@ -1,0 +1,47 @@
+data:
+  recipe_name: stage1_positionscan_sources
+  label_task: trajectory_safety
+  split_strategy: source_label
+  max_prompt_words: 800
+  max_reasoning_words: 1600
+  max_final_words: 800
+  drop_labels: [partial, garbage, unlabeled]
+  heldout_sources: [reasoningshield_test]
+  sources:
+    - name: reasoningshield_train_sft
+      role: mixed
+      labels: [safe, unsafe]
+      max_per_source: 1000
+    - name: reasoningshield_train_dpo
+      role: mixed
+      labels: [safe, unsafe]
+      max_per_source: 1000
+    - name: star41k
+      role: hard_safe
+      labels: [safe]
+      min_score: 8.0
+      max_per_source: 1000
+    - name: star1
+      role: hard_safe
+      labels: [safe]
+      max_per_source: 1000
+    - name: aidsafe_beavertails
+      role: policy_safe
+      labels: [safe]
+      max_per_source: 1000
+    - name: aidsafe_dataadvisor
+      role: policy_safe
+      labels: [safe]
+      max_per_source: 1000
+    - name: unsafechain_selected
+      role: hard_safe
+      labels: [safe]
+      max_per_source: 1000
+    - name: harmthoughts
+      role: unsafe_reasoning
+      labels: [unsafe]
+      max_per_source: 1000
+    - name: reasoningshield_test
+      role: source_heldout
+      labels: [safe, unsafe]
+      max_per_source: 1000

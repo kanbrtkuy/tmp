@@ -1,0 +1,71 @@
+run:
+  name: source_expansion_r1_8b_k300_v1
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/source_expansion_r1_8b_k300_v1
+  resolved_config: ${COT_SAFETY_RUN_ROOT:-runs}/source_expansion_r1_8b_k300_v1/resolved_config.yaml
+
+source_expansion:
+  model: r1-8b
+  selection_seed: 260704
+  deduplicate_exact_normalized_prompts: true
+  sources:
+    # Keep smaller curated sources first so exact cross-source duplicates are
+    # dropped from WildJailbreak rather than from StrongReject/HarmBench.
+    - name: strongreject_full
+      source_family: strongreject_full
+      loader: csv
+      url: https://raw.githubusercontent.com/alexandrasouly/strongreject/main/strongreject_dataset/strongreject_dataset.csv
+      prompt_column: forbidden_prompt
+      sample_n: 0
+      metadata_columns: [category, source]
+    - name: harmbench_standard
+      source_family: harmbench_standard
+      loader: csv
+      url: https://raw.githubusercontent.com/centerforaisafety/HarmBench/main/data/behavior_datasets/harmbench_behaviors_text_all.csv
+      filters:
+        FunctionalCategory: standard
+      prompt_column: Behavior
+      row_id_column: BehaviorID
+      sample_n: 0
+      metadata_columns: [FunctionalCategory, SemanticCategory, Tags, BehaviorID]
+    - name: wildjailbreak_vanilla_harmful
+      source_family: wildjailbreak_vanilla_harmful
+      loader: hf_dataset
+      hf_dataset: allenai/wildjailbreak
+      hf_config: train
+      split: train
+      streaming: true
+      filters:
+        data_type: vanilla_harmful
+      prompt_column_candidates:
+        - vanilla
+        - prompt
+        - request
+        - instruction
+        - goal
+        - query
+        - text
+      sample_n: 3000
+      metadata_columns: [data_type]
+
+generation:
+  # DeepSeek-R1 model-card-style sampling used in the natural-pair runs.
+  temperature: 0.6
+  top_p: 0.95
+  samples_per_prompt: 300
+  samples_per_call: 5
+  batch_size: 192
+  max_new_tokens: 8192
+  max_model_len: 32768
+  gpu_memory_utilization: 0.97
+  seed: 260704
+
+judge:
+  batch_size: 256
+  max_model_len: 16384
+  gpu_memory_utilization: 0.85
+  max_unreliable_retries: 2
+
+selection:
+  require_quality_pass: true
+  safe_label: safe
+  unsafe_label: unsafe

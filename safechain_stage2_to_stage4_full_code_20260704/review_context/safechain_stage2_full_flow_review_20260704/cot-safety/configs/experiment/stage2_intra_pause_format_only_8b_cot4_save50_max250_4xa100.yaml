@@ -1,0 +1,12 @@
+defaults:
+  - stage2_intra_pause_format_only_8b_cot4_4xa100.yaml
+
+run:
+  name: stage2_intra_pause_format_only_deepseek_8b_cot4_save50_max250_4xa100
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250
+
+sft:
+  save_steps: 50
+  eval_steps: 50
+  save_total_limit: null
+  max_steps: 250
