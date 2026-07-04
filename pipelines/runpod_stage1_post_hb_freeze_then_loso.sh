@@ -16,6 +16,8 @@ MODEL="${MODEL:-r1-8b}"
 RUN_DIR="${RUN_DIR:-runs/source_expansion_r1_8b_k300_v1}"
 STAGE1_OUT_ROOT="${STAGE1_OUT_ROOT:-runs/stage1_post_hb_$(date +%Y%m%d_%H%M%S)}"
 LOG_DIR="${LOG_DIR:-/workspace/logs/stage1_post_hb}"
+RAW_SNAPSHOT_DIR="${RAW_SNAPSHOT_DIR:-${STAGE1_OUT_ROOT}/hb_raw_snapshot}"
+RAW_SNAPSHOT_LOG_DIRS="${RAW_SNAPSHOT_LOG_DIRS:-/workspace/logs/source_expansion_r1_8b_k300_v1 /workspace/logs/source_expansion_harmbench_only_r1_8b_k300_v1}"
 
 WAIT_FOR_HB="${WAIT_FOR_HB:-1}"
 HB_PROCESS_PATTERN="${HB_PROCESS_PATTERN:-runpod_harmbench_only_gen_gen_k300_r1_8b.sh}"
@@ -43,6 +45,8 @@ EXTERNAL_PROMPT_JSONL="${EXTERNAL_PROMPT_JSONL:-}"
 
 RUN_CPU_BASELINES="${RUN_CPU_BASELINES:-1}"
 RUN_GPU_STAGE1="${RUN_GPU_STAGE1:-1}"
+ALLOW_UNREVIEWED_GPU_STAGE1="${ALLOW_UNREVIEWED_GPU_STAGE1:-0}"
+UNREVIEWED_GPU_STAGE1_REASON="${UNREVIEWED_GPU_STAGE1_REASON:-overnight provisional run; human QA gate not yet completed}"
 STAGE1_SEQUENCE_SCRIPT="${STAGE1_SEQUENCE_SCRIPT:-pipelines/run_stage1_sequence.sh}"
 
 export PATH="${VENV_DIR}/bin:${PATH}"
@@ -209,6 +213,166 @@ wait_for_hb() {
   echo "===== HB generation wrapper no longer running $(date -Is) ====="
 }
 
+snapshot_hb_raw_state() {
+  local snapshot_dir="$1"
+  shift
+  "${PYTHON}" - "${RUN_DIR}" "${snapshot_dir}" "${MODEL}" "${SOURCE_FAMILY:-harmbench_standard}" "$@" <<'PY'
+import hashlib
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+
+run_dir = Path(sys.argv[1])
+snapshot_dir = Path(sys.argv[2])
+model = sys.argv[3]
+source_family = sys.argv[4]
+log_dirs = [Path(item) for item in sys.argv[5:]]
+
+if not run_dir.exists():
+    raise SystemExit(f"missing run dir for raw snapshot: {run_dir}")
+
+snapshot_dir.mkdir(parents=True, exist_ok=True)
+files_dir = snapshot_dir / "run_files"
+logs_dir = snapshot_dir / "logs"
+files_dir.mkdir(exist_ok=True)
+logs_dir.mkdir(exist_ok=True)
+
+def safe_name(path: Path) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", str(path).strip("/"))
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def line_count(path: Path) -> int | None:
+    try:
+        with path.open("rb") as handle:
+            return sum(1 for _ in handle)
+    except UnicodeDecodeError:
+        return None
+
+def copy_file(path: Path) -> dict:
+    dest = files_dir / path.name
+    shutil.copy2(path, dest)
+    return {
+        "source": str(path),
+        "snapshot": str(dest),
+        "size_bytes": dest.stat().st_size,
+        "sha256": sha256(dest),
+        "line_count": line_count(dest),
+    }
+
+copied_files = []
+primary_names = [
+    f"candidates_{model}.jsonl",
+    f"judged_candidates_{model}.jsonl",
+    f"generation_summary_{model}.json",
+    f"judge_summary_{model}.json",
+    "selection_gen_gen_summary.json",
+    "natural_generated_pairs.jsonl",
+    "natural_generated_pairs_normalized.jsonl",
+    "selection_gen_gen_dropped.jsonl",
+    "prompt_manifest.jsonl",
+]
+for name in primary_names:
+    path = run_dir / name
+    if path.exists():
+        copied_files.append(copy_file(path))
+
+active_patterns = [
+    f"prompt_manifest_active_gen_gen_{model}_harmbench_only_*.jsonl",
+    f"prompt_manifest_active_gen_gen_{model}_harmbench_only_*.summary.json",
+    f"prompt_manifest_active_gen_gen_{model}_after_harmbench_only_*.jsonl",
+    f"prompt_manifest_active_gen_gen_{model}_after_harmbench_only_*.summary.json",
+]
+seen = {entry["source"] for entry in copied_files}
+for pattern in active_patterns:
+    for path in sorted(run_dir.glob(pattern)):
+        if str(path) not in seen:
+            copied_files.append(copy_file(path))
+            seen.add(str(path))
+
+copied_logs = []
+for log_dir in log_dirs:
+    if not log_dir.exists():
+        continue
+    dest = logs_dir / safe_name(log_dir)
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(log_dir, dest)
+    log_entries = []
+    for path in sorted(dest.rglob("*")):
+        if path.is_file():
+            log_entries.append(
+                {
+                    "path": str(path),
+                    "size_bytes": path.stat().st_size,
+                    "sha256": sha256(path),
+                    "line_count": line_count(path),
+                }
+            )
+    copied_logs.append({"source": str(log_dir), "snapshot": str(dest), "files": log_entries})
+
+def read_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+round_re = re.compile(r"harmbench_only_[^/]*_round_(\d+)_(\d+)")
+round_summaries = []
+for path in sorted(run_dir.glob(f"prompt_manifest_active_gen_gen_{model}_*harmbench_only_*.summary.json")):
+    match = round_re.search(path.name)
+    if not match:
+        continue
+    data = read_json(path)
+    is_after = "_after_harmbench_only_" in path.name
+    round_summaries.append(
+        {
+            "path": str(path),
+            "round_start": int(match.group(1)),
+            "round_end": int(match.group(2)),
+            "is_after_select": is_after,
+            "n_source_active_prompts": data.get("n_source_active_prompts"),
+            "active_prompts_by_source": data.get("active_prompts_by_source"),
+        }
+    )
+
+latest_after = None
+after_summaries = [row for row in round_summaries if row["is_after_select"]]
+if after_summaries:
+    latest_after = max(after_summaries, key=lambda row: (row["round_end"], row["round_start"]))
+latest_any = max(round_summaries, key=lambda row: (row["round_end"], row["round_start"], row["is_after_select"])) if round_summaries else None
+
+selection_summary = read_json(run_dir / "selection_gen_gen_summary.json")
+raw_summary = {
+    "stage": "hb_raw_snapshot_before_fixed_budget_reselection",
+    "run_dir": str(run_dir),
+    "snapshot_dir": str(snapshot_dir),
+    "model": model,
+    "source_family": source_family,
+    "note": "Snapshot only; no fixed-budget selection or methodological judgment is made here.",
+    "selection_summary_snapshot": str(files_dir / "selection_gen_gen_summary.json")
+    if (files_dir / "selection_gen_gen_summary.json").exists()
+    else None,
+    "selected_pairs_by_source_from_current_selection_summary": selection_summary.get("selected_pairs_by_source"),
+    "n_selected_pairs_from_current_selection_summary": selection_summary.get("n_selected_pairs"),
+    "latest_harmbench_round_summary": latest_any,
+    "latest_harmbench_after_select_summary": latest_after,
+    "copied_files": copied_files,
+    "copied_log_dirs": copied_logs,
+}
+summary_path = snapshot_dir / "hb_raw_snapshot_summary.json"
+summary_path.write_text(json.dumps(raw_summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(json.dumps(raw_summary, indent=2, sort_keys=True))
+PY
+}
+
 json_bool_gate() {
   local path="$1"
   local expected_manifest="${2:-}"
@@ -272,6 +436,7 @@ run_text_bootstrap_ci() {
 
 check_cpu_deps
 wait_for_hb
+run_step "snapshot_hb_raw_state" snapshot_hb_raw_state "${RAW_SNAPSHOT_DIR}" ${RAW_SNAPSHOT_LOG_DIRS}
 
 run_step "final_select_gen_gen" "${PYTHON}" scripts/data/manage_source_expansion_gen_gen.py \
   --config "${CONFIG}" select-gen-gen \
@@ -386,15 +551,50 @@ fi
 
 QA_SUMMARY_JSON="${HUMAN_QA_SUMMARY_JSON:-${QA_DIR}/stage1_human_qa_summary.json}"
 if [[ ! -s "${QA_SUMMARY_JSON}" ]]; then
+  if [[ "${ALLOW_UNREVIEWED_GPU_STAGE1}" == "1" ]]; then
+    echo "===== BYPASS HUMAN QA GATE FOR PROVISIONAL GPU STAGE1 ====="
+    "${PYTHON}" - "${QA_DIR}" "${UNREVIEWED_GPU_STAGE1_REASON}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+qa_dir = Path(sys.argv[1])
+reason = sys.argv[2]
+qa_dir.mkdir(parents=True, exist_ok=True)
+path = qa_dir / "human_qa_gate_bypassed.json"
+path.write_text(
+    json.dumps(
+        {
+            "passes": False,
+            "gate_status": "bypassed_for_unreviewed_provisional_gpu_run",
+            "reason": reason,
+            "warning": (
+                "GPU Stage1 was allowed to continue without completed human QA. "
+                "Treat outputs as provisional/debug only until a passing human QA summary is supplied."
+            ),
+            "qa_sheet": str(qa_dir / "stage1_human_qa_sheet.tsv"),
+            "qa_manifest": str(qa_dir / "stage1_human_qa_manifest.jsonl"),
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+print(f"wrote {path}")
+PY
+  else
   echo "===== STOP BEFORE GPU STAGE1 ====="
   echo "Human QA sheet was written to: ${QA_DIR}/stage1_human_qa_sheet.tsv"
   echo "After annotation, run scripts/data/summarize_stage1_human_qa.py with --qa-tsv ${QA_DIR}/stage1_human_qa_sheet.tsv and set HUMAN_QA_SUMMARY_JSON to the passing summary."
   exit 20
+  fi
+else
+  json_bool_gate "${QA_SUMMARY_JSON}" "${QA_DIR}/stage1_human_qa_manifest.jsonl"
 fi
-json_bool_gate "${QA_SUMMARY_JSON}" "${QA_DIR}/stage1_human_qa_manifest.jsonl"
 
 if [[ "${RUN_GPU_STAGE1}" == "1" ]]; then
-  run_step "gpu_stage1_sequence" bash "${STAGE1_SEQUENCE_SCRIPT}"
+  run_step "gpu_stage1_sequence" env STAGE1_FREEZE_DIR="${FREEZE_DIR}" bash "${STAGE1_SEQUENCE_SCRIPT}"
 else
   echo "===== RUN_GPU_STAGE1=0; CPU audits/baselines complete, GPU Stage1 not launched ====="
 fi
