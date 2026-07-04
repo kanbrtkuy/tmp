@@ -63,8 +63,6 @@ def merge_manifest_labels(
     manifest_path: Path | None,
 ) -> tuple[list[dict[str, str]], dict[str, Any]]:
     if manifest_path is None:
-        if rows and "judge_label" in rows[0]:
-            return rows, {"mode": "legacy_tsv_judge_label", "manifest_jsonl": None}
         raise FileNotFoundError(
             "missing human-QA manifest. Pass --manifest-jsonl or place "
             "stage1_human_qa_manifest.jsonl beside the QA TSV."
@@ -83,8 +81,9 @@ def merge_manifest_labels(
             continue
         merged_row = dict(row)
         merged_row["judge_label"] = clean_text(manifest.get("judge_label"))
+        merged_row["source_family"] = clean_text(manifest.get("source_family"))
         for field in ("prompt_sha256", "reasoning_sha256"):
-            if clean_text(row.get(field)) and clean_text(manifest.get(field)) and clean_text(row.get(field)) != clean_text(manifest.get(field)):
+            if clean_text(row.get(field)) != clean_text(manifest.get(field)):
                 hash_mismatches.append({"qa_id": qa_id, "field": field})
         merged.append(merged_row)
 

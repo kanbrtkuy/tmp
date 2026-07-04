@@ -101,7 +101,9 @@ expected_manifest = Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else 
 data = json.loads(path.read_text())
 if not data.get("passes"):
     raise SystemExit(f"gate failed: {path}")
-if expected_manifest and expected_manifest.exists():
+if expected_manifest:
+    if not expected_manifest.exists():
+        raise SystemExit(f"gate failed: expected QA manifest is missing: {expected_manifest}")
     h = hashlib.sha256()
     with expected_manifest.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):

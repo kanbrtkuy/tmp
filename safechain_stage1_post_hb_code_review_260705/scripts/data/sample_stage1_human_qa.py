@@ -81,6 +81,10 @@ def row_key(row: dict[str, Any]) -> str:
     return clean_text(row.get("id") or row.get("row_id") or row.get("pair_id") or row.get("prompt_instance_id"))
 
 
+def pair_key(row: dict[str, Any]) -> str:
+    return clean_text(row.get("pair_id") or row.get("match_family") or row.get("prompt_instance_id") or row_key(row))
+
+
 def make_qa_id(row: dict[str, Any], seed: int) -> str:
     base = "::".join(
         [
@@ -115,21 +119,46 @@ def stratified_sample(
         unsafe_target = rows_per_source // 2
         safe_target = rows_per_source - unsafe_target
         source_selected: list[dict[str, Any]] = []
+        used_row_keys: set[str] = set()
+        used_pair_keys: set[str] = set()
+
         for label, target in (("unsafe", unsafe_target), ("safe", safe_target)):
             candidates = sorted(by_source_label[(source, label)], key=row_key)
             rng = random.Random(stable_int(f"{seed}:{source}:{label}:humanqa"))
             rng.shuffle(candidates)
-            source_selected.extend(candidates[:target])
+            label_selected = []
+            for row in candidates:
+                if pair_key(row) in used_pair_keys:
+                    continue
+                label_selected.append(row)
+                used_row_keys.add(row_key(row))
+                used_pair_keys.add(pair_key(row))
+                if len(label_selected) >= target:
+                    break
+            source_selected.extend(label_selected)
 
         if len(source_selected) < rows_per_source:
-            already = {row_key(row) for row in source_selected}
             extras = [
                 row
                 for label in ("unsafe", "safe")
                 for row in by_source_label[(source, label)]
-                if row_key(row) not in already
+                if row_key(row) not in used_row_keys and pair_key(row) not in used_pair_keys
             ]
             rng = random.Random(stable_int(f"{seed}:{source}:humanqa:extras"))
+            rng.shuffle(extras)
+            for row in extras[: rows_per_source - len(source_selected)]:
+                source_selected.append(row)
+                used_row_keys.add(row_key(row))
+                used_pair_keys.add(pair_key(row))
+
+        if len(source_selected) < rows_per_source:
+            extras = [
+                row
+                for label in ("unsafe", "safe")
+                for row in by_source_label[(source, label)]
+                if row_key(row) not in used_row_keys
+            ]
+            rng = random.Random(stable_int(f"{seed}:{source}:humanqa:overflow"))
             rng.shuffle(extras)
             source_selected.extend(extras[: rows_per_source - len(source_selected)])
 
@@ -143,9 +172,6 @@ def tsv_rows(rows: Iterable[dict[str, Any]], *, seed: int, include_text: bool) -
         out.append(
             {
                 "qa_id": make_qa_id(row, seed),
-                "source_family": source_family(row),
-                "pair_id": clean_text(row.get("pair_id")),
-                "row_id": row_key(row),
                 "prompt_sha256": stable_hash(row.get("prompt"), 32),
                 "reasoning_sha256": stable_hash(row.get("reasoning"), 32),
                 "prompt": clean_text(row.get("prompt")) if include_text else "",
@@ -163,9 +189,6 @@ def write_tsv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "qa_id",
-        "source_family",
-        "pair_id",
-        "row_id",
         "prompt_sha256",
         "reasoning_sha256",
         "prompt",

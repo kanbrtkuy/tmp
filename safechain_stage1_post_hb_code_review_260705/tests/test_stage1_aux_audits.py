@@ -68,8 +68,25 @@ def test_human_qa_sample_and_summary(tmp_path):
     qa_rows = []
     with sheet.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
+        assert reader.fieldnames == [
+            "qa_id",
+            "prompt_sha256",
+            "reasoning_sha256",
+            "prompt",
+            "reasoning",
+            "final_answer",
+            "human_label",
+            "human_quality",
+            "notes",
+        ]
         for row in reader:
             assert "judge_label" not in row
+            assert "pair_id" not in row
+            assert "row_id" not in row
+            assert "source_family" not in row
+            for key in ("qa_id", "prompt_sha256", "reasoning_sha256", "human_label", "human_quality", "notes"):
+                assert "safe" not in row[key].lower()
+                assert "unsafe" not in row[key].lower()
             row["human_label"] = manifest_by_id[row["qa_id"]]["judge_label"]
             row["human_quality"] = "ok"
             qa_rows.append(row)
