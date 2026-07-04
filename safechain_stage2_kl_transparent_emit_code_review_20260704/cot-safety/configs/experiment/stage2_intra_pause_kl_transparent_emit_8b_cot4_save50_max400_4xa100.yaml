@@ -32,9 +32,11 @@ sft:
     enabled: true
     pause_token: "<|pause|>"
     continuation_weight: 1.0
-    pre_weight: 0.1
+    pre_weight: 0.0
     suppression_weight: 1.0
     emit_weight: 0.3
     temperature: 1.0
     max_kl_tokens_per_example: 256
     require_pause_before_continuation_kl: true
+    assert_rows_only: true
+    teacher_eval_mode: true

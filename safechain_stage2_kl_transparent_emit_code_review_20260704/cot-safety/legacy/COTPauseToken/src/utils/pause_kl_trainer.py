@@ -25,7 +25,10 @@ class PauseKLSFTTrainer(SFTTrainer):
             raise ValueError("PauseKLSFTTrainer requires a tokenizer/processing_class")
 
         self.pause_token = str(self.pause_kl_cfg.get("pause_token", "<|pause|>"))
-        self.pause_token_id = int(tokenizer.convert_tokens_to_ids(self.pause_token))
+        pause_token_id = tokenizer.convert_tokens_to_ids(self.pause_token)
+        if pause_token_id is None:
+            raise ValueError(f"Unknown pause token for PauseKLSFTTrainer: {self.pause_token!r}")
+        self.pause_token_id = int(pause_token_id)
         if self.pause_token_id < 0 or self.pause_token_id == getattr(tokenizer, "unk_token_id", None):
             raise ValueError(f"Unknown pause token for PauseKLSFTTrainer: {self.pause_token!r}")
 
@@ -44,10 +47,31 @@ class PauseKLSFTTrainer(SFTTrainer):
         self.require_pause_before_continuation_kl = bool(
             self.pause_kl_cfg.get("require_pause_before_continuation_kl", True)
         )
+        self.assert_rows_only = bool(self.pause_kl_cfg.get("assert_rows_only", True))
+        self.teacher_eval_mode = bool(self.pause_kl_cfg.get("teacher_eval_mode", True))
+        self._last_pause_kl_log_step = -1
+        if self.assert_rows_only:
+            self._assert_rows_only_training()
 
     def _model_kwargs(self, inputs: dict[str, Any]) -> dict[str, Any]:
         allowed = {"input_ids", "attention_mask", "position_ids"}
         return {key: value for key, value in inputs.items() if key in allowed}
+
+    def _assert_rows_only_training(self) -> None:
+        allowed = {id(self.model.get_input_embeddings().weight)}
+        output_embeddings = self.model.get_output_embeddings()
+        if output_embeddings is not None:
+            allowed.add(id(output_embeddings.weight))
+        bad = [
+            name
+            for name, parameter in self.model.named_parameters()
+            if parameter.requires_grad and id(parameter) not in allowed
+        ]
+        if bad:
+            raise ValueError(
+                "PauseKLSFTTrainer requires rows-only/format-only training. "
+                f"Unexpected trainable parameters: {bad[:20]}"
+            )
 
     def _zero(self, logits: torch.Tensor) -> torch.Tensor:
         return logits.sum() * 0.0
@@ -120,17 +144,22 @@ class PauseKLSFTTrainer(SFTTrainer):
                 else:
                     row_pre.append(pair)
 
-            if self.max_kl_tokens_per_example > 0 and len(row_post) > self.max_kl_tokens_per_example:
-                keep = torch.linspace(
-                    0,
-                    len(row_post) - 1,
-                    self.max_kl_tokens_per_example,
-                    dtype=torch.long,
-                ).tolist()
-                row_post = [row_post[int(idx)] for idx in keep]
+            row_post = self._cap_pairs(row_post)
+            row_pre = self._cap_pairs(row_pre)
             post_pairs.extend(row_post)
             pre_pairs.extend(row_pre)
         return post_pairs, pre_pairs
+
+    def _cap_pairs(self, pairs: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
+        if self.max_kl_tokens_per_example <= 0 or len(pairs) <= self.max_kl_tokens_per_example:
+            return pairs
+        keep = torch.linspace(
+            0,
+            len(pairs) - 1,
+            self.max_kl_tokens_per_example,
+            dtype=torch.long,
+        ).tolist()
+        return [pairs[int(idx)] for idx in keep]
 
     def _gather_pair_logits(
         self,
@@ -206,12 +235,15 @@ class PauseKLSFTTrainer(SFTTrainer):
         num_items_in_batch: Any | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, Any]:
         if not self.enabled:
-            return super().compute_loss(
-                model,
-                inputs,
-                return_outputs=return_outputs,
-                num_items_in_batch=num_items_in_batch,
-            )
+            try:
+                return super().compute_loss(
+                    model,
+                    inputs,
+                    return_outputs=return_outputs,
+                    num_items_in_batch=num_items_in_batch,
+                )
+            except TypeError:
+                return super().compute_loss(model, inputs, return_outputs=return_outputs)
 
         input_ids = inputs["input_ids"]
         attention_mask = inputs.get("attention_mask", torch.ones_like(input_ids))
@@ -223,13 +255,26 @@ class PauseKLSFTTrainer(SFTTrainer):
         emit_loss, suppression_loss = self._pause_losses(student_logits, input_ids, labels)
 
         teacher_ids, teacher_mask, mappings = self._pause_stripped_batch(input_ids, attention_mask)
+        was_training = model.training
+        if self.teacher_eval_mode:
+            model.eval()
         with torch.no_grad():
             teacher_outputs = model(input_ids=teacher_ids, attention_mask=teacher_mask, use_cache=False)
             teacher_logits = teacher_outputs.logits.detach()
+        if self.teacher_eval_mode and was_training:
+            model.train()
 
         post_pairs, pre_pairs = self._select_kl_pairs(input_ids, labels, attention_mask, mappings)
-        continuation_kl = self._kl_loss(student_logits, teacher_logits, post_pairs)
-        pre_kl = self._kl_loss(student_logits, teacher_logits, pre_pairs)
+        continuation_kl = (
+            self._kl_loss(student_logits, teacher_logits, post_pairs)
+            if self.continuation_weight
+            else self._zero(student_logits)
+        )
+        pre_kl = (
+            self._kl_loss(student_logits, teacher_logits, pre_pairs)
+            if self.pre_weight
+            else self._zero(student_logits)
+        )
 
         loss = (
             self.emit_weight * emit_loss
@@ -237,7 +282,31 @@ class PauseKLSFTTrainer(SFTTrainer):
             + self.pre_weight * pre_kl
             + self.suppression_weight * suppression_loss
         )
+        self._maybe_log_loss_parts(model, emit_loss, continuation_kl, pre_kl, suppression_loss)
 
         if return_outputs:
             return loss, outputs
         return loss
+
+    def _maybe_log_loss_parts(
+        self,
+        model: torch.nn.Module,
+        emit_loss: torch.Tensor,
+        continuation_kl: torch.Tensor,
+        pre_kl: torch.Tensor,
+        suppression_loss: torch.Tensor,
+    ) -> None:
+        step = int(getattr(self.state, "global_step", 0))
+        logging_steps = int(getattr(self.args, "logging_steps", 25) or 25)
+        if step == self._last_pause_kl_log_step or step % logging_steps != 0:
+            return
+        self._last_pause_kl_log_step = step
+        prefix = "pause_kl/train" if model.training else "pause_kl/eval"
+        self.log(
+            {
+                f"{prefix}/emit": float(emit_loss.detach().float().cpu()),
+                f"{prefix}/continuation": float(continuation_kl.detach().float().cpu()),
+                f"{prefix}/pre": float(pre_kl.detach().float().cpu()),
+                f"{prefix}/suppression": float(suppression_loss.detach().float().cpu()),
+            }
+        )

@@ -85,6 +85,8 @@ def run_logged(
         "PAUSE_KL_TEMPERATURE",
         "PAUSE_KL_MAX_KL_TOKENS_PER_EXAMPLE",
         "PAUSE_KL_REQUIRE_PAUSE_BEFORE_CONTINUATION_KL",
+        "PAUSE_KL_ASSERT_ROWS_ONLY",
+        "PAUSE_KL_TEACHER_EVAL_MODE",
         "SAVE_BEFORE_TRAIN",
         "MAX_STEPS",
         "NCCL_P2P_DISABLE",
@@ -360,6 +362,8 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
     env["PAUSE_KL_REQUIRE_PAUSE_BEFORE_CONTINUATION_KL"] = str(
         pause_kl.get("require_pause_before_continuation_kl", True)
     ).lower()
+    env["PAUSE_KL_ASSERT_ROWS_ONLY"] = str(pause_kl.get("assert_rows_only", True)).lower()
+    env["PAUSE_KL_TEACHER_EVAL_MODE"] = str(pause_kl.get("teacher_eval_mode", True)).lower()
     env["PYTHON_BIN"] = args.python
     env.setdefault("NCCL_DEBUG", "WARN")
     env.setdefault("NCCL_P2P_DISABLE", "0")
