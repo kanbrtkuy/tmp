@@ -20,12 +20,46 @@ CONFIGS="${CONFIGS:-configs/experiment/stage1_natural_pairs_8b_a100_1x.yaml conf
 # Keep hidden arrays only if you need to rerun probes without re-extraction.
 CLEAN_HIDDEN_AFTER_STAGE="${CLEAN_HIDDEN_AFTER_STAGE:-1}"
 STAGE1_SEQUENCE_DRY_RUN="${STAGE1_SEQUENCE_DRY_RUN:-0}"
+STAGE1_PROVISIONAL_GPU_RUN="${STAGE1_PROVISIONAL_GPU_RUN:-0}"
+STAGE1_PROVISIONAL_REASON="${STAGE1_PROVISIONAL_REASON:-}"
 
 # shellcheck disable=SC1091
 source "${ROOT}/pipelines/runpod_stage1_env.sh"
 
 cd "${ROOT}"
 mkdir -p "${ARCHIVE_ROOT}" "${COT_SAFETY_RUN_ROOT}" "${STAGE1_PREPARED_ROOT}" "${STAGE1_CONFIG_ROOT}" logs
+
+if [[ "${STAGE1_PROVISIONAL_GPU_RUN}" == "1" ]]; then
+  "${PYTHON}" - "${ARCHIVE_ROOT}" "${STAGE1_FREEZE_DIR}" "${STAGE1_PROVISIONAL_REASON}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+archive_root = Path(sys.argv[1])
+freeze_dir = sys.argv[2]
+reason = sys.argv[3]
+archive_root.mkdir(parents=True, exist_ok=True)
+path = archive_root / "PROVISIONAL_UNREVIEWED_GPU_STAGE1.json"
+path.write_text(
+    json.dumps(
+        {
+            "status": "provisional_unreviewed_gpu_stage1",
+            "freeze_dir": freeze_dir,
+            "reason": reason,
+            "warning": (
+                "Human QA was not completed before this GPU launch. "
+                "Use for debugging/throughput only until human QA passes."
+            ),
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+print(f"wrote {path}")
+PY
+fi
 
 if [[ -z "${STAGE1_FREEZE_DIR}" ]]; then
   echo "STAGE1_FREEZE_DIR is required for frozen-fold Stage 1." >&2
