@@ -45,7 +45,7 @@ steering:
   gprs:
     direction_artifact: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts/mean_diff_direction.pt
     safe_centroid: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts/safe_centroid.pt
-    probe_checkpoint: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_deepseek_1p5b/probe.pt
+    probe_checkpoint: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_kl_transparent_deepseek_1p5b_cot3/probe.pt
     gate_threshold: 0.95
     norm_cap: 0.10
     random_direction_control: true

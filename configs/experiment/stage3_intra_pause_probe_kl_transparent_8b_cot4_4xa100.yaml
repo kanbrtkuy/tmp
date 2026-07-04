@@ -6,7 +6,7 @@ run:
   output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_kl_transparent_deepseek_8b_cot4_4xa100
 
 model:
-  sft_checkpoint: ${STAGE2_KL_CHECKPOINT:-/workspace/outputs/deepseek_8b_intra_pause_cot4_kl_transparent_emit_trusted_cot_18k_save50_max400_4xa100/checkpoint-400}
+  sft_checkpoint: ${STAGE2_KL_CHECKPOINT:-/workspace/outputs/deepseek_8b_intra_pause_cot4_kl_transparent_emit_trusted_cot_18k_save50_max400/checkpoint-400}
 
 pause:
   cot_offset: 4

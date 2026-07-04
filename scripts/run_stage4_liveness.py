@@ -47,7 +47,9 @@ def main() -> None:
         "liveness": liveness_config(config),
         "next_step": (
             "Run this battery after the Stage2 kl_transparent_emit checkpoint exists; "
-            "green => fixed Stage3 then GPRS, yellow/red => Stage2.5 branch."
+            "green => fixed Stage3 then GPRS; yellow => proceed on live layers only "
+            "and queue Stage2.5-A for the next Stage2 train; red with a green "
+            "positive control => stop Stage4 and branch to Stage2.5-A/B."
         ),
     }
     write_json(output_json, plan)

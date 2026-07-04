@@ -19,6 +19,8 @@ def test_liveness_config_uses_gate_defaults():
 
 def test_liveness_decision_from_status_map():
     assert liveness_decision({}) == "not_run"
+    assert liveness_decision({"decision": "GREEN"}) == "green"
+    assert liveness_decision({"decision": "gren"}) == "unknown"
     assert liveness_decision({"test_status": {"injection_gain": "green", "kv_ablation": "green"}}) == "green"
     assert liveness_decision({"test_status": {"injection_gain": "yellow", "kv_ablation": "green"}}) == "yellow"
     assert liveness_decision({"test_status": {"injection_gain": "red", "kv_ablation": "green"}}) == "red"

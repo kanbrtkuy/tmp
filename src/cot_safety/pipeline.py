@@ -165,7 +165,8 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                     ],
                     notes=(
                         "Gate steering on pause-port liveness: green => Stage3/GPRS; "
-                        "yellow/red => Stage2.5 branch before spending steering GPU."
+                        "yellow => live layers only + queue Stage2.5-A; "
+                        "red => stop Stage4 and branch to Stage2.5-A/B."
                     ),
                 )
             )

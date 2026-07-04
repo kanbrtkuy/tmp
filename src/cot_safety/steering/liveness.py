@@ -55,7 +55,10 @@ def liveness_decision(report: dict[str, Any]) -> str:
 
     explicit = report.get("decision")
     if explicit:
-        return str(explicit)
+        normalized = str(explicit).strip().lower()
+        if normalized in {"green", "yellow", "red", "not_run"}:
+            return normalized
+        return "unknown"
     statuses = report.get("test_status") or {}
     if not statuses:
         return "not_run"
