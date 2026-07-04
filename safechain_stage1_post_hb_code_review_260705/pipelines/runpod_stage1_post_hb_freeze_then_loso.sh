@@ -26,6 +26,14 @@ FIXED_BUDGET_MAX_SAMPLE_IDX="${FIXED_BUDGET_MAX_SAMPLE_IDX:-100}"
 WJB_TRAINVAL_CAP="${WJB_TRAINVAL_CAP:-700}"
 QA_ROWS_PER_SOURCE="${QA_ROWS_PER_SOURCE:-60}"
 QA_UNSAFE_AGREEMENT_BAR="${QA_UNSAFE_AGREEMENT_BAR:-0.90}"
+REQUIRED_LOSO_SOURCES="${REQUIRED_LOSO_SOURCES:-reasoningshield,strongreject_full,wildjailbreak_vanilla_harmful,harmbench_standard}"
+MIN_LOSO_SOURCE_PAIRS="${MIN_LOSO_SOURCE_PAIRS:-150}"
+
+# Extra fixed/frozen pair JSONL files to include in the LOSO freeze, separated
+# by whitespace.  The source-expansion k300 run currently covers SR/HB/WJB; set
+# this to the fixed ReasoningShield gen/gen pair file before claiming 4-source
+# LOSO, e.g. EXTRA_LOSO_PAIR_JSONL="/path/to/reasoningshield_pairs.jsonl".
+EXTRA_LOSO_PAIR_JSONL="${EXTRA_LOSO_PAIR_JSONL:-}"
 
 # Optional whitespace-separated SOURCE=PATH entries.  These are deliberately
 # explicit because safe-prompt diagnostics and external-test quarantine depend
@@ -61,6 +69,79 @@ require_file() {
     echo "ERROR: missing required file: ${path}" >&2
     exit 2
   fi
+}
+
+verify_loso_sources() {
+  local required_sources="$1"
+  local min_pairs="$2"
+  shift 2
+  "${PYTHON}" - "${required_sources}" "${min_pairs}" "$@" <<'PY'
+import json
+import re
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+required = [item.strip() for item in sys.argv[1].split(",") if item.strip()]
+min_pairs = int(sys.argv[2])
+paths = [Path(item) for item in sys.argv[3:]]
+
+def clean(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+def canonical(value):
+    raw = clean(value).lower()
+    if "reasoningshield" in raw:
+        return "reasoningshield"
+    if "strongreject" in raw:
+        return "strongreject_full"
+    if "harmbench" in raw:
+        return "harmbench_standard"
+    if "wildjailbreak" in raw or raw in {"wjb", "wildjailbreak_vanilla"}:
+        return "wildjailbreak_vanilla_harmful"
+    return raw
+
+def source_family(row):
+    metadata = row.get("metadata") or {}
+    prompt_metadata = metadata.get("prompt_metadata") or {}
+    provenance = metadata.get("source_provenance") or {}
+    for value in (
+        row.get("source_family"),
+        metadata.get("source_family"),
+        metadata.get("source_pair_source"),
+        prompt_metadata.get("source_family"),
+        provenance.get("source_family"),
+        row.get("source"),
+        metadata.get("source"),
+    ):
+        source = canonical(value)
+        if source:
+            return source
+    return ""
+
+source_to_pairs = defaultdict(set)
+for path in paths:
+    if not path.exists():
+        raise SystemExit(f"missing LOSO pair input: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            source = source_family(row)
+            pair_id = clean(row.get("pair_id"))
+            if source and pair_id:
+                source_to_pairs[source].add(pair_id)
+
+counts = {source: len(source_to_pairs.get(source, set())) for source in required}
+missing = [source for source, count in counts.items() if count < min_pairs]
+print(json.dumps({"required_sources": required, "min_pairs": min_pairs, "pair_counts": counts}, indent=2))
+if missing:
+    raise SystemExit(
+        "LOSO source gate failed; provide/fix EXTRA_LOSO_PAIR_JSONL or lower MIN_LOSO_SOURCE_PAIRS only for a declared pilot. "
+        + json.dumps({"failing_sources": missing, "pair_counts": counts}, sort_keys=True)
+    )
+PY
 }
 
 check_cpu_deps() {
@@ -174,14 +255,26 @@ NORMALIZED_JSONL="${FIXED_DIR}/natural_generated_pairs_normalized.jsonl"
 require_file "${PAIR_JSONL}"
 require_file "${NORMALIZED_JSONL}"
 
+LOSO_PAIR_JSONLS=("${PAIR_JSONL}")
+for item in ${EXTRA_LOSO_PAIR_JSONL}; do
+  require_file "${item}"
+  LOSO_PAIR_JSONLS+=("${item}")
+done
+verify_loso_sources "${REQUIRED_LOSO_SOURCES}" "${MIN_LOSO_SOURCE_PAIRS}" "${LOSO_PAIR_JSONLS[@]}"
+
+LOSO_INPUT_ARGS=()
+for item in "${LOSO_PAIR_JSONLS[@]}"; do
+  LOSO_INPUT_ARGS+=(--input-jsonl "${item}")
+done
+
 run_step "freeze_audit_${fixed_tag}" "${PYTHON}" scripts/data/audit_stage1_pair_freeze.py \
-  --input-jsonl "${PAIR_JSONL}" \
+  "${LOSO_INPUT_ARGS[@]}" \
   --output-dir "${STAGE1_OUT_ROOT}/freeze_audit_${fixed_tag}" \
   --tokenizer-local-files-only \
   --snapshot-inputs
 
 run_step "embedding_dedup_${fixed_tag}" "${PYTHON}" scripts/data/audit_stage1_embedding_dedup.py \
-  --input-jsonl "${PAIR_JSONL}" \
+  "${LOSO_INPUT_ARGS[@]}" \
   --output-dir "${STAGE1_OUT_ROOT}/embedding_dedup_${fixed_tag}" \
   --embedding-mode tfidf \
   --allow-tfidf-fallback \
@@ -192,7 +285,7 @@ run_step "embedding_dedup_${fixed_tag}" "${PYTHON}" scripts/data/audit_stage1_em
 
 FREEZE_DIR="${STAGE1_OUT_ROOT}/loso_freeze_${fixed_tag}"
 run_step "build_loso_freeze_${fixed_tag}" "${PYTHON}" scripts/data/build_stage1_loso_freeze.py \
-  --input-jsonl "${PAIR_JSONL}" \
+  "${LOSO_INPUT_ARGS[@]}" \
   --output-dir "${FREEZE_DIR}" \
   --wjb-trainval-cap "${WJB_TRAINVAL_CAP}" \
   --force

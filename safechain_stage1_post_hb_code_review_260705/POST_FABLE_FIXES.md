@@ -44,6 +44,24 @@ After the fix, the focused Stage1 test suite passed:
 
 Result: `19 passed`.
 
+## LOSO Source Gate Addendum
+
+After checking the live RunPod source-expansion manifest, we found that the
+k300 source-expansion run covers SR/HB/WJB but does not itself include
+ReasoningShield. The post-HB orchestrator now fails closed before audits/freeze
+unless the required LOSO sources are all present at the configured floor:
+
+- `REQUIRED_LOSO_SOURCES` defaults to
+  `reasoningshield,strongreject_full,wildjailbreak_vanilla_harmful,harmbench_standard`
+- `MIN_LOSO_SOURCE_PAIRS` defaults to `150`
+- `EXTRA_LOSO_PAIR_JSONL` can be set to one or more extra fixed pair JSONLs,
+  e.g. the ReasoningShield fixed gen/gen pair file
+- freeze audit, embedding dedup, LOSO fold build, and QA sampling all consume
+  the combined pair inputs
+
+This is meant to prevent accidentally producing a three-source freeze while
+believing it is the four-source LOSO plan.
+
 ## Second Re-Review Fix
 
 Fable's re-review caught that `row_id` still leaked labels because freeze rows
