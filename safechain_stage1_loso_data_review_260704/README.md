@@ -9,6 +9,10 @@ leave-one-source-out (LOSO) experiment.
 Primary file:
 
 - `FABLE_STAGE1_LOSO_DATA_READINESS_REQUEST.md`
+- `CLAUDE_FABLE5_STAGE1_LOSO_DATA_READINESS_REVIEW.md`: Fable5 review result.
+- `PREVIOUS_FABLE_STAGE1_ADVICE.md`: compact prior-advice context.
+- `SOURCE_EXPANSION_PREREG_EXCERPT.md`: short pre-registration excerpt relevant
+  to the review.
 
 Review focus:
 
@@ -25,4 +29,3 @@ Disclosure boundary:
   reviewer questions.
 - It excludes raw prompts, raw trajectories, raw model outputs, credentials,
   cloud endpoint details, Jupyter tokens, SSH details, and private logs.
-
