@@ -12,6 +12,7 @@ The output intentionally mirrors external_probe_v0:
   output_dir/
     normalized/{all,train,val,test,...}.jsonl
     cotpause/{all,train,val,test,...}.json
+    nopause/{all,train,val,test,...}.json
     manifest.json
 
 The "cotpause" directory name is kept for compatibility with existing
@@ -310,10 +311,39 @@ def build_intra_pause_output(
     return output, info, None
 
 
-def to_probe_row(row: dict[str, Any], output: str, label: str, rewrite_info: dict[str, Any]) -> dict[str, Any]:
+def stable_probe_id(row: dict[str, Any]) -> str:
     source = row_source(row)
     prompt = row_prompt(row)
-    row_id = clean_text(row.get("id")) or f"intra-{source}-{stable_hash(prompt + output)}"
+    fingerprint = "||".join([source, prompt, row_reasoning(row), row_final_answer(row)])
+    return clean_text(row.get("id")) or f"intra-{source}-{stable_hash(fingerprint)}"
+
+
+def build_no_pause_output(row: dict[str, Any]) -> tuple[str | None, dict[str, Any], str | None]:
+    prompt = row_prompt(row)
+    reasoning = row_reasoning(row)
+    final = row_final_answer(row)
+    if not prompt:
+        return None, {}, "missing_prompt"
+    if not reasoning:
+        return None, {}, "missing_reasoning"
+    output = f"<think>\n{reasoning.strip()}\n</think>"
+    if final:
+        output += "\n" + final
+    return output, {"pause_style": "no_pause_matched"}, None
+
+
+def to_probe_row(
+    row: dict[str, Any],
+    output: str,
+    label: str,
+    rewrite_info: dict[str, Any],
+    *,
+    row_id: str | None = None,
+    policy_type: str = "external_off_policy_intra_pause",
+) -> dict[str, Any]:
+    source = row_source(row)
+    prompt = row_prompt(row)
+    row_id = row_id or stable_probe_id(row)
     metadata = dict(row.get("metadata") or {})
     metadata["intra_pause_rewrite"] = rewrite_info
     return {
@@ -325,7 +355,7 @@ def to_probe_row(row: dict[str, Any], output: str, label: str, rewrite_info: dic
         "safety_label": label,
         "trajectory_safety_label": label,
         "label_task": "trajectory_safety",
-        "policy_type": clean_text(row.get("policy_type") or "external_off_policy_intra_pause"),
+        "policy_type": clean_text(row.get("policy_type") or policy_type),
         "prompt_key": prompt_key(prompt),
         "metadata": metadata,
     }
@@ -476,9 +506,9 @@ def count_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def write_split(output_dir: Path, split: str, rows: list[dict[str, Any]]) -> None:
+def write_split(output_dir: Path, split: str, rows: list[dict[str, Any]], *, json_subdir: str = "cotpause") -> None:
     write_jsonl(output_dir / "normalized" / f"{split}.jsonl", rows)
-    write_json_rows(output_dir / "cotpause" / f"{split}.json", rows)
+    write_json_rows(output_dir / json_subdir / f"{split}.json", rows)
 
 
 def parse_args() -> argparse.Namespace:
@@ -563,10 +593,12 @@ def main() -> None:
 
     sampled_raw, sampling_report = sample_source_label_caps(trainable_raw, caps, rng)
 
-    def rewrite_rows(raw_rows: list[dict[str, Any]], split_name: str) -> list[dict[str, Any]]:
+    def rewrite_rows(raw_rows: list[dict[str, Any]], split_name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         rewritten = []
+        no_pause_rows = []
         for row in raw_rows:
             label = get_label(row)
+            row_id = stable_probe_id(row)
             output, info, reason = build_intra_pause_output(
                 tokenizer,
                 row,
@@ -578,12 +610,30 @@ def main() -> None:
             if output is None:
                 dropped[f"{split_name}:{row_source(row)}:{reason}"] += 1
                 continue
-            rewritten.append(to_probe_row(row, output, label, info))
-        return rewritten
+            no_pause_output, no_pause_info, no_pause_reason = build_no_pause_output(row)
+            if no_pause_output is None:
+                dropped[f"{split_name}:{row_source(row)}:{no_pause_reason}"] += 1
+                continue
+            rewritten.append(to_probe_row(row, output, label, info, row_id=row_id))
+            no_pause_rows.append(
+                to_probe_row(
+                    row,
+                    no_pause_output,
+                    label,
+                    no_pause_info,
+                    row_id=row_id,
+                    policy_type="external_off_policy_no_pause_matched",
+                )
+            )
+        return rewritten, no_pause_rows
 
-    trainable_rows = rewrite_rows(sampled_raw, "trainable")
-    heldout_rows = rewrite_rows(heldout_raw, "heldout")
-    partial_rows = rewrite_rows(partial_raw, "partial")
+    trainable_rows, trainable_no_pause_rows = rewrite_rows(sampled_raw, "trainable")
+    heldout_rows, heldout_no_pause_rows = rewrite_rows(heldout_raw, "heldout")
+    partial_rows, partial_no_pause_rows = rewrite_rows(partial_raw, "partial")
+    no_pause_by_id = {
+        clean_text(row.get("id")): row
+        for row in trainable_no_pause_rows + heldout_no_pause_rows + partial_no_pause_rows
+    }
     if args.split_strategy == "source_label_prompt_group":
         splits = split_source_label_prompt_group(
             trainable_rows,
@@ -601,17 +651,31 @@ def main() -> None:
 
     output_dir = Path(args.output_dir)
     all_rows = trainable_rows + heldout_rows + partial_rows
+    all_no_pause_rows = trainable_no_pause_rows + heldout_no_pause_rows + partial_no_pause_rows
     write_jsonl(output_dir / "normalized" / "all.jsonl", all_rows)
     write_json_rows(output_dir / "cotpause" / "all.json", all_rows)
+    write_json_rows(output_dir / "nopause" / "all.json", all_no_pause_rows)
     for split, split_rows in splits.items():
         write_split(output_dir, split, split_rows)
+        write_json_rows(
+            output_dir / "nopause" / f"{split}.json",
+            [no_pause_by_id[clean_text(row.get("id"))] for row in split_rows],
+        )
 
     for source in sorted(heldout_sources):
         rows_for_source = [row for row in heldout_rows if row_source(row) == source]
         if rows_for_source:
             write_split(output_dir, f"source_heldout_{source}", rows_for_source)
+            write_json_rows(
+                output_dir / "nopause" / f"source_heldout_{source}.json",
+                [no_pause_by_id[clean_text(row.get("id"))] for row in rows_for_source],
+            )
     if partial_rows:
         write_split(output_dir, "partial_diagnostic", partial_rows)
+        write_json_rows(
+            output_dir / "nopause" / "partial_diagnostic.json",
+            [no_pause_by_id[clean_text(row.get("id"))] for row in partial_rows],
+        )
 
     prompt_sets = {
         split: {clean_text(row.get("prompt_key")) for row in split_rows}
@@ -639,6 +703,7 @@ def main() -> None:
             "raw_heldout_rows": len(heldout_raw),
             "raw_partial_rows": len(partial_raw),
             "rewritten_trainable": count_rows(trainable_rows),
+            "rewritten_trainable_no_pause_matched": count_rows(trainable_no_pause_rows),
             "rewritten_partial_diagnostic": count_rows(partial_rows),
             "splits": {split: count_rows(split_rows) for split, split_rows in splits.items()},
             "source_heldout": {

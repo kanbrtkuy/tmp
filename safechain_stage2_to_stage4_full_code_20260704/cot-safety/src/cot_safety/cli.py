@@ -33,7 +33,9 @@ def _target_specs_from_config(config: dict[str, Any]) -> str | list[str] | None:
     if isinstance(configured, list) and configured and isinstance(configured[0], dict):
         lines = []
         for item in configured:
-            name = str(item["name"])
+            name = str(item.get("name") or "").strip()
+            if not name:
+                raise SystemExit(f"steering.target_specs entry is missing a non-empty name: {item!r}")
             positions = ",".join(str(pos) for pos in item.get("positions", []))
             lines.append(f"{name}|{positions}")
         return lines

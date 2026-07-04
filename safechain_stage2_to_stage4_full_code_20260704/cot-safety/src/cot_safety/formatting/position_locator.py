@@ -103,13 +103,6 @@ def locate_intra_cot_positions(
         if pos < end_think:
             positions[f"cot_{offset}"] = pos
 
-    # Historical controls: cot_3/cot_4 in the no-pause coordinate correspond to
-    # the first two content tokens after the pause run in intra-pause data.
-    if "post_pause_1" in positions:
-        positions["control_cot_3"] = positions["post_pause_1"]
-    if "post_pause_2" in positions:
-        positions["control_cot_4"] = positions["post_pause_2"]
-
     return positions, {
         "parse_status": "explicit_think",
         "reasoning_start": reasoning_start,

@@ -23,13 +23,19 @@ def _embedding_weights(model: torch.nn.Module) -> list[tuple[str, torch.nn.Param
 
 
 class _RowsOnlyInvariantCallback(TrainerCallback):
-    """Verify that non-pause embedding rows stay bit-identical after step 1."""
+    """Verify that non-pause embedding rows stay bit-identical during training."""
 
-    def __init__(self, pause_token_id: int, chunk_rows: int = 2048) -> None:
+    def __init__(
+        self,
+        pause_token_id: int,
+        chunk_rows: int = 2048,
+        check_interval_steps: int = 50,
+    ) -> None:
         self.pause_token_id = int(pause_token_id)
         self.chunk_rows = max(1, int(chunk_rows))
+        self.check_interval_steps = max(1, int(check_interval_steps))
         self.snapshots: list[tuple[str, torch.Tensor]] | None = None
-        self.checked = False
+        self.last_checked_step = 0
 
     def on_train_begin(self, args, state, control, model=None, **kwargs):  # type: ignore[override]
         if model is None or self.snapshots is not None:
@@ -40,17 +46,12 @@ class _RowsOnlyInvariantCallback(TrainerCallback):
         ]
         return control
 
-    def on_step_end(self, args, state, control, model=None, **kwargs):  # type: ignore[override]
-        if self.checked or model is None or self.snapshots is None:
-            return control
-        if int(getattr(state, "global_step", 0)) < 1:
-            return control
-
+    def _check(self, model: torch.nn.Module, step_label: str) -> None:
         current_weights = dict(_embedding_weights(model))
         for name, before in self.snapshots:
             current = current_weights.get(name)
             if current is None:
-                raise ValueError(f"Rows-only invariant failed: missing {name} after step 1")
+                raise ValueError(f"Rows-only invariant failed: missing {name} at {step_label}")
             if tuple(current.shape) != tuple(before.shape):
                 raise ValueError(
                     f"Rows-only invariant failed: {name} shape changed "
@@ -72,13 +73,28 @@ class _RowsOnlyInvariantCallback(TrainerCallback):
                         .tolist()
                     )
                     raise ValueError(
-                        "Rows-only invariant failed after optimizer step 1: "
+                        f"Rows-only invariant failed at {step_label}: "
                         f"non-pause rows changed in {name}; sample rows={bad_rows}. "
                         "Check gradient masks and ensure weight_decay remains 0.0."
                     )
 
-        self.checked = True
-        self.snapshots = None
+    def on_step_end(self, args, state, control, model=None, **kwargs):  # type: ignore[override]
+        if model is None or self.snapshots is None:
+            return control
+        step = int(getattr(state, "global_step", 0))
+        if step < 1:
+            return control
+        if self.last_checked_step and step - self.last_checked_step < self.check_interval_steps:
+            return control
+        self._check(model, f"optimizer step {step}")
+        self.last_checked_step = step
+        return control
+
+    def on_train_end(self, args, state, control, model=None, **kwargs):  # type: ignore[override]
+        if model is None or self.snapshots is None:
+            return control
+        step = int(getattr(state, "global_step", 0))
+        self._check(model, f"train end step {step}")
         return control
 
 
@@ -128,12 +144,21 @@ class PauseKLSFTTrainer(SFTTrainer):
         self.post_step_invariant_check = bool(
             self.pause_kl_cfg.get("post_step_invariant_check", True)
         )
+        self.invariant_check_interval_steps = int(
+            self.pause_kl_cfg.get("invariant_check_interval_steps", 50)
+        )
         self.teacher_eval_mode = bool(self.pause_kl_cfg.get("teacher_eval_mode", True))
         self._last_pause_kl_log_step = -1
+        self._pause_row_initial = self._snapshot_pause_rows()
         if self.assert_rows_only:
             self._assert_rows_only_training()
             if self.post_step_invariant_check:
-                self.add_callback(_RowsOnlyInvariantCallback(self.pause_token_id))
+                self.add_callback(
+                    _RowsOnlyInvariantCallback(
+                        self.pause_token_id,
+                        check_interval_steps=self.invariant_check_interval_steps,
+                    )
+                )
 
     def _model_kwargs(self, inputs: dict[str, Any]) -> dict[str, Any]:
         allowed = {"input_ids", "attention_mask", "position_ids"}
@@ -161,6 +186,52 @@ class PauseKLSFTTrainer(SFTTrainer):
 
     def _zero(self, logits: torch.Tensor) -> torch.Tensor:
         return logits.sum() * 0.0
+
+    def _snapshot_pause_rows(self) -> dict[str, torch.Tensor]:
+        rows: dict[str, torch.Tensor] = {}
+        for name, weight in _embedding_weights(self.model):
+            rows[name] = weight.detach()[self.pause_token_id].float().cpu().clone()
+        return rows
+
+    def _pause_row_diagnostics(self, model: torch.nn.Module) -> dict[str, float]:
+        diagnostics: dict[str, float] = {}
+        for name, weight in _embedding_weights(model):
+            safe_name = name.replace(".weight", "").replace(".", "_")
+            row = weight.detach()[self.pause_token_id].float()
+            diagnostics[f"pause_row/{safe_name}_norm"] = float(row.norm().cpu())
+            initial = self._pause_row_initial.get(name)
+            if initial is not None:
+                initial = initial.to(device=row.device, dtype=row.dtype)
+                cosine = F.cosine_similarity(row.view(1, -1), initial.view(1, -1), dim=-1)
+                diagnostics[f"pause_row/{safe_name}_cosine_to_init"] = float(cosine[0].cpu())
+        return diagnostics
+
+    def _pause_logit_diagnostics(
+        self,
+        logits: torch.Tensor,
+        input_ids: torch.Tensor,
+        labels: torch.Tensor,
+    ) -> dict[str, float]:
+        shift_logits = logits[:, :-1, :]
+        shift_targets = input_ids[:, 1:]
+        shift_labels = labels[:, 1:]
+        valid_mask = shift_labels.ne(-100)
+        pause_mask = valid_mask & shift_targets.eq(self.pause_token_id)
+        non_pause_mask = valid_mask & ~shift_targets.eq(self.pause_token_id)
+        diagnostics: dict[str, float] = {}
+        if pause_mask.any():
+            pause_logits = shift_logits[pause_mask].float()
+            pause_probs = F.softmax(pause_logits, dim=-1)[:, self.pause_token_id]
+            pause_argmax = pause_logits.argmax(dim=-1).eq(self.pause_token_id).float()
+            diagnostics["pause_emit/target_prob_mean"] = float(pause_probs.mean().detach().cpu())
+            diagnostics["pause_emit/target_argmax_rate"] = float(pause_argmax.mean().detach().cpu())
+        if non_pause_mask.any():
+            non_pause_logits = shift_logits[non_pause_mask].float()
+            non_pause_probs = F.softmax(non_pause_logits, dim=-1)[:, self.pause_token_id]
+            non_pause_argmax = non_pause_logits.argmax(dim=-1).eq(self.pause_token_id).float()
+            diagnostics["pause_emit/non_pause_prob_mean"] = float(non_pause_probs.mean().detach().cpu())
+            diagnostics["pause_emit/non_pause_argmax_rate"] = float(non_pause_argmax.mean().detach().cpu())
+        return diagnostics
 
     def _pause_stripped_batch(
         self,
@@ -383,7 +454,20 @@ class PauseKLSFTTrainer(SFTTrainer):
             + self.pre_weight * pre_kl
             + self.suppression_weight * suppression_loss
         )
-        self._maybe_log_loss_parts(model, emit_loss, continuation_kl, pre_kl, suppression_loss)
+        diagnostics = {
+            **self._pause_logit_diagnostics(student_logits, input_ids, labels),
+            **self._pause_row_diagnostics(model),
+            "pause_kl/post_pairs": float(len(post_pairs)),
+            "pause_kl/pre_pairs": float(len(pre_pairs)),
+        }
+        self._maybe_log_loss_parts(
+            model,
+            emit_loss,
+            continuation_kl,
+            pre_kl,
+            suppression_loss,
+            diagnostics,
+        )
 
         if return_outputs:
             return loss, outputs
@@ -396,6 +480,7 @@ class PauseKLSFTTrainer(SFTTrainer):
         continuation_kl: torch.Tensor,
         pre_kl: torch.Tensor,
         suppression_loss: torch.Tensor,
+        diagnostics: dict[str, float] | None = None,
     ) -> None:
         step = int(getattr(self.state, "global_step", 0))
         logging_steps = int(getattr(self.args, "logging_steps", 25) or 25)
@@ -403,11 +488,12 @@ class PauseKLSFTTrainer(SFTTrainer):
             return
         self._last_pause_kl_log_step = step
         prefix = "pause_kl/train" if model.training else "pause_kl/eval"
-        self.log(
-            {
-                f"{prefix}/emit": float(emit_loss.detach().float().cpu()),
-                f"{prefix}/continuation": float(continuation_kl.detach().float().cpu()),
-                f"{prefix}/pre": float(pre_kl.detach().float().cpu()),
-                f"{prefix}/suppression": float(suppression_loss.detach().float().cpu()),
-            }
-        )
+        payload = {
+            f"{prefix}/emit": float(emit_loss.detach().float().cpu()),
+            f"{prefix}/continuation": float(continuation_kl.detach().float().cpu()),
+            f"{prefix}/pre": float(pre_kl.detach().float().cpu()),
+            f"{prefix}/suppression": float(suppression_loss.detach().float().cpu()),
+        }
+        if diagnostics:
+            payload.update({f"{prefix}/{key}": value for key, value in diagnostics.items()})
+        self.log(payload)

@@ -13,7 +13,7 @@ from typing import Any
 from cot_safety.config import dump_config, load_config
 
 
-ENV_DEFAULT_RE = re.compile(r"\$\{([^}:]+):-([^}]+)\}")
+ENV_DEFAULT_RE = re.compile(r"\$\{([^}:]+):-([^}]*)\}")
 
 
 def resolve_value(value: Any) -> Any:
@@ -88,6 +88,7 @@ def run_logged(
         "PAUSE_KL_REQUIRE_PAUSE_BEFORE_CONTINUATION_KL",
         "PAUSE_KL_ASSERT_ROWS_ONLY",
         "PAUSE_KL_POST_STEP_INVARIANT_CHECK",
+        "PAUSE_KL_INVARIANT_CHECK_INTERVAL_STEPS",
         "PAUSE_KL_TEACHER_EVAL_MODE",
         "SAVE_BEFORE_TRAIN",
         "MAX_STEPS",
@@ -344,15 +345,21 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
         format_only.get("enabled", False)
     )
     pause_kl = sft.get("pause_kl", {}) or {}
+    pause_kl_token = str(
+        pause_kl.get("pause_token", sft.get("pause_token", config.get("pause", {}).get("pause_token", "<|pause|>")))
+    )
+    if pause_kl_enabled and pause_kl_token != "<|pause|>":
+        raise ValueError(
+            "Stage2 KL-transparent training currently supports only the hard-wired "
+            f"<|pause|> token in the legacy launcher; got pause_kl.pause_token={pause_kl_token!r}."
+        )
     env["FORMAT_ONLY"] = str(format_only_enabled).lower()
     env["FORMAT_ONLY_TRAINABLE_TOKENS"] = json.dumps(
         format_only.get("trainable_tokens", pause_kl.get("trainable_tokens", ["<|pause|>"]))
     )
     env["FORMAT_ONLY_INIT_TEXT"] = str(format_only.get("init_from_text", ""))
     env["PAUSE_KL_ENABLED"] = str(pause_kl_enabled).lower()
-    env["PAUSE_KL_PAUSE_TOKEN"] = str(
-        pause_kl.get("pause_token", sft.get("pause_token", config.get("pause", {}).get("pause_token", "<|pause|>")))
-    )
+    env["PAUSE_KL_PAUSE_TOKEN"] = pause_kl_token
     env["PAUSE_KL_CONTINUATION_WEIGHT"] = str(pause_kl.get("continuation_weight", 1.0))
     env["PAUSE_KL_PRE_WEIGHT"] = str(pause_kl.get("pre_weight", 0.1))
     env["PAUSE_KL_SUPPRESSION_WEIGHT"] = str(pause_kl.get("suppression_weight", 1.0))
@@ -369,6 +376,9 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
     env["PAUSE_KL_POST_STEP_INVARIANT_CHECK"] = str(
         pause_kl.get("post_step_invariant_check", True)
     ).lower()
+    env["PAUSE_KL_INVARIANT_CHECK_INTERVAL_STEPS"] = str(
+        pause_kl.get("invariant_check_interval_steps", 50)
+    )
     env["PAUSE_KL_TEACHER_EVAL_MODE"] = str(pause_kl.get("teacher_eval_mode", True)).lower()
     env["PYTHON_BIN"] = args.python
     env.setdefault("NCCL_DEBUG", "WARN")

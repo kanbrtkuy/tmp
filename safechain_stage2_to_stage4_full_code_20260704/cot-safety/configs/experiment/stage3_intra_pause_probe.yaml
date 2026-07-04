@@ -24,10 +24,15 @@ probe:
   model_kinds: [linear, mlp]
   sample_weight_mode: source_label
   threshold_max_fpr: 0.05
-  primary_endpoint: within_prompt_auroc
+  primary_endpoint: teacher_forced_pause_minus_prompt_screen
+  confirmatory_endpoint:
+    name: within_prompt_auroc
+    status: not_implemented
+    requires: on_policy_generation_and_cot_segment_judge
   prompt_baseline_positions: [last_prompt_token, pre_think]
   true_content_controls:
     required: true
+    source: matched_no_pause_forward
     current_control_cot_aliases_valid: false
   on_policy:
     enabled: false

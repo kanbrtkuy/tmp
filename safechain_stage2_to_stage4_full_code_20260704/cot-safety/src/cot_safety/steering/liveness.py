@@ -32,6 +32,10 @@ def liveness_config(config: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(liveness.get("enabled", True)),
         "model_under_test": model.get("sft_checkpoint") or model.get("steering_model") or model.get("base_model"),
         "positive_control_model": controls.get("positive_control_model"),
+        "positive_control_status": controls.get(
+            "positive_control_status",
+            "configured" if controls.get("positive_control_model") else "missing",
+        ),
         "negative_control_model": controls.get("negative_control_model") or model.get("base_model"),
         "pause_layout": liveness.get("pause_layout", "forced"),
         "layers": [int(layer) for layer in layers],
@@ -43,6 +47,17 @@ def liveness_config(config: dict[str, Any]) -> dict[str, Any]:
         or ["injection_gain", "attention_mass", "pause_kv_ablation", "safe_unsafe_patching"],
         "gate": gate.to_dict(),
     }
+
+
+def liveness_plan_status(plan: dict[str, Any], *, dry_run: bool) -> str:
+    gate = plan.get("gate") or {}
+    control_status = str(plan.get("positive_control_status") or "").strip().lower()
+    control_model = str(plan.get("positive_control_model") or "").strip()
+    if gate.get("require_positive_control_green", True) and (
+        not control_model or control_status.startswith(("missing", "invalid"))
+    ):
+        return "blocked_missing_positive_control"
+    return "planned" if dry_run else "not_run"
 
 
 def liveness_decision(report: dict[str, Any]) -> str:

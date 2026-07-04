@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 
-ENV_DEFAULT_RE = re.compile(r"\$\{([^}:]+):-([^}]+)\}")
+ENV_DEFAULT_RE = re.compile(r"\$\{([^}:]+):-([^}]*)\}")
 
 
 def resolve_value(value: Any) -> Any:
@@ -85,7 +85,9 @@ def target_specs(steering: dict[str, Any]) -> str:
             if isinstance(item, str):
                 lines.append(item)
             elif isinstance(item, dict):
-                name = str(item["name"])
+                name = str(item.get("name") or "").strip()
+                if not name:
+                    raise ValueError(f"Stage4 target_specs entry is missing a non-empty name: {item!r}")
                 positions = item.get("positions", [])
                 lines.append(f"{name}|{csv(positions)}")
         return "\n".join(lines)
@@ -150,9 +152,9 @@ def build_env(config: dict[str, Any], legacy_root: Path, repo_root: Path, args: 
     env.setdefault("STEERING_METHOD", str(steering.get("method", "learned_delta")))
     env.setdefault("ALPHAS", csv(steering.get("alpha_grid", [0.0, 1.0, 2.0])))
     env.setdefault("SEEDS", words(steering.get("seeds", [260618, 260619, 260620])))
-    env.setdefault("TARGET_SPECS", target_specs(steering))
-    env.setdefault("TARGET_NAME", str(steering.get("target_name", "all3")))
-    env.setdefault("TARGET_POSITIONS", csv(steering.get("target_positions", ["pause_0", "pause_1", "pause_2"])))
+    env["TARGET_SPECS"] = target_specs(steering)
+    env["TARGET_NAME"] = str(steering.get("target_name", "all3"))
+    env["TARGET_POSITIONS"] = csv(steering.get("target_positions", ["pause_0", "pause_1", "pause_2"]))
 
     judges = [str(item) for item in eval_cfg.get("judges", ["wildguard"])]
     judge_backend = str(eval_cfg.get("judge_backend", os.environ.get("STAGE4_JUDGE_BACKEND", "vllm")))
@@ -228,13 +230,18 @@ def run_validate(config_path: str, repo_root: Path, env: dict[str, str]) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Stage 4 pause-only steering from config.")
-    parser.add_argument("--config", default="configs/experiment/stage4_pause_steering.yaml")
+    parser.add_argument("--config", default="configs/experiment/stage4_pause_gprs.yaml")
     parser.add_argument("--legacy-root", default=None)
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument(
         "--phase",
         choices=("validate", "liveness", "generation", "judge", "summary", "eval", "all"),
-        default="eval",
+        default="validate",
+    )
+    parser.add_argument(
+        "--allow_learned_delta",
+        action="store_true",
+        help="Explicitly allow deprecated learned-delta evaluation paths. Intended only for archival reproduction.",
     )
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
@@ -251,8 +258,19 @@ def main() -> None:
     run_name = str(config.get("run", {}).get("name", "stage4_pause_steering"))
     (runs_dir / f"{run_name}_resolved.yaml").write_text(dump_config(config), encoding="utf-8")
 
-    env = build_env(config, legacy_root, repo_root, args)
+    try:
+        env = build_env(config, legacy_root, repo_root, args)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     steering_method = str(config.get("steering", {}).get("method", "learned_delta"))
+    if steering_method == "learned_delta" and args.phase not in {"validate"}:
+        acknowledged = bool(config.get("steering", {}).get("acknowledge_deprecated", False))
+        if not (args.allow_learned_delta or acknowledged):
+            raise SystemExit(
+                "Refusing to run deprecated learned_delta Stage4 without an explicit acknowledgement. "
+                "This path is archival only and bypasses the liveness/GPRS evidence gate. "
+                "Pass --allow_learned_delta or set steering.acknowledge_deprecated: true."
+            )
     gprs_meta = validate_gprs_config(config)
     if args.phase in {"validate", "all"}:
         if args.dry_run:
@@ -276,7 +294,7 @@ def main() -> None:
             return
         raise SystemExit(subprocess.run(command, cwd=repo_root, env=env).returncode)
 
-    if steering_method in {"gprs", "projection"} and not args.dry_run:
+    if steering_method in {"gprs", "projection"} and args.phase not in {"validate", "liveness"}:
         raise SystemExit(
             "GPRS generation is scaffolded but not wired into the legacy generation shell yet. "
             "Run --phase validate or --phase liveness now; implement the GPRS hook before eval."

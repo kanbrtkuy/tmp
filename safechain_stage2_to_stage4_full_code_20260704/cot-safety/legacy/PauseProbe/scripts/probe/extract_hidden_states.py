@@ -166,6 +166,32 @@ def row_id(row: dict[str, Any], idx: int) -> str:
     return "row-" + stable_hash(row_prompt(row) + row_output(row, PAUSE_TOKEN, 3) + str(idx))
 
 
+def build_matched_lookup(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for idx, row in enumerate(rows):
+        rid = row_id(row, idx)
+        if rid:
+            lookup.setdefault(f"id:{rid}", row)
+        prompt = row_prompt(row)
+        if prompt:
+            lookup.setdefault(f"prompt:{prompt_key(prompt)}", row)
+    return lookup
+
+
+def find_matched_row(
+    lookup: dict[str, dict[str, Any]],
+    row: dict[str, Any],
+    idx: int,
+) -> dict[str, Any] | None:
+    rid = row_id(row, idx)
+    if rid and f"id:{rid}" in lookup:
+        return lookup[f"id:{rid}"]
+    prompt = row_prompt(row)
+    if prompt and f"prompt:{prompt_key(prompt)}" in lookup:
+        return lookup[f"prompt:{prompt_key(prompt)}"]
+    return None
+
+
 def render_deepseek_text(prompt: str, output: str, append_eos: str | None) -> str:
     text = f"{DEEPSEEK_BOS_TOKEN}{DEEPSEEK_USER_TEMPLATE}{prompt}{DEEPSEEK_ASSISTANT_TEMPLATE}{output}"
     if append_eos:
@@ -333,10 +359,6 @@ def locate_positions(
             pos = pause_positions[-1] + idx
             if pos < end_think_start:
                 positions[f"post_pause_{idx}"] = pos
-        if "post_pause_1" in positions:
-            positions["control_cot_3"] = positions["post_pause_1"]
-        if "post_pause_2" in positions:
-            positions["control_cot_4"] = positions["post_pause_2"]
         reasoning_len = len(original_reasoning_positions)
     else:
         original_reasoning_positions = list(range(reasoning_start, end_think_start))
@@ -433,6 +455,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--pre_pause_window", type=int, default=3)
     parser.add_argument("--post_pause_window", type=int, default=3)
+    parser.add_argument(
+        "--matched_control_file",
+        default=None,
+        help=(
+            "Optional no-pause matched JSON/JSONL rows. When provided, "
+            "control_cot_3/control_cot_4 are extracted from a separate "
+            "pause-free forward pass instead of aliasing post-pause activations."
+        ),
+    )
     parser.add_argument("--layers", type=parse_csv_ints, default=[-1])
     parser.add_argument("--cot_offsets", type=parse_nonnegative_csv_ints, default=[0, 8, 16, 32, 64, 128])
     parser.add_argument("--cot_fracs", type=parse_float_list, default=[])
@@ -564,6 +595,12 @@ def main() -> None:
     model.eval()
 
     rows = read_rows(Path(args.input_file))
+    matched_lookup: dict[str, dict[str, Any]] = {}
+    if args.matched_control_file:
+        control_path = Path(args.matched_control_file)
+        if not control_path.exists():
+            raise SystemExit(f"Missing --matched_control_file: {control_path}")
+        matched_lookup = build_matched_lookup(read_rows(control_path))
     if args.limit is not None:
         rows = rows[: args.limit]
     write_progress(
@@ -592,7 +629,8 @@ def main() -> None:
         if args.pause_layout in {"intra_cot", "auto"}:
             position_names.extend(f"pre_pause_{idx}" for idx in range(1, args.pre_pause_window + 1))
             position_names.extend(f"post_pause_{idx}" for idx in range(1, args.post_pause_window + 1))
-            position_names.extend(["control_cot_3", "control_cot_4"])
+            if matched_lookup:
+                position_names.extend(["control_cot_3", "control_cot_4"])
         position_names.extend(f"cot_{offset}" for offset in args.cot_offsets)
         position_names.extend(f"cot_frac_{int(round(frac * 100)):03d}" for frac in args.cot_fracs)
     position_names = list(dict.fromkeys(position_names))
@@ -646,6 +684,49 @@ def main() -> None:
         if require_explicit_think and parse_info.get("parse_status") != "explicit_think":
             dropped[parse_info.get("parse_status", "bad_think_parse")] += 1
             continue
+        control_ids = None
+        control_positions = None
+        if matched_lookup:
+            matched = find_matched_row(matched_lookup, row, idx)
+            if matched is None:
+                dropped["missing_matched_control_row"] += 1
+                continue
+            control_prompt = row_prompt(matched)
+            control_output = row_output(matched, args.pause_token, 0)
+            if not control_prompt or not control_output:
+                dropped["bad_matched_control_row"] += 1
+                continue
+            control_text = render_deepseek_text(control_prompt, control_output, eos)
+            control_ids = tokenizer(control_text, add_special_tokens=False).input_ids
+            if len(control_ids) > args.max_length:
+                dropped["matched_control_too_long"] += 1
+                continue
+            raw_control_positions, control_parse_info = locate_positions(
+                tokenizer,
+                control_ids,
+                assistant_ids=assistant_ids,
+                pause_ids=pause_ids,
+                think_ids=think_ids,
+                end_think_ids=end_think_ids,
+                n_pause_tokens=0,
+                cot_offsets=[3, 4],
+                cot_fracs=[],
+                prompt_positions=[],
+                require_explicit_think=True,
+                pause_layout="none",
+                pre_pause_window=0,
+                post_pause_window=0,
+            )
+            if control_parse_info.get("parse_status") != "explicit_think":
+                dropped[f"matched_control_{control_parse_info.get('parse_status', 'bad_parse')}"] += 1
+                continue
+            if "cot_3" not in raw_control_positions or "cot_4" not in raw_control_positions:
+                dropped["matched_control_missing_cot3_or_cot4"] += 1
+                continue
+            control_positions = {
+                "control_cot_3": raw_control_positions["cot_3"],
+                "control_cot_4": raw_control_positions["cot_4"],
+            }
         examples.append(
             {
                 "id": row_id(row, idx),
@@ -660,7 +741,9 @@ def main() -> None:
                 "label_name": label_name,
                 "label_source_field": label_source_field,
                 "ids": ids,
+                "control_ids": control_ids,
                 "positions": positions,
+                "control_positions": control_positions,
                 "parse_info": parse_info,
                 "metadata": row.get("metadata", {}),
             }
@@ -726,6 +809,32 @@ def main() -> None:
                         batch_features[row_idx, layer_idx, pos_idx] = (
                             hidden_states[layer_id][row_idx, pos].detach().float().cpu().numpy()
                         )
+            control_items = [
+                (row_idx, ex)
+                for row_idx, ex in enumerate(batch)
+                if ex.get("control_ids") is not None and ex.get("control_positions") is not None
+            ]
+            if control_items:
+                max_control_len = max(len(ex["control_ids"]) for _, ex in control_items)
+                control_input_ids = torch.full((len(control_items), max_control_len), pad_id, dtype=torch.long)
+                control_attention = torch.zeros((len(control_items), max_control_len), dtype=torch.long)
+                for control_row_idx, (_, ex) in enumerate(control_items):
+                    ids = torch.tensor(ex["control_ids"], dtype=torch.long)
+                    control_input_ids[control_row_idx, : len(ids)] = ids
+                    control_attention[control_row_idx, : len(ids)] = 1
+                control_input_ids = control_input_ids.to(model_device)
+                control_attention = control_attention.to(model_device)
+                control_hidden_states = forward_hidden_states(model, control_input_ids, control_attention)
+                for control_row_idx, (batch_row_idx, ex) in enumerate(control_items):
+                    for pos_name, pos in ex["control_positions"].items():
+                        if pos_name not in position_names:
+                            continue
+                        pos_idx = position_names.index(pos_name)
+                        batch_valid[batch_row_idx, pos_idx] = True
+                        for layer_idx, layer_id in enumerate(selected_layer_ids):
+                            batch_features[batch_row_idx, layer_idx, pos_idx] = (
+                                control_hidden_states[layer_id][control_row_idx, pos].detach().float().cpu().numpy()
+                            )
             all_features.append(batch_features)
             all_valid_masks.append(batch_valid)
             processed = min(start + len(batch), len(examples))
@@ -804,6 +913,7 @@ def main() -> None:
                 "label_source_field": ex["label_source_field"],
                 "prompt_key": prompt_key(ex["prompt"]),
                 "positions": ex["positions"],
+                "control_positions": ex.get("control_positions"),
                 "parse_info": ex["parse_info"],
                 "metadata": ex["metadata"],
             }
@@ -829,6 +939,8 @@ def main() -> None:
         "pause_layout": args.pause_layout,
         "pre_pause_window": args.pre_pause_window,
         "post_pause_window": args.post_pause_window,
+        "matched_control_file": args.matched_control_file,
+        "matched_control_positions": ["control_cot_3", "control_cot_4"] if matched_lookup else [],
         "assistant_token_ids": assistant_ids,
         "think_token_ids": think_ids,
         "end_think_token_ids": end_think_ids,

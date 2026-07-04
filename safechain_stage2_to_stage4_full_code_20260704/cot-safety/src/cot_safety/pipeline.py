@@ -202,7 +202,10 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                             "--phase",
                             "eval",
                         ],
-                        notes="Run GPRS only after liveness green, fixed Stage3, direction QC, and random-direction control.",
+                    notes=(
+                        "Future step; runner is fail-closed until the GPRS generation hook exists. "
+                        "Run GPRS only after liveness green, fixed Stage3, direction QC, and random-direction control."
+                    ),
                     ),
                 ]
             )
@@ -232,8 +235,12 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                     "<config>",
                     "--phase",
                     "eval",
+                    "--allow_learned_delta",
                 ],
-                notes="Evaluate base, SFT, and SFT+steering with configured judges and datasets.",
+                notes=(
+                    "Archival learned-delta reproduction only. Primary kl_transparent_emit "
+                    "Stage4 should use GPRS after liveness and fixed Stage3 evidence."
+                ),
             ),
         ]
 

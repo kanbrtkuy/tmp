@@ -13,7 +13,8 @@ model:
 liveness:
   layers: [8, 16, 20, 24, 28]
   controls:
-    positive_control_model: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot4_format_only_trusted_cot_18k_save50_max250/checkpoint-250
+    positive_control_model: ${STAGE4_8B_FULL_SFT_CONTROL:-}
+    positive_control_status: missing_required_full_sft_pause_control
     negative_control_model: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Llama-8B
 
 steering:
