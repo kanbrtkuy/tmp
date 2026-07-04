@@ -39,13 +39,13 @@ runtime:
   probes:
     single_scan_backend: batched
     dynamic_task_multiplier: 128
-    jobs: 192
+    jobs: 16
     devices: [cuda:0]
-    worker_slots_per_gpu: 96
-    jobs_per_gpu: 96
+    worker_slots_per_gpu: 16
+    jobs_per_gpu: 16
     scan_batch_size: 4096
     scan_eval_batch_size: 8192
-    multilayer_jobs: 48
+    multilayer_jobs: 8
     multilayer_fallback_device: cpu
     cpu_threads_per_job: 2
     probe_timeout_seconds: 0
