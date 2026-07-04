@@ -144,7 +144,6 @@ def tsv_rows(rows: Iterable[dict[str, Any]], *, seed: int, include_text: bool) -
             {
                 "qa_id": make_qa_id(row, seed),
                 "source_family": source_family(row),
-                "judge_label": label_value(row),
                 "pair_id": clean_text(row.get("pair_id")),
                 "row_id": row_key(row),
                 "prompt_sha256": stable_hash(row.get("prompt"), 32),
@@ -165,7 +164,6 @@ def write_tsv(path: Path, rows: list[dict[str, Any]]) -> None:
     fieldnames = [
         "qa_id",
         "source_family",
-        "judge_label",
         "pair_id",
         "row_id",
         "prompt_sha256",
@@ -196,24 +194,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     tsv_path = output_dir / "stage1_human_qa_sheet.tsv"
     write_tsv(tsv_path, sheet_rows)
 
-    manifest_rows = [
-        {
-            key: row[key]
-            for key in (
-                "qa_id",
-                "source_family",
-                "judge_label",
-                "pair_id",
-                "row_id",
-                "prompt_sha256",
-                "reasoning_sha256",
-            )
-        }
-        for row in sheet_rows
-    ]
+    manifest_rows = []
+    for row in selected:
+        manifest_rows.append(
+            {
+                "qa_id": make_qa_id(row, args.seed),
+                "source_family": source_family(row),
+                "judge_label": label_value(row),
+                "pair_id": clean_text(row.get("pair_id")),
+                "row_id": row_key(row),
+                "prompt_sha256": stable_hash(row.get("prompt"), 32),
+                "reasoning_sha256": stable_hash(row.get("reasoning"), 32),
+            }
+        )
     write_jsonl(output_dir / "stage1_human_qa_manifest.jsonl", manifest_rows)
 
-    counts = Counter((row["source_family"], row["judge_label"]) for row in sheet_rows)
+    counts = Counter((row["source_family"], row["judge_label"]) for row in manifest_rows)
     summary = {
         "stage": "stage1_human_qa_sample",
         "input_jsonl": [str(path) for path in args.normalized_jsonl],

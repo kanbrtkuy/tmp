@@ -24,7 +24,7 @@ WAIT_POLL_SECONDS="${WAIT_POLL_SECONDS:-300}"
 FIXED_BUDGET_SAMPLE_START="${FIXED_BUDGET_SAMPLE_START:-0}"
 FIXED_BUDGET_MAX_SAMPLE_IDX="${FIXED_BUDGET_MAX_SAMPLE_IDX:-100}"
 WJB_TRAINVAL_CAP="${WJB_TRAINVAL_CAP:-700}"
-QA_ROWS_PER_SOURCE="${QA_ROWS_PER_SOURCE:-50}"
+QA_ROWS_PER_SOURCE="${QA_ROWS_PER_SOURCE:-60}"
 QA_UNSAFE_AGREEMENT_BAR="${QA_UNSAFE_AGREEMENT_BAR:-0.90}"
 
 # Optional whitespace-separated SOURCE=PATH entries.  These are deliberately
@@ -90,14 +90,28 @@ wait_for_hb() {
 
 json_bool_gate() {
   local path="$1"
-  "${PYTHON}" - "$path" <<'PY'
+  local expected_manifest="${2:-}"
+  "${PYTHON}" - "$path" "$expected_manifest" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
 path = Path(sys.argv[1])
+expected_manifest = Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None
 data = json.loads(path.read_text())
 if not data.get("passes"):
     raise SystemExit(f"gate failed: {path}")
+if expected_manifest and expected_manifest.exists():
+    h = hashlib.sha256()
+    with expected_manifest.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    expected = h.hexdigest()
+    observed = data.get("manifest_jsonl_sha256")
+    if observed != expected:
+        raise SystemExit(
+            f"gate failed: QA summary manifest hash mismatch: observed={observed} expected={expected}"
+        )
 print("gate passed:", path)
 PY
 }
@@ -185,7 +199,8 @@ QA_DIR="${STAGE1_OUT_ROOT}/human_qa_${fixed_tag}"
 run_step "sample_human_qa_${fixed_tag}" "${PYTHON}" scripts/data/sample_stage1_human_qa.py \
   --normalized-jsonl "${FREEZE_DIR}/frozen_normalized_all.jsonl" \
   --output-dir "${QA_DIR}" \
-  --rows-per-source "${QA_ROWS_PER_SOURCE}"
+  --rows-per-source "${QA_ROWS_PER_SOURCE}" \
+  --include-text
 
 if [[ -n "${SAFE_PROMPT_INPUTS}" ]]; then
   safe_args=(scripts/data/build_stage1_safe_prompt_diagnostics.py --output-dir "${STAGE1_OUT_ROOT}/safe_prompt_diagnostics")
@@ -237,10 +252,10 @@ QA_SUMMARY_JSON="${HUMAN_QA_SUMMARY_JSON:-${QA_DIR}/stage1_human_qa_summary.json
 if [[ ! -s "${QA_SUMMARY_JSON}" ]]; then
   echo "===== STOP BEFORE GPU STAGE1 ====="
   echo "Human QA sheet was written to: ${QA_DIR}/stage1_human_qa_sheet.tsv"
-  echo "After annotation, run scripts/data/summarize_stage1_human_qa.py and set HUMAN_QA_SUMMARY_JSON to the passing summary."
+  echo "After annotation, run scripts/data/summarize_stage1_human_qa.py with --qa-tsv ${QA_DIR}/stage1_human_qa_sheet.tsv and set HUMAN_QA_SUMMARY_JSON to the passing summary."
   exit 20
 fi
-json_bool_gate "${QA_SUMMARY_JSON}"
+json_bool_gate "${QA_SUMMARY_JSON}" "${QA_DIR}/stage1_human_qa_manifest.jsonl"
 
 if [[ "${RUN_GPU_STAGE1}" == "1" ]]; then
   run_step "gpu_stage1_sequence" bash "${STAGE1_SEQUENCE_SCRIPT}"

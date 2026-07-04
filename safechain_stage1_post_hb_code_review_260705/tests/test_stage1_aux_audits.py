@@ -57,11 +57,20 @@ def test_human_qa_sample_and_summary(tmp_path):
     assert sample_summary["n_sampled_rows"] == 8
 
     sheet = sample_dir / "stage1_human_qa_sheet.tsv"
+    manifest_by_id = {
+        row["qa_id"]: row
+        for row in (
+            json.loads(line)
+            for line in (sample_dir / "stage1_human_qa_manifest.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    }
     qa_rows = []
     with sheet.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
         for row in reader:
-            row["human_label"] = row["judge_label"]
+            assert "judge_label" not in row
+            row["human_label"] = manifest_by_id[row["qa_id"]]["judge_label"]
             row["human_quality"] = "ok"
             qa_rows.append(row)
     with sheet.open("w", encoding="utf-8", newline="") as handle:
@@ -74,8 +83,10 @@ def test_human_qa_sample_and_summary(tmp_path):
         (),
         {
             "qa_tsv": str(sheet),
+            "manifest_jsonl": str(sample_dir / "stage1_human_qa_manifest.jsonl"),
             "output_dir": str(summary_dir),
             "min_labeled_per_source": 4,
+            "safe_agreement_bar": 0.90,
             "unsafe_agreement_bar": 0.90,
             "no_fail": False,
         },
