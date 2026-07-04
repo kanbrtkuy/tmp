@@ -137,6 +137,22 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                 ],
                 notes="Compatibility entrypoint while native orchestration is ported.",
             ),
+            PipelineStep(
+                name="stage3_pause_vs_baselines_report",
+                stage="stage3",
+                action="evidence_report",
+                command=[
+                    "python",
+                    "scripts/run_stage3_evidence_report.py",
+                    "--config",
+                    "<config>",
+                ],
+                notes=(
+                    "Report whether pause/post-pause probe signal exceeds both prompt-only "
+                    "baselines and true no-pause content controls. This is still a "
+                    "teacher-forced screen, not the within-prompt on-policy confirmation."
+                ),
+            ),
         ]
 
     if steering:
@@ -179,15 +195,17 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                         action="direction_build",
                         command=[
                             "python",
-                            "scripts/run_stage4_steering.py",
+                            "scripts/build_stage4_gprs_artifacts.py",
                             "--config",
                             "<config>",
-                            "--phase",
-                            "validate",
+                            "--hidden_npz",
+                            "<stage3-train-hidden-npz>",
+                            "--probe_checkpoint_source",
+                            "<stage3-probe-checkpoint>",
                         ],
                         notes=(
-                            "Placeholder for on-policy paired mean-diff direction, safe centroid, "
-                            "probe gate, and QC artifacts after Stage3 rerun."
+                            "Build mean-diff direction and safe-centroid artifacts from Stage3 hidden states, "
+                            "then copy the selected Stage3 probe checkpoint used as the GPRS gate."
                         ),
                     ),
                     PipelineStep(

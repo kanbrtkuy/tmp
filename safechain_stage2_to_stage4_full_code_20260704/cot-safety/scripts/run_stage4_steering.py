@@ -228,6 +228,26 @@ def run_validate(config_path: str, repo_root: Path, env: dict[str, str]) -> int:
     ).returncode
 
 
+def require_gprs_readiness(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    from cot_safety.steering.gprs import require_gprs_artifacts
+    from cot_safety.steering.liveness import liveness_gate_status
+
+    liveness = config.get("liveness", {})
+    gate_cfg = liveness.get("gate", {})
+    allow_yellow = bool(gate_cfg.get("allow_yellow_for_gprs", True))
+    live_status = liveness_gate_status(config, base_dir=repo_root, allow_yellow=allow_yellow)
+    if not live_status["ready"]:
+        raise SystemExit(
+            "Refusing GPRS eval before pause-port liveness is green/yellow. "
+            f"decision={live_status['decision']} report={live_status['path']}"
+        )
+    try:
+        artifact_status = require_gprs_artifacts(config, base_dir=repo_root)
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
+    return {"liveness": live_status, "artifacts": artifact_status}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Stage 4 pause-only steering from config.")
     parser.add_argument("--config", default="configs/experiment/stage4_pause_gprs.yaml")
@@ -247,7 +267,8 @@ def main() -> None:
     args = parser.parse_args()
 
     from cot_safety.config import dump_config, load_config
-    from cot_safety.steering.gprs import validate_gprs_config
+    from cot_safety.steering.gprs import gprs_artifact_status, validate_gprs_config
+    from cot_safety.steering.liveness import liveness_gate_status
 
     repo_root = REPO_ROOT
     config = resolve_value(load_config(repo_root / args.config))
@@ -282,7 +303,20 @@ def main() -> None:
 
     if args.phase == "validate":
         if steering_method in {"gprs", "projection"}:
-            print(dump_config({"gprs": gprs_meta}))
+            allow_yellow = bool(config.get("liveness", {}).get("gate", {}).get("allow_yellow_for_gprs", True))
+            print(
+                dump_config(
+                    {
+                        "gprs": gprs_meta,
+                        "gprs_artifacts": gprs_artifact_status(config, base_dir=repo_root),
+                        "liveness_gate": liveness_gate_status(
+                            config,
+                            base_dir=repo_root,
+                            allow_yellow=allow_yellow,
+                        ),
+                    }
+                )
+            )
         return
 
     if args.phase == "liveness":
@@ -295,9 +329,11 @@ def main() -> None:
         raise SystemExit(subprocess.run(command, cwd=repo_root, env=env).returncode)
 
     if steering_method in {"gprs", "projection"} and args.phase not in {"validate", "liveness"}:
+        readiness = require_gprs_readiness(config, repo_root)
         raise SystemExit(
             "GPRS generation is scaffolded but not wired into the legacy generation shell yet. "
-            "Run --phase validate or --phase liveness now; implement the GPRS hook before eval."
+            "Run --phase validate or --phase liveness now; implement the GPRS hook before eval. "
+            f"readiness={readiness}"
         )
 
     command = ["bash", str(legacy_root / "scripts/steering/run_intra_pause_full_steering_eval.sh")]

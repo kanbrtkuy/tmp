@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -85,3 +87,44 @@ def liveness_decision(report: dict[str, Any]) -> str:
     if values == {"green"}:
         return "green"
     return "unknown"
+
+
+def liveness_report_path(config: dict[str, Any], *, base_dir: Path) -> Path:
+    liveness = config.get("liveness", {})
+    configured = liveness.get("report_json") or liveness.get("report_path")
+    if configured:
+        path = Path(str(configured))
+        return path if path.is_absolute() else base_dir / path
+    run = config.get("run", {})
+    output_dir = Path(str(run.get("output_dir", "runs/stage4_pause_gprs")))
+    if not output_dir.is_absolute():
+        output_dir = base_dir / output_dir
+    return output_dir / "liveness_report.json"
+
+
+def read_liveness_report(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Liveness report must be a JSON object: {path}")
+    return payload
+
+
+def liveness_gate_status(
+    config: dict[str, Any],
+    *,
+    base_dir: Path,
+    allow_yellow: bool = True,
+) -> dict[str, Any]:
+    path = liveness_report_path(config, base_dir=base_dir)
+    if not path.exists():
+        return {"ready": False, "decision": "missing", "path": str(path)}
+    report = read_liveness_report(path)
+    decision = liveness_decision(report)
+    allowed = {"green", "yellow"} if allow_yellow else {"green"}
+    return {
+        "ready": decision in allowed,
+        "decision": decision,
+        "path": str(path),
+        "allow_yellow": allow_yellow,
+    }

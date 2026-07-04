@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from cot_safety.steering.gprs import projection_rejection_update, validate_gprs_config
+from cot_safety.steering.gprs import (
+    gprs_artifact_status,
+    projection_rejection_update,
+    require_gprs_artifacts,
+    validate_gprs_config,
+)
 from cot_safety.steering.liveness import liveness_config, liveness_decision, liveness_plan_status
+from cot_safety.steering.liveness import liveness_gate_status, liveness_report_path
 
 
 def test_liveness_config_uses_gate_defaults():
@@ -44,6 +50,18 @@ def test_liveness_decision_from_status_map():
     assert liveness_decision({"test_status": {"injection_gain": "red", "kv_ablation": "green"}}) == "red"
 
 
+def test_liveness_gate_status_reads_report_and_fails_closed(tmp_path):
+    config = {"run": {"output_dir": str(tmp_path / "run")}}
+    path = liveness_report_path(config, base_dir=tmp_path)
+    assert path == tmp_path / "run" / "liveness_report.json"
+    assert liveness_gate_status(config, base_dir=tmp_path)["decision"] == "missing"
+
+    path.parent.mkdir(parents=True)
+    path.write_text('{"decision": "yellow"}\n', encoding="utf-8")
+    assert liveness_gate_status(config, base_dir=tmp_path)["ready"] is True
+    assert liveness_gate_status(config, base_dir=tmp_path, allow_yellow=False)["ready"] is False
+
+
 def test_validate_gprs_config_requires_artifacts():
     config = {"steering": {"method": "gprs", "gprs": {"direction_artifact": "u.pt"}}}
     try:
@@ -71,6 +89,31 @@ def test_validate_gprs_config_accepts_complete_config():
     assert validate_gprs_config(config)["method"] == "gprs"
 
 
+def test_gprs_artifact_status_requires_all_artifacts(tmp_path):
+    config = {
+        "steering": {
+            "method": "gprs",
+            "gprs": {
+                "direction_artifact": "u.pt",
+                "safe_centroid": "mu.pt",
+                "probe_checkpoint": "probe.pt",
+            },
+        }
+    }
+    (tmp_path / "u.pt").write_text("direction", encoding="utf-8")
+    status = gprs_artifact_status(config, base_dir=tmp_path)
+    assert status["ready"] is False
+    assert status["missing"] == ["safe_centroid", "probe_checkpoint"]
+    with pytest.raises(FileNotFoundError):
+        require_gprs_artifacts(config, base_dir=tmp_path)
+
+    (tmp_path / "mu.pt").write_text("centroid", encoding="utf-8")
+    (tmp_path / "probe.pt").write_text("probe", encoding="utf-8")
+    status = require_gprs_artifacts(config, base_dir=tmp_path)
+    assert status["ready"] is True
+    assert status["missing"] == []
+
+
 def test_projection_rejection_update_only_moves_positive_side_and_caps_norm():
     torch = pytest.importorskip("torch")
     h = torch.tensor([[2.0, 0.0], [-2.0, 0.0], [3.0, 4.0]])
@@ -91,6 +134,27 @@ def test_projection_rejection_update_only_moves_positive_side_and_caps_norm():
     assert updated[0, 1].item() == pytest.approx(0.0)
     assert delta.norm(dim=-1)[0].item() <= 0.25 * h.norm(dim=-1)[0].item() + 1e-6
     assert delta.norm(dim=-1)[2].item() <= 0.25 * h.norm(dim=-1)[2].item() + 1e-6
+
+
+def test_projection_rejection_update_uses_probe_gate_threshold():
+    torch = pytest.importorskip("torch")
+    h = torch.tensor([[2.0, 0.0], [2.0, 0.0]])
+    direction = torch.tensor([1.0, 0.0])
+    safe_centroid = torch.tensor([0.0, 0.0])
+    scores = torch.tensor([0.80, 0.96])
+
+    updated = projection_rejection_update(
+        h,
+        direction,
+        safe_centroid,
+        strength=1.0,
+        norm_cap=None,
+        gate_score=scores,
+        gate_threshold=0.95,
+    )
+
+    assert updated[0].tolist() == pytest.approx([2.0, 0.0])
+    assert updated[1].tolist() == pytest.approx([0.0, 0.0])
 
 
 def test_projection_rejection_update_without_cap_reaches_safe_halfspace():

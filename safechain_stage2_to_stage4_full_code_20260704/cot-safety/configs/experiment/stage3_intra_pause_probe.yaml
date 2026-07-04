@@ -25,6 +25,7 @@ probe:
   sample_weight_mode: source_label
   threshold_max_fpr: 0.05
   primary_endpoint: teacher_forced_pause_minus_prompt_screen
+  min_pause_margin_over_baselines: 0.01
   confirmatory_endpoint:
     name: within_prompt_auroc
     status: not_implemented
