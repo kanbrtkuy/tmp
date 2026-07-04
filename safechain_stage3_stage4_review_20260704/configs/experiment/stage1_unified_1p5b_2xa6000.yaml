@@ -1,0 +1,11 @@
+defaults:
+  - stage1_unified.yaml
+  - ../runtime/a6000_2x.yaml
+
+run:
+  name: stage1_unified_deepseek_1p5b_2xa6000
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1_unified_deepseek_1p5b_2xa6000
+
+probe:
+  hidden_extraction:
+    train_shards: 4

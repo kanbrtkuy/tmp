@@ -1,0 +1,26 @@
+defaults:
+  - stage2_intra_pause_sft.yaml
+
+run:
+  name: stage2_intra_pause_embedding_only
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/stage2_intra_pause_embedding_only
+
+sft:
+  method: embedding_only
+  tags: [intra_pause, embedding_only]
+  learning_rate: 1.0e-3
+  weight_decay: 0.0
+  num_train_epochs: 1.0
+  save_before_train: true
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  early_stopping:
+    enabled: true
+    patience: 2
+    threshold: 0.001
+  format_only:
+    enabled: true
+    trainable_tokens:
+      - "<|pause|>"
+    init_from_text: ""

@@ -1,0 +1,114 @@
+defaults:
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage2_model_comparison_eval
+  output_dir: ${COT_SAFETY_RUN_ROOT:-/workspace/cot-safety/runs}/stage2_model_comparison_eval
+
+eval:
+  legacy_root: legacy/PauseProbe
+  python: python3
+  torch_dtype: bfloat16
+  trust_remote_code: false
+  seed: 260622
+  devices: ["0", "1", "2", "3"]
+  # Per-process CPU thread count for each GPU worker. Set null/0 to auto-split
+  # available CPU cores across the active GPU workers.
+  cpu_threads_per_worker: null
+  model_conditions: []
+  generation:
+    generation_backend: transformers
+    chunk_size: 0
+    batch_size_per_gpu: 16
+    max_input_length: 2048
+    capability_max_new_tokens: 2048
+    safety_max_new_tokens: 2048
+    temperature: 0.6
+    top_p: 0.95
+    forced_prefix: "<think>\n"
+    insert_pause_after_cot_tokens: 3
+    n_insert_pauses: 3
+    vllm:
+      gpu_memory_utilization: 0.90
+      max_model_len: null
+      max_num_seqs: 32
+  judging:
+    judge_backend: transformers
+    chunk_size: 0
+    judges: [wildguard, llamaguard, harmbench]
+    batch_size_per_gpu: 1
+    batch_size:
+      wildguard: 8
+      llamaguard: 4
+      harmbench: 1
+    max_input_length: 4096
+    max_model_len:
+      wildguard: 4096
+      llamaguard: 4096
+      harmbench: 2048
+    torch_dtype: bfloat16
+    aggregation_strategy: conservative
+    model_map:
+      wildguard: ${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/wildguard
+      llamaguard: ${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/Llama-Guard-3-8B
+      harmbench: ${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/HarmBench-Llama-2-13b-cls
+    max_new_tokens:
+      wildguard: 32
+      llamaguard: 100
+      harmbench: 8
+    vllm:
+      gpu_memory_utilization: 0.90
+      max_num_seqs: 32
+  data:
+    prepared_dir: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/model_comparison_eval/stage2_model_comparison_eval
+    capability_sources:
+      - name: gsm8k
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/gsm8k/test.jsonl
+        prompt_fields: [question]
+        answer_fields: [answer]
+        answer_extractor: gsm8k
+        eval_hint: numeric
+        limit: 500
+      - name: math500
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/math500/test.jsonl
+        prompt_fields: [problem, question]
+        answer_fields: [answer, solution]
+        answer_extractor: math500
+        eval_hint: math_exact
+        limit: 300
+    safety_sources:
+      - name: strongreject
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/strongreject/validation.jsonl
+        prompt_fields: [prompt, instructions]
+        reference_label_name: unsafe
+        risk_type: strongreject_forbidden_prompt
+        limit: 300
+      - name: harmbench_standard
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/harmbench_standard/train.jsonl
+        prompt_fields: [prompt, Behavior, behavior, goal]
+        context_fields: [ContextString, context]
+        category_fields: [SemanticCategory, category]
+        reference_label_name: unsafe
+        risk_type: harmbench_behavior
+        limit: 300
+      - name: jailbreakbench
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/jailbreakbench_behaviors/harmful.jsonl
+        prompt_fields: [Goal, goal, prompt]
+        category_fields: [Category, category]
+        reference_label_name: unsafe
+        risk_type: jailbreakbench_harmful_behavior
+        limit: 300
+      - name: xstest
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/xstest/test.jsonl
+        prompt_fields: [prompt]
+        category_fields: [type, focus]
+        reference_label_name: safe
+        risk_type: exaggerated_safety_safe_prompt
+        limit: 300
+      - name: or_bench_hard
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/or_bench_hard_1k/train.jsonl
+        prompt_fields: [prompt, question, instruction]
+        category_fields: [category, type]
+        reference_label_name: safe
+        risk_type: overrefusal_hard_safe_prompt
+        limit: 300

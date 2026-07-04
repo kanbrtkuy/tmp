@@ -1,0 +1,13 @@
+defaults:
+  - stage1_positionscan.yaml
+
+pipeline:
+  name: full_four_stage
+  stages:
+    - configs/experiment/stage1_positionscan.yaml
+    - configs/experiment/stage2_intra_pause_sft.yaml
+    - configs/experiment/stage3_intra_pause_probe.yaml
+    - configs/experiment/stage4_pause_steering.yaml
+  stop_on_failure: true
+  write_manifests: true
+  skip_existing: true

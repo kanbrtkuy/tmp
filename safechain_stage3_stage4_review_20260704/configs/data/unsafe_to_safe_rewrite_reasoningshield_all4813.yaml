@@ -1,0 +1,43 @@
+defaults:
+  - unsafe_to_safe_rewrite_harmthoughts_300.yaml
+
+run:
+  name: unsafe_to_safe_rewrite_reasoningshield_all4813_v4
+  resolved_config: runs/unsafe_to_safe_rewrite_reasoningshield_all4813_v4/resolved.yaml
+
+data:
+  input_jsonl: data/reasoningshield_rewrite_all4813/unsafe_trajectory_seeds.jsonl
+  output_pairs_jsonl: runs/unsafe_to_safe_rewrite_reasoningshield_all4813_v4/pairs.jsonl
+  output_long_jsonl: runs/unsafe_to_safe_rewrite_reasoningshield_all4813_v4/long_format.jsonl
+  polish_output_pairs_jsonl: runs/unsafe_to_safe_rewrite_reasoningshield_all4813_v4/pairs_polished.jsonl
+  polish_output_long_jsonl: runs/unsafe_to_safe_rewrite_reasoningshield_all4813_v4/long_format_polished.jsonl
+
+selection:
+  seed: 260701
+  n_rows: 4813
+  shuffle: false
+  require_unsafe_label: true
+  label_field: label
+  allowed_sources:
+    - reasoningshield
+
+batch:
+  request_jsonl: runs/unsafe_to_safe_rewrite_reasoningshield_all4813_v4/openai_batch_requests.jsonl
+  status_json: runs/unsafe_to_safe_rewrite_reasoningshield_all4813_v4/openai_batch_status.json
+  completion_window: 24h
+  metadata:
+    project: cot-safety
+    stage: unsafe_to_safe_rewrite_reasoningshield_all4813
+
+generation:
+  polish:
+    enabled: true
+    prompt_version: safe_polish_v2_reduce_refusal_preserve_length_reasoningshield_all4813
+    candidate_mode: all
+    include_boilerplate_candidates: true
+    temperature: 0.2
+    max_output_tokens: 2200
+    min_reasoning_words: 300
+    preserve_length_margin_words: 30
+    max_reasoning_words: 430
+    max_final_words: 80

@@ -1,0 +1,13 @@
+defaults:
+  - unsafe_to_safe_rewrite_reasoningshield_all4813_polish_v5_controlled_clean_round2.yaml
+
+run:
+  name: unsafe_to_safe_rewrite_reasoningshield_all4813_v5_controlled_clean_round3
+  resolved_config: runs/unsafe_to_safe_rewrite_reasoningshield_all4813_v4/resolved_polish_v5_controlled_clean_round3.yaml
+
+batch:
+  polish_request_jsonl: runs/unsafe_to_safe_rewrite_reasoningshield_all4813_v4/openai_polish_v5_controlled_clean_round3_requests.jsonl
+  polish_status_json: runs/unsafe_to_safe_rewrite_reasoningshield_all4813_v4/openai_polish_v5_controlled_clean_round3_status.json
+  metadata:
+    project: cot-safety
+    stage: safe_polish_reasoningshield_all4813_v5_controlled_clean_round3

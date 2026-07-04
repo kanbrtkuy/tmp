@@ -1,0 +1,13 @@
+defaults:
+  - stage1_natural_pairs_32b_a100_1x.yaml
+
+run:
+  name: stage1_natural_pairs_32b_safeorig_32b_a100_1x
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1_natural_pairs_32b_safeorig_32b_a100_1x
+
+legacy:
+  hidden_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/hidden/stage1_natural_pairs_32b_safeorig_32b_a100_1x
+  hidden_prefix: natural_pairs_32b_safeorig_32b_a100_1x
+  log_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/logs/stage1_natural_pairs_32b_safeorig_32b_a100_1x
+  single_scan_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1_natural_pairs_32b_safeorig_32b_a100_1x/linear
+  multilayer_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1_natural_pairs_32b_safeorig_32b_a100_1x/multilayer

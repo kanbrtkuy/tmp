@@ -1,0 +1,33 @@
+defaults:
+  - stage1_positionscan.yaml
+
+run:
+  name: stage1b_prompt_baseline_deepseek_1p5b
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1b_prompt_baseline_deepseek_1p5b
+
+probe:
+  task: stage1b_prompt_baseline
+  prompt_positions: [last_prompt_token, assistant_start, assistant_last, pre_think]
+  positions:
+    - last_prompt_token
+    - assistant_start
+    - assistant_last
+    - pre_think
+    - think_last
+    - cot_2
+    - cot_3
+    - cot_4
+    - cot_7
+  multilayer_concat:
+    positions: [last_prompt_token, pre_think, think_last, cot_2, cot_3, cot_4, cot_7]
+    layer_combine: concat
+    position_pool: first
+    scheduler: dynamic_worker_queue
+
+legacy:
+  data_dir: data/external_probe_v0_stage1b
+  hidden_dir: data/hidden_stage1b
+  hidden_prefix: external_stage1b
+  log_dir: logs/stage1b_prompt_baseline_deepseek_1p5b
+  single_scan_out_root: runs/probes/stage1b_prompt_baseline_deepseek_1p5b_linear
+  multilayer_out_root: runs/probes/stage1b_prompt_baseline_deepseek_1p5b_multilayer

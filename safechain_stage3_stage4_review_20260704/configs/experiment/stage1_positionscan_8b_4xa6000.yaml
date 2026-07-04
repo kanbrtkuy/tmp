@@ -1,0 +1,15 @@
+defaults:
+  - stage1_positionscan_8b_4xa100.yaml
+  - ../runtime/a6000_4x.yaml
+
+run:
+  name: stage1_positionscan_deepseek_8b_4xa6000
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1_positionscan_deepseek_8b_4xa6000
+
+legacy:
+  data_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/data/stage1_positionscan_deepseek_8b_4xa6000
+  hidden_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/hidden/stage1_positionscan_deepseek_8b_4xa6000
+  hidden_prefix: external_8b
+  log_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/logs/stage1_positionscan_deepseek_8b_4xa6000
+  single_scan_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1_positionscan_deepseek_8b_4xa6000/linear
+  multilayer_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1_positionscan_deepseek_8b_4xa6000/multilayer

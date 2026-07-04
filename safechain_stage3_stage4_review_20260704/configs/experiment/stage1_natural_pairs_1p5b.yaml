@@ -1,0 +1,29 @@
+defaults:
+  - stage1_positionscan.yaml
+
+run:
+  name: stage1_natural_pairs_1p5b
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1_natural_pairs_1p5b
+
+data:
+  # Prepared directories must contain cotpause/{train,val,test}.json and are
+  # produced by scripts/data/export_normalized_pairs_for_stage1.py.
+  prepared_data_dir: ${NATURAL_STAGE1_DATA_DIR:-runs/natural_cot_pair_full_n50_v1_8b_generated_generated_stage1}
+  sources: []
+  heldout_sources: []
+
+probe:
+  task: positionscan_trajprobe_natural_pairs
+  pause_layout: none
+  n_pause_tokens: 0
+  layers: [4, 6, 7, 8, 10, 12, 14, 16, 17, 18, 20, 21, 22, 24, 26, 28]
+  positions: [cot_0, cot_1, cot_2, cot_3, cot_4, cot_5, cot_6, cot_7, cot_8, cot_9, cot_10, cot_12, cot_16, cot_24, cot_32, cot_48, cot_64, cot_96, cot_128]
+  multilayer_concat:
+    positions: [cot_1, cot_2, cot_3, cot_4, cot_7, cot_8]
+
+legacy:
+  hidden_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/hidden/stage1_natural_pairs_1p5b
+  hidden_prefix: natural_pairs_1p5b
+  log_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/logs/stage1_natural_pairs_1p5b
+  single_scan_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1_natural_pairs_1p5b/linear
+  multilayer_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1_natural_pairs_1p5b/multilayer
