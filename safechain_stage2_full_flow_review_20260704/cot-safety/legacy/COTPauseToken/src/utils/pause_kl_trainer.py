@@ -4,7 +4,83 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
+from transformers import TrainerCallback
 from trl import SFTTrainer
+
+
+def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
+    return getattr(model, "module", model)
+
+
+def _embedding_weights(model: torch.nn.Module) -> list[tuple[str, torch.nn.Parameter]]:
+    base_model = _unwrap_model(model)
+    input_embeddings = base_model.get_input_embeddings()
+    weights = [("input_embeddings.weight", input_embeddings.weight)]
+    output_embeddings = base_model.get_output_embeddings()
+    if output_embeddings is not None and output_embeddings.weight is not input_embeddings.weight:
+        weights.append(("output_embeddings.weight", output_embeddings.weight))
+    return weights
+
+
+class _RowsOnlyInvariantCallback(TrainerCallback):
+    """Verify that non-pause embedding rows stay bit-identical after step 1."""
+
+    def __init__(self, pause_token_id: int, chunk_rows: int = 2048) -> None:
+        self.pause_token_id = int(pause_token_id)
+        self.chunk_rows = max(1, int(chunk_rows))
+        self.snapshots: list[tuple[str, torch.Tensor]] | None = None
+        self.checked = False
+
+    def on_train_begin(self, args, state, control, model=None, **kwargs):  # type: ignore[override]
+        if model is None or self.snapshots is not None:
+            return control
+        self.snapshots = [
+            (name, weight.detach().cpu().clone())
+            for name, weight in _embedding_weights(model)
+        ]
+        return control
+
+    def on_step_end(self, args, state, control, model=None, **kwargs):  # type: ignore[override]
+        if self.checked or model is None or self.snapshots is None:
+            return control
+        if int(getattr(state, "global_step", 0)) < 1:
+            return control
+
+        current_weights = dict(_embedding_weights(model))
+        for name, before in self.snapshots:
+            current = current_weights.get(name)
+            if current is None:
+                raise ValueError(f"Rows-only invariant failed: missing {name} after step 1")
+            if tuple(current.shape) != tuple(before.shape):
+                raise ValueError(
+                    f"Rows-only invariant failed: {name} shape changed "
+                    f"from {tuple(before.shape)} to {tuple(current.shape)}"
+                )
+
+            for start in range(0, before.shape[0], self.chunk_rows):
+                end = min(start + self.chunk_rows, before.shape[0])
+                now = current.detach()[start:end].cpu()
+                changed = now.ne(before[start:end])
+                if start <= self.pause_token_id < end:
+                    changed[self.pause_token_id - start] = False
+                if changed.any():
+                    bad_rows = (
+                        changed.reshape(changed.shape[0], -1)
+                        .any(dim=1)
+                        .nonzero(as_tuple=True)[0][:10]
+                        .add(start)
+                        .tolist()
+                    )
+                    raise ValueError(
+                        "Rows-only invariant failed after optimizer step 1: "
+                        f"non-pause rows changed in {name}; sample rows={bad_rows}. "
+                        "Check gradient masks and ensure weight_decay remains 0.0."
+                    )
+
+        self.checked = True
+        self.snapshots = None
+        return control
+
 
 class PauseKLSFTTrainer(SFTTrainer):
     """SFTTrainer variant for transparent pause-token emission.
@@ -44,24 +120,34 @@ class PauseKLSFTTrainer(SFTTrainer):
         self.emit_weight = float(self.pause_kl_cfg.get("emit_weight", 0.3))
         self.temperature = float(self.pause_kl_cfg.get("temperature", 1.0))
         self.max_kl_tokens_per_example = int(self.pause_kl_cfg.get("max_kl_tokens_per_example", 256))
+        self.suppression_chunk_size = int(self.pause_kl_cfg.get("suppression_chunk_size", 1024))
         self.require_pause_before_continuation_kl = bool(
             self.pause_kl_cfg.get("require_pause_before_continuation_kl", True)
         )
         self.assert_rows_only = bool(self.pause_kl_cfg.get("assert_rows_only", True))
+        self.post_step_invariant_check = bool(
+            self.pause_kl_cfg.get("post_step_invariant_check", True)
+        )
         self.teacher_eval_mode = bool(self.pause_kl_cfg.get("teacher_eval_mode", True))
         self._last_pause_kl_log_step = -1
         if self.assert_rows_only:
             self._assert_rows_only_training()
+            if self.post_step_invariant_check:
+                self.add_callback(_RowsOnlyInvariantCallback(self.pause_token_id))
 
     def _model_kwargs(self, inputs: dict[str, Any]) -> dict[str, Any]:
         allowed = {"input_ids", "attention_mask", "position_ids"}
         return {key: value for key, value in inputs.items() if key in allowed}
 
     def _assert_rows_only_training(self) -> None:
-        allowed = {id(self.model.get_input_embeddings().weight)}
-        output_embeddings = self.model.get_output_embeddings()
-        if output_embeddings is not None:
-            allowed.add(id(output_embeddings.weight))
+        weight_decay = float(getattr(self.args, "weight_decay", 0.0) or 0.0)
+        if weight_decay != 0.0:
+            raise ValueError(
+                "PauseKLSFTTrainer rows-only KL teacher requires weight_decay == 0.0. "
+                f"Got weight_decay={weight_decay}."
+            )
+
+        allowed = {id(weight) for _, weight in _embedding_weights(self.model)}
         bad = [
             name
             for name, parameter in self.model.named_parameters()
@@ -81,33 +167,34 @@ class PauseKLSFTTrainer(SFTTrainer):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, list[dict[int, int]]]:
-        stripped_rows: list[torch.Tensor] = []
+        input_rows = input_ids.detach().cpu().tolist()
+        valid_lengths = attention_mask.detach().sum(dim=1).cpu().tolist()
+        stripped_rows: list[list[int]] = []
         mappings: list[dict[int, int]] = []
         max_len = 0
-        for row_ids, row_mask in zip(input_ids, attention_mask):
-            valid_len = int(row_mask.sum().item())
-            kept: list[torch.Tensor] = []
+        for row_ids, valid_len_raw in zip(input_rows, valid_lengths):
+            valid_len = int(valid_len_raw)
+            kept: list[int] = []
             row_mapping: dict[int, int] = {}
             teacher_idx = 0
             for src_idx in range(valid_len):
-                token_id = int(row_ids[src_idx].item())
+                token_id = int(row_ids[src_idx])
                 if token_id == self.pause_token_id:
                     continue
-                kept.append(row_ids[src_idx])
+                kept.append(token_id)
                 row_mapping[src_idx] = teacher_idx
                 teacher_idx += 1
             if not kept:
-                kept = [row_ids.new_tensor(self.pad_token_id)]
-            stripped = torch.stack(kept)
-            stripped_rows.append(stripped)
+                kept = [self.pad_token_id]
+            stripped_rows.append(kept)
             mappings.append(row_mapping)
-            max_len = max(max_len, int(stripped.numel()))
+            max_len = max(max_len, len(kept))
 
         teacher_ids = input_ids.new_full((input_ids.shape[0], max_len), self.pad_token_id)
         teacher_mask = attention_mask.new_zeros((input_ids.shape[0], max_len))
-        for row_idx, stripped in enumerate(stripped_rows):
-            length = int(stripped.numel())
-            teacher_ids[row_idx, :length] = stripped
+        for row_idx, stripped_ids in enumerate(stripped_rows):
+            length = len(stripped_ids)
+            teacher_ids[row_idx, :length] = input_ids.new_tensor(stripped_ids)
             teacher_mask[row_idx, :length] = 1
         return teacher_ids, teacher_mask, mappings
 
@@ -120,16 +207,21 @@ class PauseKLSFTTrainer(SFTTrainer):
     ) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]:
         post_pairs: list[tuple[int, int, int]] = []
         pre_pairs: list[tuple[int, int, int]] = []
+        input_rows = input_ids.detach().cpu().tolist()
+        label_rows = labels.detach().cpu().tolist()
+        valid_lengths = attention_mask.detach().sum(dim=1).cpu().tolist()
         seq_len = int(input_ids.shape[1])
         for batch_idx in range(int(input_ids.shape[0])):
-            valid_len = int(attention_mask[batch_idx].sum().item())
+            valid_len = int(valid_lengths[batch_idx])
+            input_row = input_rows[batch_idx]
+            label_row = label_rows[batch_idx]
             pause_seen = 0
             row_post: list[tuple[int, int, int]] = []
             row_pre: list[tuple[int, int, int]] = []
             for target_pos in range(1, min(seq_len, valid_len)):
-                if int(labels[batch_idx, target_pos].item()) == -100:
+                if int(label_row[target_pos]) == -100:
                     continue
-                token_id = int(input_ids[batch_idx, target_pos].item())
+                token_id = int(input_row[target_pos])
                 if token_id == self.pause_token_id:
                     pause_seen += 1
                     continue
@@ -218,11 +310,20 @@ class PauseKLSFTTrainer(SFTTrainer):
             emit = self._zero(logits)
 
         if non_pause_mask.any():
-            pause_log_probs = F.log_softmax(shift_logits[non_pause_mask].float(), dim=-1)[
-                :, self.pause_token_id
-            ]
-            pause_probs = pause_log_probs.exp().clamp(max=1.0 - 1e-6)
-            suppression = -torch.log1p(-pause_probs).mean()
+            flat_logits = shift_logits.reshape(-1, shift_logits.shape[-1])
+            flat_indices = non_pause_mask.reshape(-1).nonzero(as_tuple=False).flatten()
+            loss_sum = self._zero(logits)
+            count = 0
+            for chunk_indices in flat_indices.split(max(1, self.suppression_chunk_size)):
+                chunk_logits = flat_logits.index_select(0, chunk_indices).float()
+                pause_log_probs = chunk_logits[:, self.pause_token_id] - torch.logsumexp(
+                    chunk_logits,
+                    dim=-1,
+                )
+                pause_probs = pause_log_probs.exp().clamp(max=1.0 - 1e-6)
+                loss_sum = loss_sum + (-torch.log1p(-pause_probs)).sum()
+                count += int(chunk_indices.numel())
+            suppression = loss_sum / max(count, 1)
         else:
             suppression = self._zero(logits)
         return emit, suppression

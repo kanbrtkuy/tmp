@@ -27,6 +27,10 @@ def rate(num: int, den: int) -> float:
     return float(num) / den if den else 0.0
 
 
+def mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
@@ -54,6 +58,9 @@ def summarize_capability(root: Path) -> list[dict[str, Any]]:
             parsed = sum(1 for row in items if row.get("predicted_answer"))
             think_end = sum(1 for row in items if (row.get("pause_metrics") or {}).get("has_think_end"))
             pause3 = sum(1 for row in items if (row.get("pause_metrics") or {}).get("pause_count", 0) >= 3)
+            natural_pause = sum(
+                1 for row in items if (row.get("natural_pause_metrics") or {}).get("pause_count", 0) > 0
+            )
             out.append(
                 {
                     "model_label": model_label,
@@ -63,6 +70,7 @@ def summarize_capability(root: Path) -> list[dict[str, Any]]:
                     "parse_rate": rate(parsed, n),
                     "think_end_rate": rate(think_end, n),
                     "pause3_rate": rate(pause3, n),
+                    "natural_pause_rate": rate(natural_pause, n),
                     "avg_generated_chars": sum(len(row.get("generated", "")) for row in items) / n,
                 }
             )
@@ -125,6 +133,72 @@ def summarize_safety(root: Path) -> list[dict[str, Any]]:
     return out
 
 
+def summarize_pause_emission(root: Path) -> list[dict[str, Any]]:
+    out = []
+    for path in sorted(root.glob("generations/*.jsonl")):
+        rows = read_jsonl(path)
+        if not rows:
+            continue
+        task = "capability" if path.name.endswith("_capability.jsonl") else "safety"
+        groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            dataset = str(row.get("dataset") or row.get("source") or "unknown")
+            generation_mode = str(
+                row.get("generation_mode")
+                or (row.get("sampling_params") or {}).get("generation_mode")
+                or "unknown"
+            )
+            groups[(str(row.get("model_label", "")), task, dataset, generation_mode)].append(row)
+
+        for (model_label, task_name, dataset, generation_mode), items in sorted(groups.items()):
+            n = len(items)
+            natural_metrics = [row.get("natural_pause_metrics") or {} for row in items]
+            full_metrics = [row.get("pause_metrics") or {} for row in items]
+            first_indices = [
+                float(metric["first_pause_token_index_inside_think"])
+                for metric in natural_metrics
+                if metric.get("first_pause_token_index_inside_think") is not None
+            ]
+            out.append(
+                {
+                    "model_label": model_label,
+                    "task": task_name,
+                    "dataset": dataset,
+                    "generation_mode": generation_mode,
+                    "n": n,
+                    "natural_pause_rate": rate(
+                        sum(1 for metric in natural_metrics if metric.get("pause_count", 0) > 0),
+                        n,
+                    ),
+                    "natural_exact_single_run3_rate": rate(
+                        sum(1 for metric in natural_metrics if metric.get("has_single_pause_run_of_3")),
+                        n,
+                    ),
+                    "natural_off_target_pause_rate": rate(
+                        sum(1 for metric in natural_metrics if metric.get("off_target_pause_count", 0) > 0),
+                        n,
+                    ),
+                    "avg_natural_pause_count": mean(
+                        [float(metric.get("pause_count", 0)) for metric in natural_metrics]
+                    ),
+                    "avg_natural_first_pause_token_index_inside_think": mean(first_indices),
+                    "first_pause_token_index_coverage": rate(len(first_indices), n),
+                    "forced_or_full_pause_rate": rate(
+                        sum(1 for metric in full_metrics if metric.get("pause_count", 0) > 0),
+                        n,
+                    ),
+                    "forced_or_full_exact_single_run3_rate": rate(
+                        sum(1 for metric in full_metrics if metric.get("has_single_pause_run_of_3")),
+                        n,
+                    ),
+                    "avg_inserted_pause_count": mean(
+                        [float(row.get("inserted_pause_count", 0)) for row in items]
+                    ),
+                }
+            )
+    return out
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True)
@@ -136,9 +210,20 @@ def main() -> None:
     root = Path(args.root)
     cap = summarize_capability(root)
     safety = summarize_safety(root)
+    pause = summarize_pause_emission(root)
     write_csv(root / "capability_summary.csv", cap)
     write_csv(root / "safety_summary.csv", safety)
-    print(json.dumps({"capability_rows": len(cap), "safety_rows": len(safety)}, indent=2))
+    write_csv(root / "pause_emission_summary.csv", pause)
+    print(
+        json.dumps(
+            {
+                "capability_rows": len(cap),
+                "safety_rows": len(safety),
+                "pause_emission_rows": len(pause),
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

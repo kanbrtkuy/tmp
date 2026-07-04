@@ -13,7 +13,7 @@ sft:
   num_train_epochs: 1.0
   save_steps: 50
   eval_steps: 50
-  save_total_limit: null
+  save_total_limit: 8
   max_steps: 400
   save_before_train: true
   load_best_model_at_end: true
@@ -37,6 +37,8 @@ sft:
     emit_weight: 0.3
     temperature: 1.0
     max_kl_tokens_per_example: 256
+    suppression_chunk_size: 1024
     require_pause_before_continuation_kl: true
     assert_rows_only: true
+    post_step_invariant_check: true
     teacher_eval_mode: true
