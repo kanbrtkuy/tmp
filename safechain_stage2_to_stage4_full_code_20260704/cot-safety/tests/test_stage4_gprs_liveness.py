@@ -89,7 +89,16 @@ def test_liveness_gate_status_reads_report_and_fails_closed(tmp_path):
         encoding="utf-8",
     )
     assert liveness_gate_status(config, base_dir=tmp_path)["ready"] is True
-    assert liveness_gate_status(config, base_dir=tmp_path, allow_yellow=False)["ready"] is False
+
+    path.write_text(
+        (
+            '{"model_under_test":"stage2-kl",'
+            '"metrics":{"injection_gain":{"pause_vs_content_gain":0.10,"pause_vs_bos_gain":6.0}},'
+            '"positive_control":{"metrics":{"injection_gain":{"pause_vs_content_gain":0.30,"pause_vs_bos_gain":6.0}}}}\n'
+        ),
+        encoding="utf-8",
+    )
+    assert liveness_gate_status(config, base_dir=tmp_path)["ready"] is False
 
     path.write_text(
         (
