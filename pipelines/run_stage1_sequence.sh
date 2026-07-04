@@ -175,10 +175,7 @@ run_and_archive() {
     wrapper="scripts/run_stage1_positionscan.py"
   fi
 
-  local args=(--config "${config}" --skip_existing)
-  if [[ "${config}" == *stage1b* ]]; then
-    args+=(--skip_data_prep)
-  fi
+  local args=(--config "${config}" --skip_existing --skip_data_prep)
   if [[ "${STAGE1_SEQUENCE_DRY_RUN}" == "1" ]]; then
     args+=(--dry_run)
   fi

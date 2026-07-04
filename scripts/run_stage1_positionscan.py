@@ -31,6 +31,20 @@ def csv(values: list[Any] | tuple[Any, ...]) -> str:
     return ",".join(str(item) for item in values)
 
 
+def cot_offsets_from_positions(positions: list[Any] | tuple[Any, ...]) -> list[int]:
+    offsets: list[int] = []
+    seen: set[int] = set()
+    for position in positions:
+        match = re.fullmatch(r"cot_(\d+)", str(position))
+        if not match:
+            continue
+        offset = int(match.group(1))
+        if offset not in seen:
+            offsets.append(offset)
+            seen.add(offset)
+    return offsets
+
+
 def source_names(data: dict[str, Any]) -> list[str]:
     sources = data.get("sources") or []
     out = []
@@ -82,8 +96,15 @@ def tokenizer_path(model: dict[str, Any], selected_model: str) -> str:
 def stage_paths(config: dict[str, Any]) -> dict[str, str]:
     run_name = str(config.get("run", {}).get("name", "stage1_positionscan"))
     legacy = config.get("legacy", {})
+    data = config.get("data", {})
+    prepared_data_dir = data.get("prepared_data_dir")
+    data_dir = (
+        str((REPO_ROOT / str(prepared_data_dir)).resolve())
+        if prepared_data_dir
+        else str(resolve_value(legacy.get("data_dir", "data/external_probe_v0")))
+    )
     return {
-        "data_dir": str(resolve_value(legacy.get("data_dir", "data/external_probe_v0"))),
+        "data_dir": data_dir,
         "hidden_dir": str(resolve_value(legacy.get("hidden_dir", "data/hidden"))),
         "hidden_prefix": str(resolve_value(legacy.get("hidden_prefix", "external"))),
         "log_dir": str(resolve_value(legacy.get("log_dir", f"logs/{run_name}"))),
@@ -117,6 +138,7 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
     multilayer_positions = (probe.get("multilayer_concat") or {}).get("positions") or positions
     if not layers or not positions:
         raise SystemExit("Stage 1 config must define probe.layers and probe.positions.")
+    cot_offsets = cot_offsets_from_positions(positions)
 
     devices = runtime.get("devices") or ["cuda"]
     extract_devices = hidden_runtime.get("extract_devices") or devices
@@ -145,6 +167,8 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
         csv(layers),
         "--positions",
         csv(positions),
+        "--cot_offsets",
+        csv(cot_offsets),
         "--prompt_positions",
         csv(prompt_positions),
         "--multilayer_positions",
@@ -221,8 +245,10 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
     max_per_source = args.max_per_source or common_max_per_source(data)
     if max_per_source is not None:
         cmd.extend(["--max_per_source", str(max_per_source)])
-    if args.skip_data_prep:
+    if args.skip_data_prep or data.get("prepared_data_dir"):
         cmd.append("--skip_data_prep")
+    if data.get("prepared_data_dir") and not data.get("heldout_sources"):
+        cmd.append("--no_heldout_sources")
     if args.skip_hidden_extraction:
         cmd.append("--skip_hidden_extraction")
     if args.skip_single_scan:
