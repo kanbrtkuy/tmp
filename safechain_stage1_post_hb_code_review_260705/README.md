@@ -9,13 +9,21 @@ paths, and unpublished experiment counts.
 ## Files
 
 - `analysis_reports/stage1_post_hb_code_review_packet_260705.md`
+- `STAGE1_OVERNIGHT_EXECUTION_PLAN.md`
 - `scripts/data/build_stage1_loso_freeze.py`
+- `scripts/data/export_normalized_pairs_for_stage1.py`
 - `scripts/data/sample_stage1_human_qa.py`
 - `scripts/data/summarize_stage1_human_qa.py`
 - `scripts/data/run_stage1_bootstrap_ci.py`
 - `scripts/data/build_stage1_safe_prompt_diagnostics.py`
 - `scripts/data/quarantine_stage1_external_prompts.py`
+- `pipelines/run_stage1_sequence.sh`
 - `pipelines/runpod_stage1_post_hb_freeze_then_loso.sh`
+- `configs/experiment/stage1_natural_pairs_1p5b.yaml`
+- `configs/experiment/stage1b_natural_pairs_1p5b.yaml`
+- `configs/experiment/stage1_natural_pairs_8b_a100_1x.yaml`
+- `configs/experiment/stage1b_natural_pairs_8b_a100_1x.yaml`
+- `tests/test_export_normalized_pairs_for_stage1.py`
 - `tests/test_stage1_loso_freeze_build.py`
 - `tests/test_stage1_aux_audits.py`
 
