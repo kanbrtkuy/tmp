@@ -24,6 +24,7 @@ def test_liveness_config_uses_gate_defaults():
     assert plan["positive_control_status"] == "configured"
     assert plan["layers"] == [7, 14]
     assert plan["gate"]["min_pause_vs_content_gain"] == 0.25
+    assert plan["gate"]["min_pause_vs_content_attention_ratio"] == 0.25
 
 
 def test_liveness_plan_blocks_missing_required_positive_control():
@@ -57,12 +58,62 @@ def test_liveness_decision_from_status_map():
                         "pause_vs_content_gain": 0.30,
                         "pause_vs_bos_gain": 6.0,
                     }
+                },
+                "test_status": {
+                    "attention_mass": "green",
+                    "pause_kv_ablation": "green",
+                    "safe_unsafe_patching": "green",
+                },
+            },
+            required_tests=["injection_gain", "attention_mass", "pause_kv_ablation", "safe_unsafe_patching"],
+            gate={"min_pause_vs_content_gain": 0.25, "min_pause_vs_bos_gain": 5.0},
+        )
+        == "incomplete"
+    )
+    assert (
+        liveness_decision(
+            {
+                "metrics": {
+                    "injection_gain": {
+                        "pause_vs_content_gain": 0.30,
+                        "pause_vs_bos_gain": 6.0,
+                    }
                 }
             },
             required_tests=["injection_gain"],
             gate={"min_pause_vs_content_gain": 0.25, "min_pause_vs_bos_gain": 5.0},
         )
         == "green"
+    )
+    assert (
+        liveness_decision(
+            {
+                "metrics": {
+                    "attention_mass": {
+                        "pause_attention_mass": 0.01,
+                        "pause_vs_content_attention_ratio": 0.30,
+                    }
+                }
+            },
+            required_tests=["attention_mass"],
+            gate={"min_pause_attention_mass": 0.0, "min_pause_vs_content_attention_ratio": 0.25},
+        )
+        == "green"
+    )
+    assert (
+        liveness_decision(
+            {
+                "metrics": {
+                    "attention_mass": {
+                        "pause_attention_mass": 0.01,
+                        "pause_vs_content_attention_ratio": 0.10,
+                    }
+                }
+            },
+            required_tests=["attention_mass"],
+            gate={"min_pause_attention_mass": 0.0, "min_pause_vs_content_attention_ratio": 0.25},
+        )
+        == "red"
     )
 
 
@@ -170,15 +221,56 @@ def test_gprs_artifact_status_requires_all_artifacts(tmp_path):
     )
     status = gprs_artifact_status(config, base_dir=tmp_path)
     assert status["ready"] is False
-    assert status["missing"] == ["stage3_evidence_pass"]
+    assert "stage3_evidence_pass" in status["missing"]
+    assert "stage3_confirmatory_pass" in status["missing"]
 
     (tmp_path / "gprs_artifact_manifest.json").write_text(
-        '{"layer":14,"positions":["pause_0"],"stage3_evidence":{"status":"pass","pause_only_status":"pass"}}\n',
+        (
+            '{"layer":14,"positions":["pause_0"],'
+            '"stage3_evidence":{"status":"pass","pause_only_status":"pass","confirmatory_status":"pass"}}\n'
+        ),
         encoding="utf-8",
     )
     status = require_gprs_artifacts(config, base_dir=tmp_path)
     assert status["ready"] is True
     assert status["missing"] == []
+
+
+def test_gprs_artifact_status_requires_on_policy_confirmatory_pass(tmp_path):
+    config = {
+        "steering": {
+            "method": "gprs",
+            "target_positions": ["pause_0"],
+            "layer": 14,
+            "gprs": {
+                "direction_artifact": "u.pt",
+                "safe_centroid": "mu.pt",
+                "probe_checkpoint": "probe.pt",
+                "stage3_evidence_report": "stage3_evidence_report.json",
+            },
+        }
+    }
+    for name in ("u.pt", "mu.pt", "probe.pt"):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    (tmp_path / "gprs_artifact_manifest.json").write_text(
+        (
+            '{"layer":14,"positions":["pause_0"],'
+            '"stage3_evidence":{"status":"pass","pause_only_status":"pass",'
+            '"confirmatory_status":"fail_on_policy_within_prompt_signal"}}\n'
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "stage3_evidence_report.json").write_text(
+        (
+            '{"status":"pass","pause_only_status":"pass",'
+            '"confirmatory_endpoint":{"status":"fail_on_policy_within_prompt_signal"}}\n'
+        ),
+        encoding="utf-8",
+    )
+    status = gprs_artifact_status(config, base_dir=tmp_path)
+    assert status["ready"] is False
+    assert "stage3_confirmatory_pass" in status["missing"]
+    assert "stage3_evidence_live_not_ready" in status["missing"]
 
 
 def test_projection_rejection_update_only_moves_positive_side_and_caps_norm():

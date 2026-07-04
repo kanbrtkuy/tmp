@@ -8,6 +8,18 @@ from typing import Any
 import numpy as np
 
 
+ROW_ALIGNED_KEYS = {
+    "features",
+    "labels",
+    "valid_mask",
+    "prompt_keys",
+    "row_ids",
+    "sample_ids",
+    "generation_ids",
+    "source_ids",
+}
+
+
 @dataclass(frozen=True)
 class SignalResult:
     name: str
@@ -198,7 +210,7 @@ def split_by_prompt(
     def take(indices: np.ndarray) -> dict[str, Any]:
         out: dict[str, Any] = {}
         for key, value in data.items():
-            if hasattr(value, "shape") and value.shape[:1] == (n_rows,):
+            if key in ROW_ALIGNED_KEYS and hasattr(value, "shape") and value.shape[:1] == (n_rows,):
                 out[key] = value[indices]
             else:
                 out[key] = value
@@ -222,7 +234,7 @@ def _fit_mean_diff_direction(train_x: np.ndarray, train_y: np.ndarray) -> np.nda
     direction = unsafe.mean(axis=0) - safe.mean(axis=0)
     norm = float(np.linalg.norm(direction))
     if norm <= 0.0:
-        raise ValueError("On-policy mean-diff direction has zero norm.")
+        return np.zeros_like(direction)
     return direction / norm
 
 

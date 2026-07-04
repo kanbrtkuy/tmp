@@ -38,6 +38,7 @@ def validate_gprs_config(config: dict[str, Any]) -> dict[str, Any]:
         "probe_checkpoint": str(gprs["probe_checkpoint"]),
         "artifact_manifest": str(gprs.get("artifact_manifest", "")),
         "stage3_evidence_report": str(gprs.get("stage3_evidence_report", "")),
+        "allow_teacher_forced_only": bool(gprs.get("allow_teacher_forced_only", False)),
         "norm_cap": norm_cap,
         "gate_threshold": gate_threshold,
     }
@@ -49,6 +50,34 @@ def read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"Expected a JSON object: {path}")
     return payload
+
+
+def stage3_evidence_gate(
+    evidence: dict[str, Any],
+    *,
+    require_confirmatory: bool = True,
+) -> dict[str, Any]:
+    status = str(evidence.get("status") or "")
+    pause_only_status = str(evidence.get("pause_only_status") or "")
+    confirmatory = evidence.get("confirmatory_endpoint") or {}
+    confirmatory_status = str(
+        evidence.get("confirmatory_status")
+        or (confirmatory.get("status") if isinstance(confirmatory, dict) else "")
+        or ""
+    )
+    missing = []
+    if status != "pass" or pause_only_status != "pass":
+        missing.append("stage3_evidence_pass")
+    if require_confirmatory and confirmatory_status != "pass":
+        missing.append("stage3_confirmatory_pass")
+    return {
+        "ready": not missing,
+        "missing": missing,
+        "status": status,
+        "pause_only_status": pause_only_status,
+        "confirmatory_status": confirmatory_status,
+        "require_confirmatory": require_confirmatory,
+    }
 
 
 def gprs_artifact_status(
@@ -73,17 +102,20 @@ def gprs_artifact_status(
     evidence_ready = False
     evidence_status = "missing_manifest" if not manifest_path.exists() else "missing_stage3_evidence"
     pause_only_status = "missing_manifest" if not manifest_path.exists() else "missing_stage3_evidence"
+    confirmatory_status = "missing_manifest" if not manifest_path.exists() else "missing_stage3_evidence"
+    require_confirmatory = not bool(meta.get("allow_teacher_forced_only", False))
     if not missing:
         if not manifest_path.exists():
             missing.append("artifact_manifest")
         else:
             manifest = read_json(manifest_path)
             stage3 = manifest.get("stage3_evidence") or {}
-            evidence_status = str(stage3.get("status") or "")
-            pause_only_status = str(stage3.get("pause_only_status") or "")
-            evidence_ready = evidence_status == "pass" and pause_only_status == "pass"
-            if not evidence_ready:
-                missing.append("stage3_evidence_pass")
+            stage3_gate = stage3_evidence_gate(stage3, require_confirmatory=require_confirmatory)
+            evidence_status = stage3_gate["status"]
+            pause_only_status = stage3_gate["pause_only_status"]
+            confirmatory_status = stage3_gate["confirmatory_status"]
+            evidence_ready = bool(stage3_gate["ready"])
+            missing.extend(stage3_gate["missing"])
             live_report_path = (
                 _resolve_path(str(meta["stage3_evidence_report"]), base_dir=base_dir)
                 if meta.get("stage3_evidence_report")
@@ -94,8 +126,9 @@ def gprs_artifact_status(
                     missing.append("stage3_evidence_live_missing")
                 else:
                     live_report = read_json(live_report_path)
-                    if live_report.get("status") != "pass" or live_report.get("pause_only_status") != "pass":
-                        missing.append("stage3_evidence_stale")
+                    live_gate = stage3_evidence_gate(live_report, require_confirmatory=require_confirmatory)
+                    if not live_gate["ready"]:
+                        missing.append("stage3_evidence_live_not_ready")
             steering = config.get("steering", {})
             expected_layer = int(steering.get("layer", manifest.get("layer", -1)))
             expected_positions = {str(item) for item in steering.get("target_positions", [])}
@@ -111,6 +144,8 @@ def gprs_artifact_status(
         "missing": missing,
         "stage3_evidence_status": evidence_status,
         "stage3_pause_only_status": pause_only_status,
+        "stage3_confirmatory_status": confirmatory_status,
+        "stage3_require_confirmatory": require_confirmatory,
         "stage3_evidence_ready": evidence_ready,
         "manifest_layer": manifest.get("layer"),
         "manifest_positions": manifest.get("positions"),

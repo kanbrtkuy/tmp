@@ -39,6 +39,33 @@ def _probe_positions(config: dict[str, Any], key: str) -> list[str]:
     return [str(item) for item in config.get("probe", {}).get(key, []) or []]
 
 
+def validate_on_policy_report_config(
+    config: dict[str, Any],
+    report: dict[str, Any],
+) -> None:
+    on_policy = config.get("probe", {}).get("on_policy", {}) or {}
+    expected_layer = on_policy.get("layer")
+    if expected_layer is not None and int(report.get("layer", -1)) != int(expected_layer):
+        raise ValueError(
+            "On-policy Stage3 report layer does not match config: "
+            f"report={report.get('layer')} config={expected_layer}"
+        )
+    expected_positions = [str(item) for item in on_policy.get("positions", []) or []]
+    report_positions = [str(item) for item in report.get("positions", []) or []]
+    if expected_positions and report_positions != expected_positions:
+        raise ValueError(
+            "On-policy Stage3 report positions do not match config: "
+            f"report={report_positions} config={expected_positions}"
+        )
+    expected_controls = [str(item) for item in on_policy.get("true_content_control_positions", []) or []]
+    report_controls = [str(item) for item in report.get("control_positions", []) or []]
+    if expected_controls and report_controls != expected_controls:
+        raise ValueError(
+            "On-policy Stage3 report control positions do not match config: "
+            f"report={report_controls} config={expected_controls}"
+        )
+
+
 def evidence_position_groups(config: dict[str, Any]) -> dict[str, list[str]]:
     prompt = _probe_positions(config, "prompt_baseline_positions") or _positions(config, "prompt_baselines")
     main = _positions(config, "main")
@@ -90,6 +117,7 @@ def build_stage3_evidence_report(
     metric: str = "test_auroc",
     selection_metric: str = "val_auroc",
     on_policy_report: dict[str, Any] | None = None,
+    on_policy_report_path: str | Path | None = None,
 ) -> dict[str, Any]:
     groups = evidence_position_groups(config)
     best_pause = best_row(rows, groups["pause"], selection_metric)
@@ -135,7 +163,15 @@ def build_stage3_evidence_report(
     on_policy = config.get("probe", {}).get("on_policy", {})
     confirmatory_status = confirmatory.get("status", "not_implemented")
     if on_policy_report is not None:
+        validate_on_policy_report_config(config, on_policy_report)
         confirmatory_status = str(on_policy_report.get("status") or "unknown")
+    report_path_text = str(on_policy_report_path) if on_policy_report_path is not None else None
+    report_mtime = None
+    if on_policy_report_path is not None:
+        try:
+            report_mtime = Path(on_policy_report_path).stat().st_mtime
+        except OSError:
+            report_mtime = None
     return {
         "status": status,
         "metric": metric,
@@ -160,6 +196,8 @@ def build_stage3_evidence_report(
             "name": confirmatory.get("name", "within_prompt_auroc"),
             "status": confirmatory_status,
             "on_policy_enabled": bool(on_policy.get("enabled", False)),
+            "report_path": report_path_text,
+            "report_mtime": report_mtime,
             "report": on_policy_report,
             "note": (
                 "Teacher-forced evidence is only a screen. Confirmatory evidence still "

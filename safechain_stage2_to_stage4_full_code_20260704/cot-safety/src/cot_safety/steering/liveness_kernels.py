@@ -146,10 +146,31 @@ def target_pause_ordinals(target_positions: list[str]) -> set[int]:
     return {int(item.removeprefix("pause_")) for item in target_positions if item.startswith("pause_")}
 
 
-def make_position_masks(input_ids: Any, attention_mask: Any, *, pause_id: int, target_positions: list[str]) -> dict[str, Any]:
+def make_position_masks(
+    input_ids: Any,
+    attention_mask: Any,
+    *,
+    pause_id: int,
+    target_positions: list[str],
+    n_insert_pauses: int | None = None,
+) -> dict[str, Any]:
     import torch
 
-    pause_mask = input_ids.eq(pause_id) & attention_mask.bool()
+    all_pause_mask = input_ids.eq(pause_id) & attention_mask.bool()
+    pause_mask = torch.zeros_like(all_pause_mask)
+    if n_insert_pauses is not None and n_insert_pauses > 0:
+        for row_idx in range(input_ids.shape[0]):
+            valid = torch.flatnonzero(attention_mask[row_idx].bool())
+            if valid.numel() < n_insert_pauses:
+                pause_mask[row_idx] = all_pause_mask[row_idx]
+                continue
+            trailing = valid[-int(n_insert_pauses) :]
+            if bool(input_ids[row_idx, trailing].eq(pause_id).all()):
+                pause_mask[row_idx, trailing] = True
+            else:
+                pause_mask[row_idx] = all_pause_mask[row_idx]
+    else:
+        pause_mask = all_pause_mask
     if target_positions:
         ordinals = target_pause_ordinals(target_positions)
         pause_ordinals = pause_mask.cumsum(dim=1) - 1
@@ -181,7 +202,20 @@ def normalize_direction(torch: Any, direction: Any, *, hidden_size: int, device:
     return direction / direction.norm().clamp_min(1e-12)
 
 
-def final_token_kl(torch: Any, base_logits: Any, perturbed_logits: Any, attention_mask: Any) -> float:
+def final_token_kl(
+    torch: Any,
+    base_logits: Any,
+    perturbed_logits: Any,
+    attention_mask: Any,
+    *,
+    row_mask: Any | None = None,
+) -> float:
+    if row_mask is not None:
+        if not bool(row_mask.any()):
+            return math.nan
+        base_logits = base_logits[row_mask]
+        perturbed_logits = perturbed_logits[row_mask]
+        attention_mask = attention_mask[row_mask]
     positions = attention_mask.shape[1] - 1 - torch.argmax(torch.flip(attention_mask.long(), dims=[1]), dim=1)
     rows = torch.arange(base_logits.shape[0], device=base_logits.device)
     base = base_logits[rows, positions, :].float()
@@ -294,6 +328,7 @@ def injection_gain_metric(
     pause_id: int,
     layer: int,
     target_positions: list[str],
+    n_insert_pauses: int,
     epsilon_multipliers: list[float],
     epsilon_base: float,
     batch_size: int,
@@ -326,11 +361,13 @@ def injection_gain_metric(
             encoded["attention_mask"],
             pause_id=pause_id,
             target_positions=target_positions,
+            n_insert_pauses=n_insert_pauses,
         )
         with torch.no_grad():
             base = model(**encoded, use_cache=False)
             for name, mask in masks.items():
-                if not bool(mask.any()):
+                row_mask = mask.any(dim=1)
+                if not bool(row_mask.any()):
                     continue
                 for epsilon in epsilon_multipliers:
                     perturbed = forward_with_injection(
@@ -343,8 +380,15 @@ def injection_gain_metric(
                         epsilon_multiplier=float(epsilon),
                         epsilon_base=epsilon_base,
                     )
-                    kl = final_token_kl(torch, base.logits, perturbed.logits, encoded["attention_mask"])
-                    totals[name].append(kl / max(float(epsilon), 1e-12))
+                    kl = final_token_kl(
+                        torch,
+                        base.logits,
+                        perturbed.logits,
+                        encoded["attention_mask"],
+                        row_mask=row_mask,
+                    )
+                    if not math.isnan(kl):
+                        totals[name].append(kl / max(float(epsilon), 1e-12))
     slopes = {key: (sum(values) / len(values) if values else 0.0) for key, values in totals.items()}
     pause = slopes["pause"]
     content = slopes["content"]
@@ -369,6 +413,7 @@ def attention_mass_metric(
     *,
     pause_id: int,
     target_positions: list[str],
+    n_insert_pauses: int,
     batch_size: int,
     max_input_length: int,
 ) -> dict[str, Any]:
@@ -393,6 +438,7 @@ def attention_mass_metric(
             encoded["attention_mask"],
             pause_id=pause_id,
             target_positions=target_positions,
+            n_insert_pauses=n_insert_pauses,
         )
         with torch.no_grad():
             out = model(**encoded, output_attentions=True, use_cache=False)
@@ -414,9 +460,10 @@ def attention_mass_metric(
     pause_mean = sum(pause_masses) / max(1, len(pause_masses))
     content_mean = sum(content_masses) / max(1, len(content_masses))
     ratio = pause_mean / max(content_mean, 1e-12)
-    status = "green" if pause_mean > 0.0 and ratio >= 0.25 else "yellow" if pause_mean > 0.0 else "red"
+    advisory_status = "green" if pause_mean > 0.0 and ratio >= 0.25 else "yellow" if pause_mean > 0.0 else "red"
     return {
-        "status": status,
+        "status": "measured",
+        "advisory_status": advisory_status,
         "pause_attention_mass": pause_mean,
         "content_attention_mass": content_mean,
         "pause_vs_content_attention_ratio": ratio,
@@ -468,12 +515,13 @@ def run_model_liveness(
     model.eval()
     layers = get_transformer_layers(model)
     prompts = sample_liveness_prompts(config, repo_root=repo_root, limit=prompt_limit, seed=seed)
+    n_insert_pauses = int(steering.get("n_insert_pauses", 3))
     prefixes = build_liveness_prefixes(
         model,
         tokenizer,
         prompts,
         insert_pause_after_cot_tokens=int(steering.get("insert_pause_after_cot_tokens", 3)),
-        n_insert_pauses=int(steering.get("n_insert_pauses", 3)),
+        n_insert_pauses=n_insert_pauses,
         max_input_length=max_input_length,
         temperature=float(liveness.get("temperature", 0.7)),
         top_p=float(liveness.get("top_p", 0.95)),
@@ -491,6 +539,7 @@ def run_model_liveness(
             pause_id=int(pause_ids[0]),
             layer=layer,
             target_positions=target_positions,
+            n_insert_pauses=n_insert_pauses,
             epsilon_multipliers=[float(item) for item in liveness.get("epsilon_multipliers", [1.0, 2.0, 4.0])],
             epsilon_base=float(liveness.get("epsilon_base", 0.05)),
             batch_size=batch_size,
@@ -504,6 +553,7 @@ def run_model_liveness(
             prefixes,
             pause_id=int(pause_ids[0]),
             target_positions=target_positions,
+            n_insert_pauses=n_insert_pauses,
             batch_size=batch_size,
             max_input_length=max_input_length,
         )

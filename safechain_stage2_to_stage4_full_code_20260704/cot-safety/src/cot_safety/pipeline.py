@@ -138,22 +138,6 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                 notes="Compatibility entrypoint while native orchestration is ported.",
             ),
             PipelineStep(
-                name="stage3_pause_vs_baselines_report",
-                stage="stage3",
-                action="evidence_report",
-                command=[
-                    "python",
-                    "scripts/run_stage3_evidence_report.py",
-                    "--config",
-                    "<config>",
-                ],
-                notes=(
-                    "Report whether pause/post-pause probe signal exceeds both prompt-only "
-                    "baselines and true no-pause content controls. This is still a "
-                    "teacher-forced screen, not the within-prompt on-policy confirmation."
-                ),
-            ),
-            PipelineStep(
                 name="stage3_on_policy_confirmatory",
                 stage="stage3",
                 action="confirmatory_evidence",
@@ -170,6 +154,25 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                 notes=(
                     "Confirm pause-state signal on sampled on-policy generations using per-generation "
                     "CoT judge labels and within-prompt AUROC. This is the prompt-classification guardrail."
+                ),
+            ),
+            PipelineStep(
+                name="stage3_pause_vs_baselines_report",
+                stage="stage3",
+                action="evidence_report",
+                command=[
+                    "python",
+                    "scripts/run_stage3_evidence_report.py",
+                    "--config",
+                    "<config>",
+                    "--on_policy_report",
+                    "<stage3-on-policy-confirmatory-report>",
+                ],
+                notes=(
+                    "Report whether pause/post-pause probe signal exceeds both prompt-only "
+                    "baselines and true no-pause content controls. This is still a "
+                    "teacher-forced screen, and the final Stage4 gate also requires the "
+                    "attached within-prompt on-policy confirmation to pass."
                 ),
             ),
         ]

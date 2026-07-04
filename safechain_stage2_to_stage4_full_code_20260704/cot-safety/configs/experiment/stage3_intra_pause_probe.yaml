@@ -42,7 +42,7 @@ probe:
     layer: 14
     positions: [pause_0, pause_1, pause_2]
     true_content_control_positions: [control_cot_3, control_cot_4]
-    require_true_content_control: false
+    require_true_content_control: true
     position_pool: mean
     require_all_positions: true
     min_mixed_prompts: 20

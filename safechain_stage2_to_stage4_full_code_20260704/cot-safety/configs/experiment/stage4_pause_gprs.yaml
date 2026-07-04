@@ -25,6 +25,8 @@ liveness:
   gate:
     min_pause_vs_content_gain: 0.25
     min_pause_vs_bos_gain: 5.0
+    min_pause_attention_mass: 0.0
+    min_pause_vs_content_attention_ratio: 0.25
     require_positive_control_green: true
     allow_yellow_for_gprs: true
 

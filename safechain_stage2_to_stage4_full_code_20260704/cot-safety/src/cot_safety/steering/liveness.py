@@ -10,6 +10,8 @@ from typing import Any
 class LivenessGate:
     min_pause_vs_content_gain: float = 0.25
     min_pause_vs_bos_gain: float = 5.0
+    min_pause_attention_mass: float = 0.0
+    min_pause_vs_content_attention_ratio: float = 0.25
     require_positive_control_green: bool = True
 
     def to_dict(self) -> dict[str, Any]:
@@ -24,6 +26,8 @@ def liveness_config(config: dict[str, Any]) -> dict[str, Any]:
     gate = LivenessGate(
         min_pause_vs_content_gain=float(gate_cfg.get("min_pause_vs_content_gain", 0.25)),
         min_pause_vs_bos_gain=float(gate_cfg.get("min_pause_vs_bos_gain", 5.0)),
+        min_pause_attention_mass=float(gate_cfg.get("min_pause_attention_mass", 0.0)),
+        min_pause_vs_content_attention_ratio=float(gate_cfg.get("min_pause_vs_content_attention_ratio", 0.25)),
         require_positive_control_green=bool(gate_cfg.get("require_positive_control_green", True)),
     )
     layers = liveness.get("layers") or [steering.get("layer", 14)]
@@ -80,6 +84,14 @@ def _metric_status(test_name: str, report: dict[str, Any], gate: dict[str, Any] 
         if content is None or bos is None:
             return "incomplete"
         return "green" if float(content) >= min_content and float(bos) >= min_bos else "red"
+    if test_name == "attention_mass":
+        min_mass = float((gate or {}).get("min_pause_attention_mass", 0.0))
+        min_ratio = float((gate or {}).get("min_pause_vs_content_attention_ratio", 0.25))
+        mass = payload.get("pause_attention_mass")
+        ratio = payload.get("pause_vs_content_attention_ratio")
+        if mass is None or ratio is None:
+            return "incomplete"
+        return "green" if float(mass) >= min_mass and float(ratio) >= min_ratio else "red"
     status = payload.get("status") or payload.get("decision")
     return str(status).lower() if status else None
 
@@ -102,19 +114,10 @@ def liveness_decision(
     statuses = dict(report.get("test_status") or {})
     if required_tests:
         normalized_statuses: dict[str, str] = {}
-        missing = []
         for test in required_tests:
             metric_status = _metric_status(test, report, gate)
-            if test == "injection_gain" and metric_status is None:
-                status = "incomplete"
-            else:
-                status = metric_status or statuses.get(test)
-            if not status:
-                missing.append(test)
-                continue
+            status = metric_status if metric_status is not None else "incomplete"
             normalized_statuses[test] = str(status).lower()
-        if missing:
-            return "incomplete"
         values = set(normalized_statuses.values())
         if "incomplete" in values:
             return "incomplete"

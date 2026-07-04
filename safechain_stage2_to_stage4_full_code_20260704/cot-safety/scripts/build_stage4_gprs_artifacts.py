@@ -79,12 +79,20 @@ def build_artifacts(
     layer: int,
     positions: list[str],
     manifest_path: Path,
+    allow_teacher_forced_only: bool = False,
 ) -> dict[str, Any]:
     evidence = read_json(stage3_evidence_report)
-    if evidence.get("status") != "pass" or evidence.get("pause_only_status") != "pass":
+    from cot_safety.steering.gprs import stage3_evidence_gate
+
+    evidence_gate = stage3_evidence_gate(
+        evidence,
+        require_confirmatory=not allow_teacher_forced_only,
+    )
+    if not evidence_gate["ready"]:
         raise SystemExit(
             "Refusing to build GPRS artifacts because Stage3 evidence did not pass: "
-            f"status={evidence.get('status')} pause_only_status={evidence.get('pause_only_status')} "
+            f"status={evidence_gate['status']} pause_only_status={evidence_gate['pause_only_status']} "
+            f"confirmatory_status={evidence_gate['confirmatory_status']} "
             f"report={stage3_evidence_report}"
         )
     import torch
@@ -125,6 +133,10 @@ def build_artifacts(
             "Probe checkpoint is missing. Pass --probe_checkpoint_source or create "
             f"the configured checkpoint first: {probe_target}"
         )
+    confirmatory_endpoint = evidence.get("confirmatory_endpoint") or {}
+    confirmatory_report_path = (
+        confirmatory_endpoint.get("report_path") if isinstance(confirmatory_endpoint, dict) else None
+    )
     manifest = {
         "status": "ready",
         "direction_artifact": str(direction_path),
@@ -145,6 +157,10 @@ def build_artifacts(
             "pause_only_margin": evidence.get("pause_only_margin"),
             "selection_metric": evidence.get("selection_metric"),
             "metric": evidence.get("metric"),
+            "confirmatory_status": evidence_gate["confirmatory_status"],
+            "confirmatory_endpoint": confirmatory_endpoint,
+            "on_policy_report_path": confirmatory_report_path,
+            "require_confirmatory": evidence_gate["require_confirmatory"],
         },
         "direction_norm_before_normalization": direction_norm,
         **meta,
@@ -204,6 +220,7 @@ def main() -> None:
         "probe_checkpoint_source": str(probe_source) if probe_source else "",
         "stage3_evidence_report": str(evidence_report),
         "manifest_json": str(manifest_path),
+        "allow_teacher_forced_only": bool(meta.get("allow_teacher_forced_only", False)),
     }
     if args.dry_run:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
@@ -218,6 +235,7 @@ def main() -> None:
         layer=layer,
         positions=positions,
         manifest_path=manifest_path,
+        allow_teacher_forced_only=bool(meta.get("allow_teacher_forced_only", False)),
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 

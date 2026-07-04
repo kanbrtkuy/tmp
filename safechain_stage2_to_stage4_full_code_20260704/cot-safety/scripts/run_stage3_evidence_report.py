@@ -58,6 +58,7 @@ def main() -> None:
     output_path = resolve_output_path(output_path, root=legacy_root)
     rows = load_summary_rows(summary_path)
     on_policy_report = None
+    on_policy_path = None
     if args.on_policy_report:
         on_policy_path = resolve_existing_or_default(Path(args.on_policy_report), roots=[legacy_root, REPO_ROOT])
         import json
@@ -71,6 +72,7 @@ def main() -> None:
         metric=args.metric,
         selection_metric=args.selection_metric,
         on_policy_report=on_policy_report,
+        on_policy_report_path=on_policy_path,
     )
     report["config"] = args.config
     report["summary"] = str(summary_path)

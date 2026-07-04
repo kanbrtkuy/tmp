@@ -22,7 +22,7 @@ def make_payload(prompt_count: int, *, informative_pause: bool) -> dict:
             features[idx, 0, 0, 0] = sign
         else:
             features[idx, 0, 0, 0] = 0.0
-        features[idx, 0, 1, 1] = float(idx % 2) * 0.01
+        features[idx, 0, 1, 1] = float(idx // 2) * 0.01
     return {
         "features": features,
         "valid_mask": valid_mask,
