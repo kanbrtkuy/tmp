@@ -1,0 +1,46 @@
+_target_: trl.SFTTrainer
+
+formatting_func: null
+data_collator: null
+dataset_text_field: null
+packing: false
+max_seq_length: null
+dataset_num_proc: null
+dataset_batch_size: 1000
+peft_config: null
+
+args:
+  _target_: transformers.TrainingArguments
+  output_dir: ${paths.output_dir}
+  overwrite_output_dir: false
+  do_train: true
+  do_eval: false
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 1
+  learning_rate: 5e-5
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  num_train_epochs: 1.0
+  lr_scheduler_type: "linear"
+  warmup_ratio: 0.0
+  logging_strategy: "steps"
+  logging_steps: 25
+  save_strategy: "steps"
+  save_steps: 200
+  save_total_limit: 3
+  save_safetensors: true
+  eval_steps: null
+  evaluation_strategy: "no"
+  load_best_model_at_end: false
+  metric_for_best_model: null
+  greater_is_better: null
+  report_to: "none"
+  bf16: false
+  fp16: false
+  gradient_checkpointing: false
+  dataloader_num_workers: 0
+  dataloader_pin_memory: true
+  remove_unused_columns: true
+  seed: ${seed}
+  run_name: ${run_name}

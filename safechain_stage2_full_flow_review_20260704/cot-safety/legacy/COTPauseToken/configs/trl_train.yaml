@@ -1,0 +1,30 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - data: deepseek_pause_sft
+  - paths: default
+  - extras: default
+  - trainer: trl_trainer/sft
+  - rl_algorithm/policy/model/language_model: deepseek_r1_distill_qwen_1_5b
+  - rl_algorithm/policy/model/tokenizer: auto_tokenizer
+  - hydra: default
+  - experiment: null
+  - optional local: default
+
+name: "COTPauseToken"
+run_name: "deepseek_pause_sft"
+task_name: "sft"
+tags: ["dev"]
+
+train: true
+save_before_train: false
+merge_peft_after_train: false
+
+seed: 42
+optimized_metric: null
+
+rl_algorithm:
+  policy:
+    model:
+      special_tokens_to_add: []

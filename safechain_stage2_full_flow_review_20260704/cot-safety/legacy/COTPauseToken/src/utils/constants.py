@@ -1,0 +1,5 @@
+DEEPSEEK_BOS_TOKEN = "<｜begin▁of▁sentence｜>"
+DEEPSEEK_USER_TEMPLATE = "<｜User｜>"
+DEEPSEEK_ASSISTANT_TEMPLATE = "<｜Assistant｜>"
+
+IGNORE_LABEL = -100
