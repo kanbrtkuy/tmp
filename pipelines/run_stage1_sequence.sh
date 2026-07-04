@@ -100,6 +100,30 @@ print(os.path.expandvars(value))
 PY
 }
 
+archive_dir_contents() {
+  local src="$1"
+  local dst="$2"
+  [[ -d "${src}" ]] || return 0
+  mkdir -p "${dst}"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a "${src}/" "${dst}/"
+  else
+    cp -a "${src}/." "${dst}/"
+  fi
+}
+
+archive_file() {
+  local src="$1"
+  local dst="$2"
+  [[ -f "${src}" ]] || return 0
+  mkdir -p "${dst}"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a "${src}" "${dst}/"
+  else
+    cp -a "${src}" "${dst}/"
+  fi
+}
+
 make_fold_config() {
   local template="$1"
   local fold="$2"
@@ -186,18 +210,10 @@ run_and_archive() {
   echo "========== END ${run_name} $(date -Is) =========="
 
   mkdir -p "${ARCHIVE_ROOT}/${run_name}"
-  rsync -a --ignore-missing-args \
-    "${COT_SAFETY_HOT_ROOT}/runs/${run_name}/" \
-    "${ARCHIVE_ROOT}/${run_name}/runs/" || true
-  rsync -a --ignore-missing-args \
-    "${COT_SAFETY_HOT_ROOT}/runs/logs/${run_name}/" \
-    "${ARCHIVE_ROOT}/${run_name}/logs/" || true
-  rsync -a --ignore-missing-args \
-    "${ROOT}/runs/${run_name}_resolved.yaml" \
-    "${ARCHIVE_ROOT}/${run_name}/" || true
-  rsync -a --ignore-missing-args \
-    "${config}" \
-    "${ARCHIVE_ROOT}/${run_name}/" || true
+  archive_dir_contents "${COT_SAFETY_HOT_ROOT}/runs/${run_name}" "${ARCHIVE_ROOT}/${run_name}/runs"
+  archive_dir_contents "${COT_SAFETY_HOT_ROOT}/runs/logs/${run_name}" "${ARCHIVE_ROOT}/${run_name}/logs"
+  archive_file "${ROOT}/runs/${run_name}_resolved.yaml" "${ARCHIVE_ROOT}/${run_name}"
+  archive_file "${config}" "${ARCHIVE_ROOT}/${run_name}"
 
   if [[ "${STAGE1_SEQUENCE_DRY_RUN}" != "1" && "${CLEAN_HIDDEN_AFTER_STAGE}" == "1" && -n "${hidden_dir}" ]]; then
     echo "Cleaning hidden arrays for ${run_name}: ${hidden_dir}"
