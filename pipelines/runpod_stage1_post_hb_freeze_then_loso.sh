@@ -594,7 +594,11 @@ else
 fi
 
 if [[ "${RUN_GPU_STAGE1}" == "1" ]]; then
-  run_step "gpu_stage1_sequence" env STAGE1_FREEZE_DIR="${FREEZE_DIR}" bash "${STAGE1_SEQUENCE_SCRIPT}"
+  run_step "gpu_stage1_sequence" env \
+    STAGE1_FREEZE_DIR="${FREEZE_DIR}" \
+    STAGE1_PROVISIONAL_GPU_RUN="${ALLOW_UNREVIEWED_GPU_STAGE1}" \
+    STAGE1_PROVISIONAL_REASON="${UNREVIEWED_GPU_STAGE1_REASON}" \
+    bash "${STAGE1_SEQUENCE_SCRIPT}"
 else
   echo "===== RUN_GPU_STAGE1=0; CPU audits/baselines complete, GPU Stage1 not launched ====="
 fi
