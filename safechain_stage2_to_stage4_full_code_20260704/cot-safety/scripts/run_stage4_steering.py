@@ -239,7 +239,7 @@ def require_gprs_readiness(config: dict[str, Any], repo_root: Path) -> dict[str,
     if not live_status["ready"]:
         raise SystemExit(
             "Refusing GPRS eval before pause-port liveness is green/yellow. "
-            f"decision={live_status['decision']} report={live_status['path']}"
+            f"decision={live_status['decision']} report={live_status['path']} status={live_status}"
         )
     try:
         artifact_status = require_gprs_artifacts(config, base_dir=repo_root)

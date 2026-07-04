@@ -105,7 +105,10 @@ def liveness_decision(
         missing = []
         for test in required_tests:
             metric_status = _metric_status(test, report, gate)
-            status = metric_status or statuses.get(test)
+            if test == "injection_gain" and metric_status is None:
+                status = "incomplete"
+            else:
+                status = metric_status or statuses.get(test)
             if not status:
                 missing.append(test)
                 continue
@@ -113,6 +116,8 @@ def liveness_decision(
         if missing:
             return "incomplete"
         values = set(normalized_statuses.values())
+        if "incomplete" in values:
+            return "incomplete"
         if "red" in values:
             return "red"
         if "yellow" in values:
@@ -179,9 +184,16 @@ def liveness_gate_status(
     model_matches = bool(expected_model and report_model and expected_model == report_model)
     positive_control_ready = True
     if gate.get("require_positive_control_green", True):
+        configured_control_status = str(expected.get("positive_control_status") or "").strip().lower()
         positive_control = completed.get("positive_control") or {}
-        positive_decision = liveness_decision(positive_control) if isinstance(positive_control, dict) else "missing"
+        positive_decision = (
+            liveness_decision(positive_control, required_tests=required_tests, gate=gate)
+            if isinstance(positive_control, dict)
+            else "missing"
+        )
         positive_control_ready = positive_decision == "green"
+        if configured_control_status.startswith(("missing", "invalid")):
+            positive_control_ready = False
     ready = decision in allowed and model_matches and positive_control_ready
     return {
         "ready": ready,
@@ -193,4 +205,5 @@ def liveness_gate_status(
         "report_model_under_test": report_model,
         "model_matches": model_matches,
         "positive_control_ready": positive_control_ready,
+        "configured_positive_control_status": expected.get("positive_control_status"),
     }

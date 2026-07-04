@@ -84,6 +84,25 @@ def gprs_artifact_status(
             evidence_ready = evidence_status == "pass" and pause_only_status == "pass"
             if not evidence_ready:
                 missing.append("stage3_evidence_pass")
+            live_report_path = (
+                _resolve_path(str(meta["stage3_evidence_report"]), base_dir=base_dir)
+                if meta.get("stage3_evidence_report")
+                else None
+            )
+            if live_report_path is not None:
+                if not live_report_path.exists():
+                    missing.append("stage3_evidence_live_missing")
+                else:
+                    live_report = read_json(live_report_path)
+                    if live_report.get("status") != "pass" or live_report.get("pause_only_status") != "pass":
+                        missing.append("stage3_evidence_stale")
+            steering = config.get("steering", {})
+            expected_layer = int(steering.get("layer", manifest.get("layer", -1)))
+            expected_positions = {str(item) for item in steering.get("target_positions", [])}
+            manifest_layer = int(manifest.get("layer", -1))
+            manifest_positions = {str(item) for item in manifest.get("positions", [])}
+            if manifest_layer != expected_layer or (expected_positions and manifest_positions != expected_positions):
+                missing.append("steering_config_mismatch")
     return {
         "method": meta["method"],
         "ready": not missing,
@@ -93,6 +112,8 @@ def gprs_artifact_status(
         "stage3_evidence_status": evidence_status,
         "stage3_pause_only_status": pause_only_status,
         "stage3_evidence_ready": evidence_ready,
+        "manifest_layer": manifest.get("layer"),
+        "manifest_positions": manifest.get("positions"),
         "gate_threshold": meta["gate_threshold"],
         "norm_cap": meta["norm_cap"],
     }

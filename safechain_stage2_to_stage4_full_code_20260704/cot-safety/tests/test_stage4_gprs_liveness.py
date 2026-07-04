@@ -83,8 +83,8 @@ def test_liveness_gate_status_reads_report_and_fails_closed(tmp_path):
     path.write_text(
         (
             '{"model_under_test":"stage2-kl",'
-            '"test_status":{"injection_gain":"yellow"},'
-            '"positive_control":{"decision":"green"}}\n'
+            '"metrics":{"injection_gain":{"pause_vs_content_gain":0.30,"pause_vs_bos_gain":6.0}},'
+            '"positive_control":{"metrics":{"injection_gain":{"pause_vs_content_gain":0.30,"pause_vs_bos_gain":6.0}}}}\n'
         ),
         encoding="utf-8",
     )
@@ -92,7 +92,11 @@ def test_liveness_gate_status_reads_report_and_fails_closed(tmp_path):
     assert liveness_gate_status(config, base_dir=tmp_path, allow_yellow=False)["ready"] is False
 
     path.write_text(
-        '{"model_under_test":"other","test_status":{"injection_gain":"green"},"positive_control":{"decision":"green"}}\n',
+        (
+            '{"model_under_test":"other",'
+            '"metrics":{"injection_gain":{"pause_vs_content_gain":0.30,"pause_vs_bos_gain":6.0}},'
+            '"positive_control":{"metrics":{"injection_gain":{"pause_vs_content_gain":0.30,"pause_vs_bos_gain":6.0}}}}\n'
+        ),
         encoding="utf-8",
     )
     assert liveness_gate_status(config, base_dir=tmp_path)["ready"] is False
@@ -145,6 +149,24 @@ def test_gprs_artifact_status_requires_all_artifacts(tmp_path):
 
     (tmp_path / "mu.pt").write_text("centroid", encoding="utf-8")
     (tmp_path / "probe.pt").write_text("probe", encoding="utf-8")
+    status = gprs_artifact_status(config, base_dir=tmp_path)
+    assert status["ready"] is False
+    assert status["missing"] == ["artifact_manifest"]
+    with pytest.raises(FileNotFoundError):
+        require_gprs_artifacts(config, base_dir=tmp_path)
+
+    (tmp_path / "gprs_artifact_manifest.json").write_text(
+        '{"stage3_evidence":{"status":"fail_no_independent_pause_signal","pause_only_status":"pass"}}\n',
+        encoding="utf-8",
+    )
+    status = gprs_artifact_status(config, base_dir=tmp_path)
+    assert status["ready"] is False
+    assert status["missing"] == ["stage3_evidence_pass"]
+
+    (tmp_path / "gprs_artifact_manifest.json").write_text(
+        '{"layer":14,"positions":["pause_0"],"stage3_evidence":{"status":"pass","pause_only_status":"pass"}}\n',
+        encoding="utf-8",
+    )
     status = require_gprs_artifacts(config, base_dir=tmp_path)
     assert status["ready"] is True
     assert status["missing"] == []

@@ -114,9 +114,9 @@ def build_artifacts(
             probe_positions = [str(item) for item in probe_payload.get("positions", []) or []]
             if probe_layers and layer not in probe_layers:
                 raise ValueError(f"Probe checkpoint layers {probe_layers} do not include steering layer {layer}.")
-            if probe_positions and set(probe_positions) != set(positions):
+            if probe_positions and not set(probe_positions).issubset(set(positions)):
                 raise ValueError(
-                    f"Probe checkpoint positions {probe_positions} do not match requested positions {positions}."
+                    f"Probe checkpoint positions {probe_positions} are not a subset of requested positions {positions}."
                 )
         if probe_source.resolve() != probe_target.resolve():
             shutil.copy2(probe_source, probe_target)
@@ -131,6 +131,12 @@ def build_artifacts(
         "safe_centroid": str(centroid_path),
         "probe_checkpoint": str(probe_target),
         "direction_provenance": "teacher_forced_prompt_labels",
+        "probe_metadata": {
+            "source": str(probe_source) if probe_source else str(probe_target),
+            "layers": probe_layers if probe_source is not None and isinstance(probe_payload, dict) else [],
+            "positions": probe_positions if probe_source is not None and isinstance(probe_payload, dict) else [],
+            "threshold": probe_payload.get("threshold") if probe_source is not None and isinstance(probe_payload, dict) else None,
+        },
         "stage3_evidence": {
             "path": str(stage3_evidence_report),
             "status": evidence.get("status"),
