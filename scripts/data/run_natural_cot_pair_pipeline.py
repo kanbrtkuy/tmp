@@ -924,6 +924,68 @@ def is_reliable_judged_row(row: dict[str, Any]) -> bool:
     return label in {"safe", "partial", "unsafe"} and judge.get("judgment") is not None
 
 
+def collapse_judged_rows(
+    rows: list[dict[str, Any]],
+    *,
+    max_unreliable_retries: int = 0,
+) -> dict[str, Any]:
+    """Keep the latest usable judge state per candidate.
+
+    By default, unreliable judge rows remain retryable. When
+    max_unreliable_retries > 0, candidates with that many unreliable attempts
+    become terminal retry-exhausted rows so long adaptive runs do not repeatedly
+    rejudge the same unparseable classifier output forever.
+    """
+
+    by_id: dict[str, dict[str, Any]] = {}
+    unreliable_attempts: Counter[str] = Counter()
+    for row in rows:
+        candidate_id = clean_text(row.get("candidate_id"))
+        if not candidate_id:
+            continue
+        if is_reliable_judged_row(row):
+            by_id[candidate_id] = row
+            continue
+        if candidate_id in by_id and is_reliable_judged_row(by_id[candidate_id]):
+            continue
+        judge = dict(row.get("safety_judge") or {})
+        try:
+            recorded_attempts = int(judge.get("unreliable_attempts") or 0)
+        except (TypeError, ValueError):
+            recorded_attempts = 0
+        if recorded_attempts > 0:
+            unreliable_attempts[candidate_id] = max(unreliable_attempts[candidate_id], recorded_attempts)
+        else:
+            unreliable_attempts[candidate_id] += 1
+        copied = dict(row)
+        judge["unreliable_attempts"] = unreliable_attempts[candidate_id]
+        judge["retry_exhausted"] = (
+            max_unreliable_retries > 0 and unreliable_attempts[candidate_id] >= max_unreliable_retries
+        )
+        copied["safety_judge"] = judge
+        by_id[candidate_id] = copied
+
+    collapsed = list(by_id.values())
+    reliable = [row for row in collapsed if is_reliable_judged_row(row)]
+    terminal_unreliable = [
+        row
+        for row in collapsed
+        if not is_reliable_judged_row(row) and bool((row.get("safety_judge") or {}).get("retry_exhausted"))
+    ]
+    retryable_unreliable = [
+        row
+        for row in collapsed
+        if not is_reliable_judged_row(row) and not bool((row.get("safety_judge") or {}).get("retry_exhausted"))
+    ]
+    return {
+        "collapsed": collapsed,
+        "reliable": reliable,
+        "terminal_unreliable": terminal_unreliable,
+        "retryable_unreliable": retryable_unreliable,
+        "unreliable_attempts": unreliable_attempts,
+    }
+
+
 def load_judge_prompt(config: dict[str, Any]) -> str:
     prompt_file = clean_text(config.get("judge", {}).get("prompt_file"))
     if prompt_file:
@@ -1060,10 +1122,18 @@ def command_judge(config: dict[str, Any], args: argparse.Namespace) -> dict[str,
 
     judge_cfg = config.get("judge", {})
     model_path = args.judge_model or clean_text(judge_cfg.get("model_path"))
+    max_unreliable_retries = int(judge_cfg.get("max_unreliable_retries") or 0)
     existing_rows_all = read_jsonl(judged_path) if judged_path.exists() else []
-    existing_rows = [row for row in existing_rows_all if is_reliable_judged_row(row)]
-    requeued_rows = [row for row in existing_rows_all if not is_reliable_judged_row(row)]
-    completed_ids = {clean_text(row.get("candidate_id")) for row in existing_rows}
+    collapsed_state = collapse_judged_rows(existing_rows_all, max_unreliable_retries=max_unreliable_retries)
+    existing_rows = collapsed_state["collapsed"]
+    reliable_existing_rows = collapsed_state["reliable"]
+    terminal_unreliable_rows = collapsed_state["terminal_unreliable"]
+    requeued_rows = collapsed_state["retryable_unreliable"]
+    unreliable_attempts = collapsed_state["unreliable_attempts"]
+    completed_ids = {
+        clean_text(row.get("candidate_id"))
+        for row in reliable_existing_rows + terminal_unreliable_rows
+    }
     todo_rows = [row for row in candidates if clean_text(row.get("candidate_id")) not in completed_ids]
     if not todo_rows:
         summary = {
@@ -1072,7 +1142,9 @@ def command_judge(config: dict[str, Any], args: argparse.Namespace) -> dict[str,
             "candidate_files": [str(path) for path in candidate_paths],
             "n_candidates_requested": len(candidates),
             "n_candidates_previously_judged": len(existing_rows_all),
-            "n_candidates_previously_judged_reliable": len(existing_rows),
+            "n_candidates_previously_judged_collapsed": len(existing_rows),
+            "n_candidates_previously_judged_reliable": len(reliable_existing_rows),
+            "n_unreliable_judgments_terminal": len(terminal_unreliable_rows),
             "n_unreliable_judgments_requeued": len(requeued_rows),
             "n_candidates_newly_judged": 0,
             "n_candidates_total_in_output": len(existing_rows),
@@ -1108,6 +1180,10 @@ def command_judge(config: dict[str, Any], args: argparse.Namespace) -> dict[str,
 
     todo_prompts = []
     todo_input_stats = []
+    todo_ids = {clean_text(row.get("candidate_id")) for row in todo_rows}
+    kept_existing_rows = [
+        row for row in existing_rows if clean_text(row.get("candidate_id")) not in todo_ids
+    ]
     for row in todo_rows:
         reasoning, input_stats = truncate_reasoning_for_judge(
             tokenizer,
@@ -1133,6 +1209,12 @@ def command_judge(config: dict[str, Any], args: argparse.Namespace) -> dict[str,
         for row, input_stats, output in zip(batch_rows, batch_stats, outputs):
             response = output.outputs[0].text.strip()
             value, label = parse_judgment(response)
+            candidate_id = clean_text(row.get("candidate_id"))
+            attempts = int(unreliable_attempts.get(candidate_id, 0))
+            retry_exhausted = False
+            if label not in {"safe", "partial", "unsafe"} or value is None:
+                attempts += 1
+                retry_exhausted = max_unreliable_retries > 0 and attempts >= max_unreliable_retries
             judged.append(
                 {
                     **row,
@@ -1141,19 +1223,23 @@ def command_judge(config: dict[str, Any], args: argparse.Namespace) -> dict[str,
                         "raw_response": response,
                         "judgment": value,
                         "safety_label": label,
+                        "unreliable_attempts": attempts if attempts else 0,
+                        "retry_exhausted": retry_exhausted,
                         **input_stats,
                     },
                 }
             )
-        write_jsonl(judged_path, existing_rows + judged)
-    all_judged = existing_rows + judged
+        write_jsonl(judged_path, kept_existing_rows + judged)
+    all_judged = kept_existing_rows + judged
     summary = {
         "stage": "judge",
         "judge_model": model_path,
         "candidate_files": [str(path) for path in candidate_paths],
         "n_candidates_requested": len(candidates),
         "n_candidates_previously_judged": len(existing_rows_all),
-        "n_candidates_previously_judged_reliable": len(existing_rows),
+        "n_candidates_previously_judged_collapsed": len(existing_rows),
+        "n_candidates_previously_judged_reliable": len(reliable_existing_rows),
+        "n_unreliable_judgments_terminal": len(terminal_unreliable_rows),
         "n_unreliable_judgments_requeued": len(requeued_rows),
         "n_candidates_newly_judged": len(judged),
         "n_candidates_total_in_output": len(all_judged),
