@@ -14,6 +14,9 @@ liveness:
   layers: [8, 16, 20, 24, 28]
   controls:
     positive_control_model: ${STAGE4_8B_FULL_SFT_CONTROL:-}
+    # Keep this missing status until the env path above is verified to be a
+    # genuine 8B full-SFT pause control; both fields must be changed to unblock
+    # the 8B liveness battery.
     positive_control_status: missing_required_full_sft_pause_control
     negative_control_model: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Llama-8B
 

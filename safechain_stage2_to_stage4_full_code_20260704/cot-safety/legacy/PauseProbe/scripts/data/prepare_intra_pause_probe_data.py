@@ -511,6 +511,22 @@ def write_split(output_dir: Path, split: str, rows: list[dict[str, Any]], *, jso
     write_json_rows(output_dir / json_subdir / f"{split}.json", rows)
 
 
+def map_rows_by_unique_id(rows: list[dict[str, Any]], *, context: str) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    duplicates = []
+    for row in rows:
+        row_id = clean_text(row.get("id"))
+        if not row_id:
+            raise ValueError(f"Missing id in {context} row")
+        if row_id in out:
+            duplicates.append(row_id)
+        out[row_id] = row
+    if duplicates:
+        sample = sorted(set(duplicates))[:10]
+        raise ValueError(f"Duplicate ids in {context}: {sample}")
+    return out
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input_dir", default="data/external_probe_v0")
@@ -630,10 +646,10 @@ def main() -> None:
     trainable_rows, trainable_no_pause_rows = rewrite_rows(sampled_raw, "trainable")
     heldout_rows, heldout_no_pause_rows = rewrite_rows(heldout_raw, "heldout")
     partial_rows, partial_no_pause_rows = rewrite_rows(partial_raw, "partial")
-    no_pause_by_id = {
-        clean_text(row.get("id")): row
-        for row in trainable_no_pause_rows + heldout_no_pause_rows + partial_no_pause_rows
-    }
+    no_pause_by_id = map_rows_by_unique_id(
+        trainable_no_pause_rows + heldout_no_pause_rows + partial_no_pause_rows,
+        context="no-pause matched",
+    )
     if args.split_strategy == "source_label_prompt_group":
         splits = split_source_label_prompt_group(
             trainable_rows,

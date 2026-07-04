@@ -171,10 +171,10 @@ def build_matched_lookup(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     for idx, row in enumerate(rows):
         rid = row_id(row, idx)
         if rid:
-            lookup.setdefault(f"id:{rid}", row)
-        prompt = row_prompt(row)
-        if prompt:
-            lookup.setdefault(f"prompt:{prompt_key(prompt)}", row)
+            key = f"id:{rid}"
+            if key in lookup:
+                raise ValueError(f"Duplicate matched-control row id: {rid}")
+            lookup[key] = row
     return lookup
 
 
@@ -186,9 +186,6 @@ def find_matched_row(
     rid = row_id(row, idx)
     if rid and f"id:{rid}" in lookup:
         return lookup[f"id:{rid}"]
-    prompt = row_prompt(row)
-    if prompt and f"prompt:{prompt_key(prompt)}" in lookup:
-        return lookup[f"prompt:{prompt_key(prompt)}"]
     return None
 
 
@@ -690,6 +687,10 @@ def main() -> None:
             matched = find_matched_row(matched_lookup, row, idx)
             if matched is None:
                 dropped["missing_matched_control_row"] += 1
+                continue
+            control_label, _, _ = label_from_row(matched, args.label_field)
+            if control_label != label:
+                dropped["matched_control_label_mismatch"] += 1
                 continue
             control_prompt = row_prompt(matched)
             control_output = row_output(matched, args.pause_token, 0)

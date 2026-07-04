@@ -235,7 +235,6 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                     "<config>",
                     "--phase",
                     "eval",
-                    "--allow_learned_delta",
                 ],
                 notes=(
                     "Archival learned-delta reproduction only. Primary kl_transparent_emit "

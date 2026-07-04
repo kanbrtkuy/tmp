@@ -221,17 +221,36 @@ class PauseKLSFTTrainer(SFTTrainer):
         diagnostics: dict[str, float] = {}
         if pause_mask.any():
             pause_logits = shift_logits[pause_mask].float()
-            pause_probs = F.softmax(pause_logits, dim=-1)[:, self.pause_token_id]
+            pause_log_probs = pause_logits[:, self.pause_token_id] - torch.logsumexp(
+                pause_logits,
+                dim=-1,
+            )
             pause_argmax = pause_logits.argmax(dim=-1).eq(self.pause_token_id).float()
-            diagnostics["pause_emit/target_prob_mean"] = float(pause_probs.mean().detach().cpu())
-            diagnostics["pause_emit/target_argmax_rate"] = float(pause_argmax.mean().detach().cpu())
+            diagnostics["pause_emit/target_prob_mean"] = float(pause_log_probs.exp().mean().cpu())
+            diagnostics["pause_emit/target_argmax_rate"] = float(pause_argmax.mean().cpu())
         if non_pause_mask.any():
-            non_pause_logits = shift_logits[non_pause_mask].float()
-            non_pause_probs = F.softmax(non_pause_logits, dim=-1)[:, self.pause_token_id]
-            non_pause_argmax = non_pause_logits.argmax(dim=-1).eq(self.pause_token_id).float()
-            diagnostics["pause_emit/non_pause_prob_mean"] = float(non_pause_probs.mean().detach().cpu())
-            diagnostics["pause_emit/non_pause_argmax_rate"] = float(non_pause_argmax.mean().detach().cpu())
+            flat_logits = shift_logits.reshape(-1, shift_logits.shape[-1])
+            flat_indices = non_pause_mask.reshape(-1).nonzero(as_tuple=False).flatten()
+            prob_sum = self._zero(logits)
+            argmax_sum = self._zero(logits)
+            count = 0
+            for chunk_indices in flat_indices.split(max(1, self.suppression_chunk_size)):
+                chunk_logits = flat_logits.index_select(0, chunk_indices).float()
+                chunk_log_probs = chunk_logits[:, self.pause_token_id] - torch.logsumexp(
+                    chunk_logits,
+                    dim=-1,
+                )
+                prob_sum = prob_sum + chunk_log_probs.exp().sum()
+                argmax_sum = argmax_sum + chunk_logits.argmax(dim=-1).eq(self.pause_token_id).float().sum()
+                count += int(chunk_logits.shape[0])
+            diagnostics["pause_emit/non_pause_prob_mean"] = float((prob_sum / max(count, 1)).cpu())
+            diagnostics["pause_emit/non_pause_argmax_rate"] = float((argmax_sum / max(count, 1)).cpu())
         return diagnostics
+
+    def _should_log_loss_parts(self) -> bool:
+        step = int(getattr(self.state, "global_step", 0))
+        logging_steps = int(getattr(self.args, "logging_steps", 25) or 25)
+        return step != self._last_pause_kl_log_step and step % logging_steps == 0
 
     def _pause_stripped_batch(
         self,
@@ -454,12 +473,15 @@ class PauseKLSFTTrainer(SFTTrainer):
             + self.pre_weight * pre_kl
             + self.suppression_weight * suppression_loss
         )
-        diagnostics = {
-            **self._pause_logit_diagnostics(student_logits, input_ids, labels),
-            **self._pause_row_diagnostics(model),
-            "pause_kl/post_pairs": float(len(post_pairs)),
-            "pause_kl/pre_pairs": float(len(pre_pairs)),
-        }
+        diagnostics = None
+        if self._should_log_loss_parts():
+            with torch.no_grad():
+                diagnostics = {
+                    **self._pause_logit_diagnostics(student_logits, input_ids, labels),
+                    **self._pause_row_diagnostics(model),
+                    "pause_kl/post_pairs": float(len(post_pairs)),
+                    "pause_kl/pre_pairs": float(len(pre_pairs)),
+                }
         self._maybe_log_loss_parts(
             model,
             emit_loss,
@@ -483,8 +505,7 @@ class PauseKLSFTTrainer(SFTTrainer):
         diagnostics: dict[str, float] | None = None,
     ) -> None:
         step = int(getattr(self.state, "global_step", 0))
-        logging_steps = int(getattr(self.args, "logging_steps", 25) or 25)
-        if step == self._last_pause_kl_log_step or step % logging_steps != 0:
+        if not self._should_log_loss_parts():
             return
         self._last_pause_kl_log_step = step
         prefix = "pause_kl/train" if model.training else "pause_kl/eval"
