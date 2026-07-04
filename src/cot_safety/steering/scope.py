@@ -23,3 +23,31 @@ def validate_no_pre_post_or_cot_targets(target_positions: Iterable[str]) -> tupl
     if invalid:
         raise ValueError(f"Forbidden non-pause steering targets: {invalid}")
     return targets
+
+
+def parse_target_spec_line(line: str) -> tuple[str, tuple[str, ...]]:
+    raw = str(line).strip()
+    if not raw:
+        raise ValueError("Empty target spec line.")
+    if "|" not in raw:
+        raise ValueError(f"Target spec must be '<name>|<positions>': {raw!r}")
+    name, positions_raw = raw.split("|", 1)
+    name = name.strip()
+    if not name:
+        raise ValueError(f"Target spec has an empty name: {raw!r}")
+    positions = tuple(piece.strip() for piece in positions_raw.split(",") if piece.strip())
+    return name, positions
+
+
+def validate_target_specs(target_specs: str | Iterable[str]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    if isinstance(target_specs, str):
+        lines = [line for line in target_specs.splitlines() if line.strip()]
+    else:
+        lines = [str(line) for line in target_specs if str(line).strip()]
+    if not lines:
+        raise ValueError("At least one steering target spec is required.")
+    validated = []
+    for line in lines:
+        name, positions = parse_target_spec_line(line)
+        validated.append((name, validate_no_pre_post_or_cot_targets(positions)))
+    return tuple(validated)

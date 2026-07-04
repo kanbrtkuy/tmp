@@ -77,6 +77,18 @@ def run_logged(
         "TF32",
         "WEIGHT_DECAY",
         "FORMAT_ONLY",
+        "PAUSE_KL_ENABLED",
+        "PAUSE_KL_CONTINUATION_WEIGHT",
+        "PAUSE_KL_PRE_WEIGHT",
+        "PAUSE_KL_SUPPRESSION_WEIGHT",
+        "PAUSE_KL_EMIT_WEIGHT",
+        "PAUSE_KL_TEMPERATURE",
+        "PAUSE_KL_MAX_KL_TOKENS_PER_EXAMPLE",
+        "PAUSE_KL_SUPPRESSION_CHUNK_SIZE",
+        "PAUSE_KL_REQUIRE_PAUSE_BEFORE_CONTINUATION_KL",
+        "PAUSE_KL_ASSERT_ROWS_ONLY",
+        "PAUSE_KL_POST_STEP_INVARIANT_CHECK",
+        "PAUSE_KL_TEACHER_EVAL_MODE",
         "SAVE_BEFORE_TRAIN",
         "MAX_STEPS",
         "NCCL_P2P_DISABLE",
@@ -325,14 +337,39 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
         env["RESUME_FROM_CHECKPOINT"] = str(resolve_value(sft["resume_from_checkpoint"]))
     format_only = sft.get("format_only", {}) or {}
     sft_method = str(sft.get("method", "")).lower()
-    format_only_enabled = sft_method in {"format_only", "embedding_only"} or bool(
+    pause_kl_enabled = sft_method in {"kl_transparent", "kl_transparent_emit", "pause_kl"} or bool(
+        (sft.get("pause_kl", {}) or {}).get("enabled", False)
+    )
+    format_only_enabled = sft_method in {"format_only", "embedding_only"} or pause_kl_enabled or bool(
         format_only.get("enabled", False)
     )
+    pause_kl = sft.get("pause_kl", {}) or {}
     env["FORMAT_ONLY"] = str(format_only_enabled).lower()
     env["FORMAT_ONLY_TRAINABLE_TOKENS"] = json.dumps(
-        format_only.get("trainable_tokens", ["<|pause|>"])
+        format_only.get("trainable_tokens", pause_kl.get("trainable_tokens", ["<|pause|>"]))
     )
     env["FORMAT_ONLY_INIT_TEXT"] = str(format_only.get("init_from_text", ""))
+    env["PAUSE_KL_ENABLED"] = str(pause_kl_enabled).lower()
+    env["PAUSE_KL_PAUSE_TOKEN"] = str(
+        pause_kl.get("pause_token", sft.get("pause_token", config.get("pause", {}).get("pause_token", "<|pause|>")))
+    )
+    env["PAUSE_KL_CONTINUATION_WEIGHT"] = str(pause_kl.get("continuation_weight", 1.0))
+    env["PAUSE_KL_PRE_WEIGHT"] = str(pause_kl.get("pre_weight", 0.1))
+    env["PAUSE_KL_SUPPRESSION_WEIGHT"] = str(pause_kl.get("suppression_weight", 1.0))
+    env["PAUSE_KL_EMIT_WEIGHT"] = str(pause_kl.get("emit_weight", 0.3))
+    env["PAUSE_KL_TEMPERATURE"] = str(pause_kl.get("temperature", 1.0))
+    env["PAUSE_KL_MAX_KL_TOKENS_PER_EXAMPLE"] = str(
+        pause_kl.get("max_kl_tokens_per_example", 256)
+    )
+    env["PAUSE_KL_SUPPRESSION_CHUNK_SIZE"] = str(pause_kl.get("suppression_chunk_size", 1024))
+    env["PAUSE_KL_REQUIRE_PAUSE_BEFORE_CONTINUATION_KL"] = str(
+        pause_kl.get("require_pause_before_continuation_kl", True)
+    ).lower()
+    env["PAUSE_KL_ASSERT_ROWS_ONLY"] = str(pause_kl.get("assert_rows_only", True)).lower()
+    env["PAUSE_KL_POST_STEP_INVARIANT_CHECK"] = str(
+        pause_kl.get("post_step_invariant_check", True)
+    ).lower()
+    env["PAUSE_KL_TEACHER_EVAL_MODE"] = str(pause_kl.get("teacher_eval_mode", True)).lower()
     env["PYTHON_BIN"] = args.python
     env.setdefault("NCCL_DEBUG", "WARN")
     env.setdefault("NCCL_P2P_DISABLE", "0")

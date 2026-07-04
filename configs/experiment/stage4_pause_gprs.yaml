@@ -1,0 +1,89 @@
+defaults:
+  - ../model/deepseek_r1_distill_qwen_1_5b.yaml
+  - ../data/stage4_steering_eval_sources.yaml
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage4_pause_gprs_deepseek_1p5b
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_pause_gprs_deepseek_1p5b
+
+model:
+  sft_checkpoint: ${STAGE2_KL_CHECKPOINT:-/workspace/outputs/deepseek_1p5b_intra_pause_cot3_kl_transparent_emit_trusted_cot_18k_save25_max400_4xa6000/checkpoint-400}
+
+liveness:
+  enabled: true
+  pause_layout: forced
+  layers: [7, 14, 17, 21]
+  epsilon_multipliers: [1.0, 2.0, 4.0]
+  directions: [random, probe_weight, mean_diff]
+  next_token_window: 16
+  num_prompts: 200
+  tests: [injection_gain, attention_mass, pause_kv_ablation, safe_unsafe_patching]
+  controls:
+    positive_control_model: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot3_trusted_cot_18k_4xa6000/checkpoint-250
+    negative_control_model: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Qwen-1.5B
+  gate:
+    min_pause_vs_content_gain: 0.25
+    min_pause_vs_bos_gain: 5.0
+    require_positive_control_green: true
+
+steering:
+  method: gprs
+  target_positions: [pause_0, pause_1, pause_2]
+  target_specs:
+    - name: all3
+      positions: [pause_0, pause_1, pause_2]
+    - name: first
+      positions: [pause_0]
+  forbidden_target_prefixes: [pre_pause_, post_pause_, cot_, control_cot_]
+  layer: 14
+  alpha_grid: [0.0, 0.5, 1.0]
+  seeds: [260618, 260619, 260620]
+  pause_mode: forced
+  insert_pause_after_cot_tokens: 3
+  n_insert_pauses: 3
+  gprs:
+    direction_artifact: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts/mean_diff_direction.pt
+    safe_centroid: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts/safe_centroid.pt
+    probe_checkpoint: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_deepseek_1p5b/probe.pt
+    gate_threshold: 0.95
+    norm_cap: 0.10
+    random_direction_control: true
+
+eval:
+  model_conditions: [base, sft, sft_gprs, sft_random_direction]
+  pause_modes: [forced, natural, hybrid]
+  primary_endpoint: unsafe_cot_rate
+  report:
+    cot_judge: true
+    answer_judge: true
+    over_refusal: true
+    capability: [gsm8k, math500]
+    broken_output: [think_end_rate, eos_termination_rate, repetition_rate, length_shift]
+    unlabeled_rate: true
+  dataset_specs:
+    - name: xstest_safe
+      input_file: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/intra_pause_hardsafe_steering_eval/xstest_safe.jsonl
+      label_filter: safe
+      rows_per_label: 250
+    - name: xstest_contrast_unsafe
+      input_file: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/intra_pause_hardsafe_steering_eval/xstest_contrast_unsafe.jsonl
+      label_filter: unsafe
+      rows_per_label: 250
+    - name: or_bench_hard_safe
+      input_file: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/intra_pause_hardsafe_steering_eval/or_bench_hard_safe.jsonl
+      label_filter: safe
+      rows_per_label: 300
+    - name: or_bench_toxic_unsafe
+      input_file: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/intra_pause_hardsafe_steering_eval/or_bench_toxic_unsafe.jsonl
+      label_filter: unsafe
+      rows_per_label: 300
+  judges: [wildguard]
+  second_judges: [llamaguard, harmbench]
+  scheduler: dynamic_claim
+  judge_backend: ${STAGE4_JUDGE_BACKEND:-vllm}
+  vllm_judges: [wildguard, llamaguard, harmbench]
+  judge_model_map:
+    wildguard: ${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/wildguard
+    llamaguard: ${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/Llama-Guard-3-8B
+    harmbench: ${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/HarmBench-Llama-2-13b-cls

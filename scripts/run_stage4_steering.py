@@ -147,6 +147,7 @@ def build_env(config: dict[str, Any], legacy_root: Path, repo_root: Path, args: 
         env.setdefault("DEVICES", csv([str(item).replace("cuda:", "") for item in devices]))
 
     env.setdefault("LAYER", str(steering.get("layer", 14)))
+    env.setdefault("STEERING_METHOD", str(steering.get("method", "learned_delta")))
     env.setdefault("ALPHAS", csv(steering.get("alpha_grid", [0.0, 1.0, 2.0])))
     env.setdefault("SEEDS", words(steering.get("seeds", [260618, 260619, 260620])))
     env.setdefault("TARGET_SPECS", target_specs(steering))
@@ -230,11 +231,16 @@ def main() -> None:
     parser.add_argument("--config", default="configs/experiment/stage4_pause_steering.yaml")
     parser.add_argument("--legacy-root", default=None)
     parser.add_argument("--python", default=sys.executable)
-    parser.add_argument("--phase", choices=("validate", "generation", "judge", "summary", "eval", "all"), default="eval")
+    parser.add_argument(
+        "--phase",
+        choices=("validate", "liveness", "generation", "judge", "summary", "eval", "all"),
+        default="eval",
+    )
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
 
     from cot_safety.config import dump_config, load_config
+    from cot_safety.steering.gprs import validate_gprs_config
 
     repo_root = REPO_ROOT
     config = resolve_value(load_config(repo_root / args.config))
@@ -246,6 +252,8 @@ def main() -> None:
     (runs_dir / f"{run_name}_resolved.yaml").write_text(dump_config(config), encoding="utf-8")
 
     env = build_env(config, legacy_root, repo_root, args)
+    steering_method = str(config.get("steering", {}).get("method", "learned_delta"))
+    gprs_meta = validate_gprs_config(config)
     if args.phase in {"validate", "all"}:
         if args.dry_run:
             print("$ " + " ".join([sys.executable, "-m", "cot_safety.cli", "steer", "validate-scope", "--config", args.config]))
@@ -255,7 +263,24 @@ def main() -> None:
                 raise SystemExit(rc)
 
     if args.phase == "validate":
+        if steering_method in {"gprs", "projection"}:
+            print(dump_config({"gprs": gprs_meta}))
         return
+
+    if args.phase == "liveness":
+        command = [args.python, "scripts/run_stage4_liveness.py", "--config", args.config]
+        if args.dry_run:
+            command.append("--dry_run")
+        print("$ " + " ".join(command))
+        if args.dry_run:
+            return
+        raise SystemExit(subprocess.run(command, cwd=repo_root, env=env).returncode)
+
+    if steering_method in {"gprs", "projection"} and not args.dry_run:
+        raise SystemExit(
+            "GPRS generation is scaffolded but not wired into the legacy generation shell yet. "
+            "Run --phase validate or --phase liveness now; implement the GPRS hook before eval."
+        )
 
     command = ["bash", str(legacy_root / "scripts/steering/run_intra_pause_full_steering_eval.sh")]
     printable_env = {
@@ -271,6 +296,7 @@ def main() -> None:
             "SEEDS",
             "JUDGES",
             "STAGE4_JUDGE_BACKEND",
+            "STEERING_METHOD",
             "DATASET_SPECS_FILE",
         )
         if key in env

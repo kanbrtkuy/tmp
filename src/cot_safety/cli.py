@@ -7,7 +7,7 @@ from typing import Any
 
 from cot_safety.config import dump_config, load_config
 from cot_safety.pipeline import plan_for_config
-from cot_safety.steering.scope import validate_no_pre_post_or_cot_targets
+from cot_safety.steering.scope import validate_no_pre_post_or_cot_targets, validate_target_specs
 
 
 def cmd_config_show(args: argparse.Namespace) -> None:
@@ -27,10 +27,31 @@ def _target_positions_from_config(config: dict[str, Any]) -> list[str]:
     return [str(item) for item in positions]
 
 
+def _target_specs_from_config(config: dict[str, Any]) -> str | list[str] | None:
+    steering = config.get("steering", {})
+    configured = steering.get("target_specs") or config.get("target_specs")
+    if isinstance(configured, list) and configured and isinstance(configured[0], dict):
+        lines = []
+        for item in configured:
+            name = str(item["name"])
+            positions = ",".join(str(pos) for pos in item.get("positions", []))
+            lines.append(f"{name}|{positions}")
+        return lines
+    return configured
+
+
 def cmd_steer_validate_scope(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     targets = validate_no_pre_post_or_cot_targets(_target_positions_from_config(config))
-    print(json.dumps({"ok": True, "target_positions": targets}, ensure_ascii=False, indent=2))
+    specs = _target_specs_from_config(config)
+    validated_specs = validate_target_specs(specs) if specs else None
+    print(
+        json.dumps(
+            {"ok": True, "target_positions": targets, "target_specs": validated_specs},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 def cmd_manifest(args: argparse.Namespace) -> None:

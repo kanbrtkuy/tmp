@@ -56,6 +56,93 @@ def build_prompt(
     return f"{bos_token}{user_template}{prompt}{suffix}{assistant_template}{forced_prefix}"
 
 
+def pause_spans(text: str) -> list[tuple[int, int, int]]:
+    spans = []
+    token = steer.PAUSE_TOKEN
+    token_len = len(token)
+    idx = 0
+    while idx < len(text):
+        start = text.find(token, idx)
+        if start < 0:
+            break
+        run_len = 0
+        cursor = start
+        while text.startswith(token, cursor):
+            run_len += 1
+            cursor += token_len
+        spans.append((start, cursor, run_len))
+        idx = cursor
+    return spans
+
+
+def count_tokens(text: str, tokenizer: Any | None) -> int | None:
+    if not text:
+        return 0
+    if tokenizer is not None:
+        try:
+            return len(tokenizer(text, add_special_tokens=False).input_ids)
+        except Exception:
+            pass
+    pieces = re.findall(r"\S+", text)
+    return len(pieces) if pieces else 0
+
+
+def extended_pause_metrics(text: str, tokenizer: Any | None = None) -> dict[str, Any]:
+    metrics = dict(steer.response_metrics(text))
+    spans = pause_spans(text)
+    think_start = text.find("<think>")
+    think_end = text.find("</think>")
+    run_lengths = [run_len for _, _, run_len in spans]
+    first_pause = spans[0][0] if spans else -1
+    inside_count = 0
+    before_count = 0
+    after_count = 0
+    for start, _, run_len in spans:
+        if think_start >= 0 and start < think_start:
+            before_count += run_len
+        elif think_end >= 0 and start > think_end:
+            after_count += run_len
+        elif think_start < 0:
+            before_count += run_len
+        else:
+            inside_count += run_len
+
+    first_pause_token_index = None
+    if first_pause >= 0 and think_start >= 0 and first_pause > think_start:
+        prefix_inside_think = text[think_start + len("<think>") : first_pause]
+        first_pause_token_index = count_tokens(prefix_inside_think, tokenizer)
+
+    metrics.update(
+        {
+            "pause_run_lengths": run_lengths,
+            "pause_run_count": len(run_lengths),
+            "first_pause_run_length": run_lengths[0] if run_lengths else 0,
+            "has_single_pause_run_of_3": len(run_lengths) == 1 and run_lengths[0] == 3,
+            "pause_count_inside_think": inside_count,
+            "pause_count_before_think": before_count,
+            "pause_count_after_think_end": after_count,
+            "off_target_pause_count": before_count + after_count,
+            "first_pause_token_index_inside_think": first_pause_token_index,
+        }
+    )
+    return metrics
+
+
+def generation_mode(args: argparse.Namespace) -> str:
+    if args.model_kind in {"sft", "steer"} and args.insert_pause_after_cot_tokens >= 0:
+        return "forced_pause"
+    return "natural"
+
+
+def strip_terminal_eos(text: str, eos_token: str | None) -> str:
+    if not eos_token:
+        return text
+    stripped = text.strip()
+    while stripped.endswith(eos_token):
+        stripped = stripped[: -len(eos_token)].rstrip()
+    return stripped
+
+
 def task_suffix(row: dict[str, Any]) -> str:
     if row.get("task_type") != "capability":
         return ""
@@ -176,6 +263,8 @@ def generate_vllm_batch(llm: Any, prompts: list[str], args: argparse.Namespace) 
             temperature=args.temperature,
             top_p=args.top_p,
             max_tokens=max_tokens,
+            skip_special_tokens=False,
+            spaces_between_special_tokens=False,
         ),
     )
     return [output.outputs[0].text.strip() if output.outputs else "" for output in outputs]
@@ -286,6 +375,14 @@ def main() -> None:
         llm = load_vllm_engine(args)
     else:
         model, tokenizer, layers, delta, pause_id = load_model_and_tokenizer(args)
+    metric_tokenizer = tokenizer
+    if metric_tokenizer is None and llm is not None and hasattr(llm, "get_tokenizer"):
+        try:
+            metric_tokenizer = llm.get_tokenizer()
+        except Exception:
+            metric_tokenizer = None
+    gen_mode = generation_mode(args)
+    eos_token_text = getattr(metric_tokenizer, "eos_token", None)
 
     with out.open("w", encoding="utf-8") as f:
         for start in range(0, len(rows), args.batch_size):
@@ -312,6 +409,7 @@ def main() -> None:
                         prefixes = generate_vllm_batch(llm, base_prompts, prefix_args)
                     else:
                         prefixes = steer.generate_prefix_batch(model, tokenizer, base_prompts, prefix_args)
+                    prefixes = [strip_terminal_eos(prefix, eos_token_text) for prefix in prefixes]
                 else:
                     prefixes = ["" for _ in batch]
                 inserted_prefixes = [
@@ -340,7 +438,9 @@ def main() -> None:
                     responses = generate_plain_batch(model, tokenizer, prompts, args)
                 hook_stats = [{"alpha": args.alpha, "num_hook_calls_with_pause": 0, "num_pause_tokens_steered": 0} for _ in responses]
             for row, inserted, response, hook_stat in zip(batch, inserted_prefixes, responses, hook_stats):
+                response = strip_terminal_eos(response, eos_token_text)
                 generated = args.forced_prefix + inserted + response
+                natural_generated = args.forced_prefix + response
                 pred = predicted_answer(row, generated)
                 correct = is_correct(row, pred)
                 item = dict(row)
@@ -348,17 +448,24 @@ def main() -> None:
                     {
                         "model_label": args.model_label,
                         "model_kind": args.model_kind,
+                        "generation_mode": gen_mode,
                         "model_path": args.model,
                         "alpha": args.alpha,
                         "layer": args.layer,
                         "generated": generated,
                         "generated_for_judge": steer.strip_pause_tokens(generated),
                         "inserted_prefix": inserted,
-                        "pause_metrics": steer.response_metrics(generated),
+                        "inserted_pause_count": inserted.count(steer.PAUSE_TOKEN),
+                        "pause_metrics": extended_pause_metrics(generated, metric_tokenizer),
+                        "natural_pause_metrics": extended_pause_metrics(
+                            natural_generated,
+                            metric_tokenizer,
+                        ),
                         "hook_stats": hook_stat,
                         "predicted_answer": pred,
                         "correct": correct,
                         "sampling_params": {
+                            "generation_mode": gen_mode,
                             "temperature": args.temperature,
                             "top_p": args.top_p,
                             "max_new_tokens": args.max_new_tokens,

@@ -140,14 +140,74 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
         ]
 
     if steering:
-        return [
+        method = str(steering.get("method", "learned_delta"))
+        liveness = config.get("liveness", {})
+        steps = [
             PipelineStep(
                 name="validate_pause_only_scope",
                 stage="stage4",
                 action="validate",
                 command=["cot-safety", "steer", "validate-scope", "--config", "<config>"],
-                notes="Reject any pre/post/cot steering target.",
-            ),
+                notes="Reject any pre/post/cot steering target, including grouped target_specs.",
+            )
+        ]
+        if liveness.get("enabled", method != "learned_delta"):
+            steps.append(
+                PipelineStep(
+                    name="run_pause_liveness_battery",
+                    stage="stage4",
+                    action="liveness",
+                    command=[
+                        "python",
+                        "scripts/run_stage4_liveness.py",
+                        "--config",
+                        "<config>",
+                    ],
+                    notes=(
+                        "Gate steering on pause-port liveness: green => Stage3/GPRS; "
+                        "yellow/red => Stage2.5 branch before spending steering GPU."
+                    ),
+                )
+            )
+        if method in {"gprs", "projection"}:
+            steps.extend(
+                [
+                    PipelineStep(
+                        name="build_gprs_artifacts",
+                        stage="stage4",
+                        action="direction_build",
+                        command=[
+                            "python",
+                            "scripts/run_stage4_steering.py",
+                            "--config",
+                            "<config>",
+                            "--phase",
+                            "validate",
+                        ],
+                        notes=(
+                            "Placeholder for on-policy paired mean-diff direction, safe centroid, "
+                            "probe gate, and QC artifacts after Stage3 rerun."
+                        ),
+                    ),
+                    PipelineStep(
+                        name="generate_and_judge_gprs",
+                        stage="stage4",
+                        action="eval",
+                        command=[
+                            "python",
+                            "scripts/run_stage4_steering.py",
+                            "--config",
+                            "<config>",
+                            "--phase",
+                            "eval",
+                        ],
+                        notes="Run GPRS only after liveness green, fixed Stage3, direction QC, and random-direction control.",
+                    ),
+                ]
+            )
+            return steps
+        return [
+            *steps,
             PipelineStep(
                 name="train_learned_delta",
                 stage="stage4",
@@ -158,7 +218,7 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                     "--config-backed-run",
                     run_name,
                 ],
-                notes="Learn delta at pause_0/pause_1/pause_2 only.",
+                notes="Legacy baseline/control only; not the primary method for kl_transparent_emit Stage2.",
             ),
             PipelineStep(
                 name="generate_and_judge",

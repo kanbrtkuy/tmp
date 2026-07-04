@@ -185,6 +185,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--positions", default=",".join(DEFAULT_SINGLE_POSITIONS))
     parser.add_argument("--cot_offsets", default=",".join(str(x) for x in DEFAULT_COT_OFFSETS))
     parser.add_argument(
+        "--prompt_positions",
+        default="",
+        help=(
+            "Comma-separated prompt/pre-CoT baseline positions to extract "
+            "alongside pause/COT positions, e.g. last_prompt_token,pre_think."
+        ),
+    )
+    parser.add_argument(
         "--insert_cot_offset",
         type=int,
         default=3,
@@ -397,6 +405,8 @@ def extraction_cmd(args: argparse.Namespace, spec: SplitSpec, layers: list[int],
         args.save_dtype,
         "--trust_remote_code",
     ]
+    if args.prompt_positions:
+        cmd.extend(["--prompt_positions", args.prompt_positions])
     if args.hidden_compression == "compressed":
         cmd.append("--compressed")
     return cmd

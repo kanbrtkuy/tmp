@@ -92,9 +92,19 @@ def stage3_positions(hidden: dict[str, Any]) -> list[str]:
     if isinstance(positions, list):
         return [str(item) for item in positions]
     out: list[str] = []
-    for key in ("main", "diagnostics"):
+    for key in ("prompt_baselines", "main", "diagnostics"):
         out.extend(str(item) for item in positions.get(key, []))
     return list(dict.fromkeys(out))
+
+
+def prompt_positions(hidden: dict[str, Any]) -> list[str]:
+    positions = hidden.get("positions") or {}
+    configured = hidden.get("prompt_positions")
+    if configured is None and isinstance(positions, dict):
+        configured = positions.get("prompt_baselines")
+    if not configured:
+        return []
+    return [str(item) for item in configured]
 
 
 def recipe_name(data: dict[str, Any]) -> str:
@@ -122,6 +132,7 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
     selected_model = model_path(model)
     layers = hidden.get("layers") or model.get("default_layers")
     positions = stage3_positions(hidden)
+    prompt_baselines = prompt_positions(hidden)
     cot_offsets = hidden.get("cot_offsets", [pause.get("cot_offset", 3)])
     if not layers or not positions:
         raise SystemExit("Stage 3 config must define hidden.layers and hidden.positions.")
@@ -205,6 +216,8 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
         "--max_final_words",
         str(data.get("max_final_words", 1600)),
     ]
+    if prompt_baselines:
+        cmd.extend(["--prompt_positions", csv(prompt_baselines)])
 
     sources = source_names(data)
     if sources:
