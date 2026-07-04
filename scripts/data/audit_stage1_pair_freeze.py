@@ -22,6 +22,7 @@ import json
 import math
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -41,6 +42,13 @@ SOURCE_TARGETS = {
     "harmthoughts": {"min": 100, "ideal": 150},
     "reasoningshield+harmthoughts": {"min": 250, "ideal": 450},
 }
+KNOWN_SOURCE_FAMILIES = set(SOURCE_TARGETS) | {
+    "wildjailbreak_vanilla_harmful",
+    "strongreject_full",
+    "harmbench_standard",
+    "reasoningshield",
+    "harmthoughts",
+}
 
 
 def clean_text(value: Any) -> str:
@@ -59,16 +67,19 @@ def stable_hash(value: str, n: int = 16) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:n]
 
 
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
+def read_jsonl(path: Path, *, tolerate_partial_tail: bool = False) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
-        for line_no, line in enumerate(handle, 1):
+        lines = list(handle)
+        for line_no, line in enumerate(lines, 1):
             line = line.strip()
             if not line:
                 continue
             try:
                 rows.append(json.loads(line))
             except json.JSONDecodeError as exc:
+                if tolerate_partial_tail and line_no == len(lines):
+                    break
                 raise ValueError(f"invalid JSON at {path}:{line_no}") from exc
     return rows
 
@@ -103,19 +114,12 @@ def git_info() -> dict[str, Any]:
 
 def source_from_prompt_id(prompt_id: str) -> str:
     prompt_id = clean_text(prompt_id)
-    known = (
-        "wildjailbreak_vanilla_harmful",
-        "strongreject_full",
-        "harmbench_standard",
-        "reasoningshield",
-        "harmthoughts",
-    )
-    for source in known:
+    for source in KNOWN_SOURCE_FAMILIES:
         if prompt_id.startswith(source + "-") or prompt_id.startswith(source + "::"):
             return source
     if prompt_id.startswith("natural-r1-8b") or prompt_id.startswith("natural-r1-32b"):
         return "unknown_natural"
-    return prompt_id.rsplit("-", 1)[0] if "-" in prompt_id else "unknown"
+    return "unknown"
 
 
 def source_family(row: dict[str, Any]) -> str:
@@ -165,6 +169,7 @@ def judge_label(row: dict[str, Any], prefix: str | None = None) -> str:
         value = clean_text(nested.get("safety_label"))
         if value:
             return value
+        return ""
     nested = row.get("safety_judge") or {}
     return clean_text(nested.get("safety_label"))
 
@@ -226,6 +231,22 @@ def pairs_from_normalized(rows: list[dict[str, Any]], path: Path) -> tuple[list[
         if not pair_id:
             rejected.append({"input_path": str(path), "drop_reason": "missing_pair_id", "n_rows": len(pair_rows)})
             continue
+        labels_seen = [
+            clean_text(row.get("trajectory_safety_label") or row.get("safety_label"))
+            for row in pair_rows
+        ]
+        label_counts = Counter(labels_seen)
+        if len(pair_rows) != 2 or label_counts.get("safe") != 1 or label_counts.get("unsafe") != 1:
+            rejected.append(
+                {
+                    "input_path": str(path),
+                    "pair_id": pair_id,
+                    "drop_reason": "normalized_pair_not_exactly_two_rows_one_safe_one_unsafe",
+                    "labels": dict(label_counts),
+                    "n_rows": len(pair_rows),
+                }
+            )
+            continue
         by_label: dict[str, dict[str, Any]] = {}
         for row in pair_rows:
             label = clean_text(row.get("trajectory_safety_label") or row.get("safety_label"))
@@ -274,12 +295,19 @@ def pairs_from_normalized(rows: list[dict[str, Any]], path: Path) -> tuple[list[
     return pairs, rejected
 
 
-def load_pairs(paths: list[Path]) -> tuple[list[PairRecord], list[dict[str, Any]]]:
+def load_pairs(
+    paths: list[Path],
+    *,
+    tolerate_partial_tail: bool = False,
+) -> tuple[list[PairRecord], list[dict[str, Any]], dict[str, Any]]:
     pairs: list[PairRecord] = []
     rejected: list[dict[str, Any]] = []
+    input_stats: dict[str, Any] = {}
     for path in paths:
-        rows = read_jsonl(path)
+        rows = read_jsonl(path, tolerate_partial_tail=tolerate_partial_tail)
+        input_stats[str(path)] = {"n_rows": len(rows)}
         if not rows:
+            rejected.append({"input_path": str(path), "drop_reason": "empty_input_file"})
             continue
         combined_rows = [row for row in rows if "safe_reasoning" in row and "unsafe_reasoning" in row]
         if combined_rows:
@@ -297,7 +325,7 @@ def load_pairs(paths: list[Path]) -> tuple[list[PairRecord], list[dict[str, Any]
             normalized_pairs, normalized_rejected = pairs_from_normalized(rows, path)
             pairs.extend(normalized_pairs)
             rejected.extend(normalized_rejected)
-    return pairs, rejected
+    return pairs, rejected, input_stats
 
 
 class TokenCounter:
@@ -453,33 +481,60 @@ def audit_pairs(
             "cross_source": cross_source,
         }
 
-    audit_rows: list[dict[str, Any]] = []
+    base_infos: list[dict[str, Any]] = []
     for idx, pair in enumerate(pairs):
         safe_tokens = tokenizer.count(pair.safe_reasoning)
         unsafe_tokens = tokenizer.count(pair.unsafe_reasoning)
         max_len = max(safe_tokens, unsafe_tokens)
         min_len = min(safe_tokens, unsafe_tokens)
         length_ratio = (min_len / max_len) if max_len else 0.0
-        drops = []
+        base_drops = []
         if not pair.prompt:
-            drops.append("missing_prompt")
+            base_drops.append("missing_prompt")
         if not pair.safe_reasoning:
-            drops.append("missing_safe_reasoning")
+            base_drops.append("missing_safe_reasoning")
         if not pair.unsafe_reasoning:
-            drops.append("missing_unsafe_reasoning")
+            base_drops.append("missing_unsafe_reasoning")
         if pair.source_family in {"", "unknown", "unknown_natural"} or "+" in pair.source_family:
-            drops.append("ambiguous_source_family")
+            base_drops.append("ambiguous_source_family")
         if pair.metadata.get("safe_quality_pass") is False:
-            drops.append("safe_quality_fail")
+            base_drops.append("safe_quality_fail")
         if pair.metadata.get("unsafe_quality_pass") is False:
-            drops.append("unsafe_quality_fail")
+            base_drops.append("unsafe_quality_fail")
         safe_label = clean_text(pair.metadata.get("safe_judge_label"))
         unsafe_label = clean_text(pair.metadata.get("unsafe_judge_label"))
         if safe_label and safe_label != "safe":
-            drops.append("safe_judge_label_conflict")
+            base_drops.append("safe_judge_label_conflict")
         if unsafe_label and unsafe_label != "unsafe":
-            drops.append("unsafe_judge_label_conflict")
+            base_drops.append("unsafe_judge_label_conflict")
+        base_infos.append(
+            {
+                "safe_tokens": safe_tokens,
+                "unsafe_tokens": unsafe_tokens,
+                "length_ratio": length_ratio,
+                "base_drops": base_drops,
+            }
+        )
 
+    same_source_canonical_by_cluster: dict[str, int] = {}
+    for cid, meta in cluster_meta.items():
+        if meta["cross_source"]:
+            continue
+        members = [idx for idx, member_cid in cluster_id_by_index.items() if member_cid == cid]
+        clean_members = [idx for idx in members if not base_infos[idx]["base_drops"]]
+        candidates = clean_members or members
+        same_source_canonical_by_cluster[cid] = min(
+            candidates,
+            key=lambda member: (pairs[member].input_path, pairs[member].pair_id),
+        )
+
+    audit_rows: list[dict[str, Any]] = []
+    for idx, pair in enumerate(pairs):
+        info = base_infos[idx]
+        safe_tokens = int(info["safe_tokens"])
+        unsafe_tokens = int(info["unsafe_tokens"])
+        length_ratio = float(info["length_ratio"])
+        drops = list(info["base_drops"])
         cid = cluster_id_by_index.get(idx)
         duplicate_action = "none"
         if cid:
@@ -488,8 +543,7 @@ def audit_pairs(
                 duplicate_action = "quarantine_cross_source_duplicate"
                 drops.append(duplicate_action)
             else:
-                members = [member for member, member_cid in cluster_id_by_index.items() if member_cid == cid]
-                canonical = min(members, key=lambda member: (pairs[member].input_path, pairs[member].pair_id))
+                canonical = same_source_canonical_by_cluster[cid]
                 if idx != canonical:
                     duplicate_action = "drop_same_source_duplicate_noncanonical"
                     drops.append(duplicate_action)
@@ -503,6 +557,8 @@ def audit_pairs(
             "input_path": pair.input_path,
             "format": pair.format,
             "prompt_norm_hash": pair.prompt_norm_hash,
+            "safe_reasoning_hash": stable_hash(normalize_space(pair.safe_reasoning), 16),
+            "unsafe_reasoning_hash": stable_hash(normalize_space(pair.unsafe_reasoning), 16),
             "safe_tokens": safe_tokens,
             "unsafe_tokens": unsafe_tokens,
             "length_ratio_min_over_max": length_ratio,
@@ -526,7 +582,16 @@ def audit_pairs(
     summary = build_summary(
         audit_rows,
         duplicate_clusters_meta=list(cluster_meta.values()),
-        duplicate_edges=duplicate_edges,
+        duplicate_edges=[
+            {
+                **edge,
+                "a_pair_id": pairs[edge["a"]].pair_id,
+                "b_pair_id": pairs[edge["b"]].pair_id,
+                "a_source_family": pairs[edge["a"]].source_family,
+                "b_source_family": pairs[edge["b"]].source_family,
+            }
+            for edge in duplicate_edges
+        ],
         tokenizer_mode=tokenizer.mode,
         calipers=calipers,
         token_windows=token_windows,
@@ -540,9 +605,42 @@ def count_by_source(rows: list[dict[str, Any]], predicate) -> dict[str, int]:
 
 
 def build_source_readiness(counts: dict[str, int]) -> dict[str, Any]:
-    return {
+    readiness = {
         source: {"n": n, **source_threshold_status(source, n)}
         for source, n in sorted(counts.items())
+    }
+    rs_ht_n = counts.get("reasoningshield", 0) + counts.get("harmthoughts", 0)
+    if rs_ht_n or "reasoningshield" in counts or "harmthoughts" in counts:
+        readiness["reasoningshield+harmthoughts"] = {
+            "n": rs_ht_n,
+            **source_threshold_status("reasoningshield+harmthoughts", rs_ht_n),
+        }
+    return readiness
+
+
+def hash_collisions(rows: list[dict[str, Any]], field: str) -> dict[str, Any]:
+    by_hash: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        value = clean_text(row.get(field))
+        if value:
+            by_hash[value].append(row)
+    collisions = []
+    for value, items in sorted(by_hash.items()):
+        prompt_hashes = {clean_text(item.get("prompt_norm_hash")) for item in items}
+        if len(items) > 1 and len(prompt_hashes) > 1:
+            collisions.append(
+                {
+                    "hash": value,
+                    "n_pairs": len(items),
+                    "n_prompt_hashes": len(prompt_hashes),
+                    "sources": sorted({clean_text(item.get("source_family")) for item in items}),
+                    "pair_ids": [clean_text(item.get("pair_id")) for item in items[:10]],
+                }
+            )
+    return {
+        "n_collision_hashes": len(collisions),
+        "n_pairs_in_collisions": sum(item["n_pairs"] for item in collisions),
+        "examples": collisions[:50],
     }
 
 
@@ -567,6 +665,10 @@ def build_summary(
         str(window): sum(1 for row in audit_rows if row["token_window_available"][str(window)])
         for window in token_windows
     }
+    token_window_by_source = {
+        str(window): count_by_source(audit_rows, lambda row, w=str(window): row["token_window_available"][w])
+        for window in token_windows
+    }
     length_ratios = [row["length_ratio_min_over_max"] for row in main_rows]
     safe_tokens = [row["safe_tokens"] for row in main_rows]
     unsafe_tokens = [row["unsafe_tokens"] for row in main_rows]
@@ -580,6 +682,7 @@ def build_summary(
         "source_readiness_main_keep": build_source_readiness(main_by_source),
         "length_caliper_by_source": caliper_by_source,
         "token_window_available_counts": token_window_counts,
+        "token_window_available_by_source": token_window_by_source,
         "tokenizer_mode": tokenizer_mode,
         "length_ratio_min_over_max": numeric_summary(length_ratios),
         "safe_tokens": numeric_summary(safe_tokens),
@@ -596,6 +699,11 @@ def build_summary(
             "n_edges": len(duplicate_edges),
             "clusters": duplicate_clusters_meta,
         },
+        "reasoning_hash_collisions": {
+            "safe": hash_collisions(main_rows, "safe_reasoning_hash"),
+            "unsafe": hash_collisions(main_rows, "unsafe_reasoning_hash"),
+        },
+        "duplicate_edges": duplicate_edges,
     }
 
 
@@ -656,10 +764,27 @@ def markdown_report(summary: dict[str, Any], *, input_paths: list[Path], output_
             f"- `{output_dir / 'pair_audit_rows.jsonl'}`",
             f"- `{output_dir / 'main_keep_pairs.jsonl'}`",
             f"- `{output_dir / 'dropped_or_quarantined_pairs.jsonl'}`",
+            f"- `{output_dir / 'duplicate_edges.jsonl'}`",
             f"- `{output_dir / 'audit_summary.json'}`",
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def snapshot_inputs(input_paths: list[Path], output_dir: Path) -> list[Path]:
+    snapshot_dir = output_dir / "input_snapshot"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapped: list[Path] = []
+    used_names: Counter[str] = Counter()
+    for path in input_paths:
+        name = path.name
+        used_names[name] += 1
+        if used_names[name] > 1:
+            name = f"{path.stem}.{used_names[path.name]}{path.suffix}"
+        target = snapshot_dir / name
+        shutil.copy2(path, target)
+        snapped.append(target)
+    return snapped
 
 
 def parse_args() -> argparse.Namespace:
@@ -668,6 +793,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--tokenizer", default="deepseek-ai/DeepSeek-R1-Distill-Llama-8B")
     parser.add_argument("--tokenizer-local-files-only", action="store_true")
+    parser.add_argument("--require-hf-tokenizer", action="store_true")
+    parser.add_argument("--snapshot-inputs", action="store_true")
+    parser.add_argument("--tolerate-partial-tail", action="store_true")
     parser.add_argument("--jaccard-threshold", type=float, default=0.80)
     parser.add_argument("--shingle-n", type=int, default=5)
     parser.add_argument("--length-calipers", default="0.90,0.80")
@@ -682,11 +810,18 @@ def main() -> int:
         if not path.exists():
             raise FileNotFoundError(path)
     output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    audit_input_paths = snapshot_inputs(input_paths, output_dir) if args.snapshot_inputs else input_paths
     calipers = [float(item) for item in args.length_calipers.split(",") if item.strip()]
     token_windows = [int(item) for item in args.token_windows.split(",") if item.strip()]
 
-    pairs, rejected = load_pairs(input_paths)
+    pairs, rejected, input_stats = load_pairs(
+        audit_input_paths,
+        tolerate_partial_tail=bool(args.tolerate_partial_tail),
+    )
     tokenizer = TokenCounter(args.tokenizer, local_files_only=bool(args.tokenizer_local_files_only))
+    if args.require_hf_tokenizer and not tokenizer.mode.startswith("hf:"):
+        raise RuntimeError(f"required HF tokenizer was not loaded; tokenizer_mode={tokenizer.mode}")
     audit_rows, summary = audit_pairs(
         pairs,
         tokenizer=tokenizer,
@@ -699,6 +834,10 @@ def main() -> int:
         {
             "stage": "stage1_pair_freeze_audit",
             "input_paths": [str(path) for path in input_paths],
+            "audit_input_paths": [str(path) for path in audit_input_paths],
+            "input_stats": input_stats,
+            "snapshot_inputs": bool(args.snapshot_inputs),
+            "tolerate_partial_tail": bool(args.tolerate_partial_tail),
             "n_rejected_during_load": len(rejected),
             "load_rejections": rejected[:100],
             "git": git_info(),
@@ -709,6 +848,7 @@ def main() -> int:
     write_jsonl(output_dir / "pair_audit_rows.jsonl", audit_rows)
     write_jsonl(output_dir / "main_keep_pairs.jsonl", main_keep)
     write_jsonl(output_dir / "dropped_or_quarantined_pairs.jsonl", dropped)
+    write_jsonl(output_dir / "duplicate_edges.jsonl", summary.get("duplicate_edges", []))
     if rejected:
         write_jsonl(output_dir / "load_rejections.jsonl", rejected)
     write_json(output_dir / "audit_summary.json", summary)
