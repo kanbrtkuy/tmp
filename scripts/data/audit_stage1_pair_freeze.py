@@ -68,6 +68,15 @@ def stable_hash(value: str, n: int = 16) -> str:
 
 
 def read_jsonl(path: Path, *, tolerate_partial_tail: bool = False) -> list[dict[str, Any]]:
+    return read_jsonl_with_rejections(path, tolerate_partial_tail=tolerate_partial_tail, rejections=None)
+
+
+def read_jsonl_with_rejections(
+    path: Path,
+    *,
+    tolerate_partial_tail: bool = False,
+    rejections: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
         lines = list(handle)
@@ -79,6 +88,14 @@ def read_jsonl(path: Path, *, tolerate_partial_tail: bool = False) -> list[dict[
                 rows.append(json.loads(line))
             except json.JSONDecodeError as exc:
                 if tolerate_partial_tail and line_no == len(lines):
+                    if rejections is not None:
+                        rejections.append(
+                            {
+                                "input_path": str(path),
+                                "drop_reason": "partial_tail_dropped",
+                                "line_no": line_no,
+                            }
+                        )
                     break
                 raise ValueError(f"invalid JSON at {path}:{line_no}") from exc
     return rows
@@ -304,7 +321,11 @@ def load_pairs(
     rejected: list[dict[str, Any]] = []
     input_stats: dict[str, Any] = {}
     for path in paths:
-        rows = read_jsonl(path, tolerate_partial_tail=tolerate_partial_tail)
+        rows = read_jsonl_with_rejections(
+            path,
+            tolerate_partial_tail=tolerate_partial_tail,
+            rejections=rejected,
+        )
         input_stats[str(path)] = {"n_rows": len(rows)}
         if not rows:
             rejected.append({"input_path": str(path), "drop_reason": "empty_input_file"})
@@ -605,16 +626,17 @@ def count_by_source(rows: list[dict[str, Any]], predicate) -> dict[str, int]:
 
 
 def build_source_readiness(counts: dict[str, int]) -> dict[str, Any]:
+    aggregate_key = "reasoningshield+harmthoughts"
+    base_sources = (set(SOURCE_TARGETS) | set(counts)) - {aggregate_key}
     readiness = {
-        source: {"n": n, **source_threshold_status(source, n)}
-        for source, n in sorted(counts.items())
+        source: {"n": counts.get(source, 0), **source_threshold_status(source, counts.get(source, 0))}
+        for source in sorted(base_sources)
     }
     rs_ht_n = counts.get("reasoningshield", 0) + counts.get("harmthoughts", 0)
-    if rs_ht_n or "reasoningshield" in counts or "harmthoughts" in counts:
-        readiness["reasoningshield+harmthoughts"] = {
-            "n": rs_ht_n,
-            **source_threshold_status("reasoningshield+harmthoughts", rs_ht_n),
-        }
+    readiness[aggregate_key] = {
+        "n": rs_ht_n,
+        **source_threshold_status(aggregate_key, rs_ht_n),
+    }
     return readiness
 
 
@@ -776,11 +798,11 @@ def snapshot_inputs(input_paths: list[Path], output_dir: Path) -> list[Path]:
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     snapped: list[Path] = []
     used_names: Counter[str] = Counter()
-    for path in input_paths:
-        name = path.name
+    for index, path in enumerate(input_paths):
+        name = f"{index:03d}_{path.name}"
         used_names[name] += 1
         if used_names[name] > 1:
-            name = f"{path.stem}.{used_names[path.name]}{path.suffix}"
+            raise RuntimeError(f"snapshot target name collision: {name}")
         target = snapshot_dir / name
         shutil.copy2(path, target)
         snapped.append(target)

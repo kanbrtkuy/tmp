@@ -195,3 +195,12 @@ def test_same_source_duplicate_prefers_clean_canonical(tmp_path):
     keep_ids = [row["pair_id"] for row in rows if row["main_keep"]]
     assert keep_ids == ["b::pair"]
     assert summary["n_main_keep"] == 1
+
+
+def test_source_readiness_includes_zero_count_registered_sources():
+    readiness = audit.build_source_readiness({"wildjailbreak_vanilla_harmful": 10})
+    assert readiness["reasoningshield"]["n"] == 0
+    assert readiness["reasoningshield"]["status"] == "below_min"
+    assert readiness["harmthoughts"]["n"] == 0
+    assert readiness["reasoningshield+harmthoughts"]["n"] == 0
+    assert readiness["reasoningshield+harmthoughts"]["status"] == "below_min"
