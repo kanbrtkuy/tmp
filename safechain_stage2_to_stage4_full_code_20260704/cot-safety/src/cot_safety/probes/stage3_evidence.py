@@ -89,6 +89,7 @@ def build_stage3_evidence_report(
     *,
     metric: str = "test_auroc",
     selection_metric: str = "val_auroc",
+    on_policy_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     groups = evidence_position_groups(config)
     best_pause = best_row(rows, groups["pause"], selection_metric)
@@ -132,6 +133,9 @@ def build_stage3_evidence_report(
         pause_only_status = "fail_no_independent_pause_signal"
     confirmatory = config.get("probe", {}).get("confirmatory_endpoint", {})
     on_policy = config.get("probe", {}).get("on_policy", {})
+    confirmatory_status = confirmatory.get("status", "not_implemented")
+    if on_policy_report is not None:
+        confirmatory_status = str(on_policy_report.get("status") or "unknown")
     return {
         "status": status,
         "metric": metric,
@@ -154,8 +158,9 @@ def build_stage3_evidence_report(
         },
         "confirmatory_endpoint": {
             "name": confirmatory.get("name", "within_prompt_auroc"),
-            "status": confirmatory.get("status", "not_implemented"),
+            "status": confirmatory_status,
             "on_policy_enabled": bool(on_policy.get("enabled", False)),
+            "report": on_policy_report,
             "note": (
                 "Teacher-forced evidence is only a screen. Confirmatory evidence still "
                 "requires on-policy generation and CoT-segment judge labels."

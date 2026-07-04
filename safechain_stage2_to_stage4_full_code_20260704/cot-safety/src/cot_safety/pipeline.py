@@ -153,6 +153,25 @@ def plan_for_config(config: dict[str, Any]) -> list[PipelineStep]:
                     "teacher-forced screen, not the within-prompt on-policy confirmation."
                 ),
             ),
+            PipelineStep(
+                name="stage3_on_policy_confirmatory",
+                stage="stage3",
+                action="confirmatory_evidence",
+                command=[
+                    "python",
+                    "scripts/run_stage3_on_policy_confirmatory.py",
+                    "--config",
+                    "<config>",
+                    "--train_npz",
+                    "<on-policy-train-hidden-npz>",
+                    "--test_npz",
+                    "<on-policy-test-hidden-npz>",
+                ],
+                notes=(
+                    "Confirm pause-state signal on sampled on-policy generations using per-generation "
+                    "CoT judge labels and within-prompt AUROC. This is the prompt-classification guardrail."
+                ),
+            ),
         ]
 
     if steering:

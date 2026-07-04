@@ -44,3 +44,15 @@ def test_stage3_evidence_fails_when_prompt_baseline_matches_pause():
     report = build_stage3_evidence_report(rows, base_config())
     assert report["status"] == "fail_no_independent_pause_signal"
     assert report["best"]["prompt_baseline"]["position"] == "pre_think"
+
+
+def test_stage3_evidence_attaches_on_policy_confirmatory_report():
+    rows = [
+        {"model": "linear", "position": "pause_0", "layer": 14, "val_auroc": 0.81, "test_auroc": 0.82},
+        {"model": "linear", "position": "last_prompt_token", "layer": 14, "val_auroc": 0.71, "test_auroc": 0.70},
+        {"model": "linear", "position": "control_cot_3", "layer": 14, "val_auroc": 0.75, "test_auroc": 0.74},
+    ]
+    on_policy = {"status": "pass", "endpoint": "on_policy_within_prompt_auroc"}
+    report = build_stage3_evidence_report(rows, base_config(), on_policy_report=on_policy)
+    assert report["confirmatory_endpoint"]["status"] == "pass"
+    assert report["confirmatory_endpoint"]["report"] == on_policy

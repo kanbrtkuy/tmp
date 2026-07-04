@@ -34,3 +34,4 @@ probe:
     label_source: cot_segment_judge
     primary_endpoint: within_prompt_auroc
     status: not_implemented
+    layer: 20
