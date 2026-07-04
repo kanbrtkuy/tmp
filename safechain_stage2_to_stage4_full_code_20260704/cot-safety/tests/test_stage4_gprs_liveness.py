@@ -48,18 +48,54 @@ def test_liveness_decision_from_status_map():
     assert liveness_decision({"test_status": {"injection_gain": "green", "kv_ablation": "green"}}) == "green"
     assert liveness_decision({"test_status": {"injection_gain": "yellow", "kv_ablation": "green"}}) == "yellow"
     assert liveness_decision({"test_status": {"injection_gain": "red", "kv_ablation": "green"}}) == "red"
+    assert liveness_decision({"test_status": {"injection_gain": "green"}}, required_tests=["injection_gain", "attention_mass"]) == "incomplete"
+    assert (
+        liveness_decision(
+            {
+                "metrics": {
+                    "injection_gain": {
+                        "pause_vs_content_gain": 0.30,
+                        "pause_vs_bos_gain": 6.0,
+                    }
+                }
+            },
+            required_tests=["injection_gain"],
+            gate={"min_pause_vs_content_gain": 0.25, "min_pause_vs_bos_gain": 5.0},
+        )
+        == "green"
+    )
 
 
 def test_liveness_gate_status_reads_report_and_fails_closed(tmp_path):
-    config = {"run": {"output_dir": str(tmp_path / "run")}}
+    config = {
+        "run": {"output_dir": str(tmp_path / "run")},
+        "model": {"sft_checkpoint": "stage2-kl"},
+        "liveness": {
+            "tests": ["injection_gain"],
+            "controls": {"positive_control_model": "full-sft"},
+        },
+    }
     path = liveness_report_path(config, base_dir=tmp_path)
     assert path == tmp_path / "run" / "liveness_report.json"
     assert liveness_gate_status(config, base_dir=tmp_path)["decision"] == "missing"
 
     path.parent.mkdir(parents=True)
-    path.write_text('{"decision": "yellow"}\n', encoding="utf-8")
+    path.write_text(
+        (
+            '{"model_under_test":"stage2-kl",'
+            '"test_status":{"injection_gain":"yellow"},'
+            '"positive_control":{"decision":"green"}}\n'
+        ),
+        encoding="utf-8",
+    )
     assert liveness_gate_status(config, base_dir=tmp_path)["ready"] is True
     assert liveness_gate_status(config, base_dir=tmp_path, allow_yellow=False)["ready"] is False
+
+    path.write_text(
+        '{"model_under_test":"other","test_status":{"injection_gain":"green"},"positive_control":{"decision":"green"}}\n',
+        encoding="utf-8",
+    )
+    assert liveness_gate_status(config, base_dir=tmp_path)["ready"] is False
 
 
 def test_validate_gprs_config_requires_artifacts():

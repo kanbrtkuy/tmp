@@ -88,12 +88,13 @@ def build_stage3_evidence_report(
     config: dict[str, Any],
     *,
     metric: str = "test_auroc",
+    selection_metric: str = "val_auroc",
 ) -> dict[str, Any]:
     groups = evidence_position_groups(config)
-    best_pause = best_row(rows, groups["pause"], metric)
-    best_post_pause = best_row(rows, groups["post_pause"], metric)
-    best_prompt = best_row(rows, groups["prompt_baseline"], metric)
-    best_control = best_row(rows, groups["true_content_control"], metric)
+    best_pause = best_row(rows, groups["pause"], selection_metric)
+    best_post_pause = best_row(rows, groups["post_pause"], selection_metric)
+    best_prompt = best_row(rows, groups["prompt_baseline"], selection_metric)
+    best_control = best_row(rows, groups["true_content_control"], selection_metric)
     candidate_main = [row for row in (best_pause, best_post_pause) if row is not None]
     best_main = max(candidate_main, key=lambda row: _to_float(row.get(metric))) if candidate_main else None
     baseline_values = [
@@ -105,6 +106,10 @@ def build_stage3_evidence_report(
     main_value = _to_float(best_main.get(metric)) if best_main is not None else math.nan
     margin = main_value - best_baseline if not math.isnan(main_value) and not math.isnan(best_baseline) else math.nan
     min_margin = float(config.get("probe", {}).get("min_pause_margin_over_baselines", 0.0))
+    pause_value = _to_float(best_pause.get(metric)) if best_pause is not None else math.nan
+    pause_only_margin = (
+        pause_value - best_baseline if not math.isnan(pause_value) and not math.isnan(best_baseline) else math.nan
+    )
     if best_main is None:
         status = "missing_pause_result"
     elif best_prompt is None:
@@ -115,11 +120,22 @@ def build_stage3_evidence_report(
         status = "pass"
     else:
         status = "fail_no_independent_pause_signal"
+    if best_pause is None:
+        pause_only_status = "missing_pause_result"
+    elif best_prompt is None:
+        pause_only_status = "missing_prompt_baseline"
+    elif best_control is None:
+        pause_only_status = "missing_true_content_control"
+    elif pause_only_margin > min_margin:
+        pause_only_status = "pass"
+    else:
+        pause_only_status = "fail_no_independent_pause_signal"
     confirmatory = config.get("probe", {}).get("confirmatory_endpoint", {})
     on_policy = config.get("probe", {}).get("on_policy", {})
     return {
         "status": status,
         "metric": metric,
+        "selection_metric": selection_metric,
         "min_pause_margin_over_baselines": min_margin,
         "position_groups": groups,
         "best": {
@@ -130,6 +146,12 @@ def build_stage3_evidence_report(
             "true_content_control": compact_row(best_control, metric),
         },
         "pause_minus_best_baseline": margin,
+        "pause_only_margin": pause_only_margin,
+        "pause_only_status": pause_only_status,
+        "confidence_interval": {
+            "status": "not_available_from_summary_grid",
+            "note": "Selection uses validation AUROC and reports test AUROC margin; bootstrap CI requires per-example scores.",
+        },
         "confirmatory_endpoint": {
             "name": confirmatory.get("name", "within_prompt_auroc"),
             "status": confirmatory.get("status", "not_implemented"),

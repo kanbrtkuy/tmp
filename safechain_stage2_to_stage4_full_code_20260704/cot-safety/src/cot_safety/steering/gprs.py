@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -35,9 +36,19 @@ def validate_gprs_config(config: dict[str, Any]) -> dict[str, Any]:
         "direction_artifact": str(gprs["direction_artifact"]),
         "safe_centroid": str(gprs["safe_centroid"]),
         "probe_checkpoint": str(gprs["probe_checkpoint"]),
+        "artifact_manifest": str(gprs.get("artifact_manifest", "")),
+        "stage3_evidence_report": str(gprs.get("stage3_evidence_report", "")),
         "norm_cap": norm_cap,
         "gate_threshold": gate_threshold,
     }
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected a JSON object: {path}")
+    return payload
 
 
 def gprs_artifact_status(
@@ -52,12 +63,36 @@ def gprs_artifact_status(
         key: _resolve_path(str(meta[key]), base_dir=base_dir)
         for key in ("direction_artifact", "safe_centroid", "probe_checkpoint")
     }
+    manifest_path = (
+        _resolve_path(str(meta["artifact_manifest"]), base_dir=base_dir)
+        if meta.get("artifact_manifest")
+        else paths["direction_artifact"].parent / "gprs_artifact_manifest.json"
+    )
     missing = [key for key, path in paths.items() if not path.exists()]
+    manifest: dict[str, Any] = {}
+    evidence_ready = False
+    evidence_status = "missing_manifest" if not manifest_path.exists() else "missing_stage3_evidence"
+    pause_only_status = "missing_manifest" if not manifest_path.exists() else "missing_stage3_evidence"
+    if not missing:
+        if not manifest_path.exists():
+            missing.append("artifact_manifest")
+        else:
+            manifest = read_json(manifest_path)
+            stage3 = manifest.get("stage3_evidence") or {}
+            evidence_status = str(stage3.get("status") or "")
+            pause_only_status = str(stage3.get("pause_only_status") or "")
+            evidence_ready = evidence_status == "pass" and pause_only_status == "pass"
+            if not evidence_ready:
+                missing.append("stage3_evidence_pass")
     return {
         "method": meta["method"],
         "ready": not missing,
         "paths": {key: str(path) for key, path in paths.items()},
+        "artifact_manifest": str(manifest_path),
         "missing": missing,
+        "stage3_evidence_status": evidence_status,
+        "stage3_pause_only_status": pause_only_status,
+        "stage3_evidence_ready": evidence_ready,
         "gate_threshold": meta["gate_threshold"],
         "norm_cap": meta["norm_cap"],
     }
@@ -66,7 +101,12 @@ def gprs_artifact_status(
 def require_gprs_artifacts(config: dict[str, Any], *, base_dir: Path | None = None) -> dict[str, Any]:
     status = gprs_artifact_status(config, base_dir=base_dir)
     if not status["ready"]:
-        missing = ", ".join(f"{key}={status['paths'][key]}" for key in status["missing"])
+        missing = ", ".join(
+            f"{key}={status['paths'][key]}"
+            if key in status["paths"]
+            else f"{key}={status.get(key) or status.get('artifact_manifest', '')}"
+            for key in status["missing"]
+        )
         raise FileNotFoundError(f"GPRS artifacts are missing: {missing}")
     return status
 

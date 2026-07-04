@@ -24,6 +24,13 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def read_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected a JSON object: {path}")
+    return payload
+
+
 def select_state_block(npz_path: Path, *, layer: int, positions: list[str]) -> tuple[Any, Any, dict[str, Any]]:
     import numpy as np
 
@@ -32,6 +39,7 @@ def select_state_block(npz_path: Path, *, layer: int, positions: list[str]) -> t
         labels = np.asarray(data["labels"], dtype=np.int64)
         layer_ids = [int(item) for item in data["layer_ids"].tolist()]
         position_names = [str(item) for item in data["position_names"].tolist()]
+        valid_mask = np.asarray(data["valid_mask"], dtype=bool) if "valid_mask" in data.files else None
     if layer not in layer_ids:
         raise ValueError(f"Layer {layer} not found in {npz_path}; available={layer_ids}")
     missing = [position for position in positions if position not in position_names]
@@ -39,8 +47,11 @@ def select_state_block(npz_path: Path, *, layer: int, positions: list[str]) -> t
         raise ValueError(f"Positions missing from {npz_path}: {missing}; available={position_names}")
     layer_idx = layer_ids.index(layer)
     pos_idx = [position_names.index(position) for position in positions]
-    states = features[:, layer_idx, pos_idx, :].mean(axis=1)
     keep = labels >= 0
+    if valid_mask is not None:
+        keep &= valid_mask[:, pos_idx].all(axis=1)
+    n_dropped_invalid = int((labels >= 0).sum() - keep.sum())
+    states = features[:, layer_idx, pos_idx, :].mean(axis=1)
     states = states[keep]
     labels = labels[keep]
     if not (labels == 0).any() or not (labels == 1).any():
@@ -52,6 +63,7 @@ def select_state_block(npz_path: Path, *, layer: int, positions: list[str]) -> t
         "n_rows": int(labels.shape[0]),
         "n_safe": int((labels == 0).sum()),
         "n_unsafe": int((labels == 1).sum()),
+        "n_dropped_invalid_positions": n_dropped_invalid,
     }
     return states, labels, meta
 
@@ -63,10 +75,18 @@ def build_artifacts(
     centroid_path: Path,
     probe_target: Path,
     probe_source: Path | None,
+    stage3_evidence_report: Path,
     layer: int,
     positions: list[str],
     manifest_path: Path,
 ) -> dict[str, Any]:
+    evidence = read_json(stage3_evidence_report)
+    if evidence.get("status") != "pass" or evidence.get("pause_only_status") != "pass":
+        raise SystemExit(
+            "Refusing to build GPRS artifacts because Stage3 evidence did not pass: "
+            f"status={evidence.get('status')} pause_only_status={evidence.get('pause_only_status')} "
+            f"report={stage3_evidence_report}"
+        )
     import torch
 
     states, labels, meta = select_state_block(hidden_npz, layer=layer, positions=positions)
@@ -88,6 +108,16 @@ def build_artifacts(
     if probe_source is not None:
         if not probe_source.exists():
             raise FileNotFoundError(f"Probe checkpoint source is missing: {probe_source}")
+        probe_payload = torch.load(probe_source, map_location="cpu")
+        if isinstance(probe_payload, dict):
+            probe_layers = [int(item) for item in probe_payload.get("layers", []) or []]
+            probe_positions = [str(item) for item in probe_payload.get("positions", []) or []]
+            if probe_layers and layer not in probe_layers:
+                raise ValueError(f"Probe checkpoint layers {probe_layers} do not include steering layer {layer}.")
+            if probe_positions and set(probe_positions) != set(positions):
+                raise ValueError(
+                    f"Probe checkpoint positions {probe_positions} do not match requested positions {positions}."
+                )
         if probe_source.resolve() != probe_target.resolve():
             shutil.copy2(probe_source, probe_target)
     elif not probe_target.exists():
@@ -100,6 +130,16 @@ def build_artifacts(
         "direction_artifact": str(direction_path),
         "safe_centroid": str(centroid_path),
         "probe_checkpoint": str(probe_target),
+        "direction_provenance": "teacher_forced_prompt_labels",
+        "stage3_evidence": {
+            "path": str(stage3_evidence_report),
+            "status": evidence.get("status"),
+            "pause_only_status": evidence.get("pause_only_status"),
+            "pause_minus_best_baseline": evidence.get("pause_minus_best_baseline"),
+            "pause_only_margin": evidence.get("pause_only_margin"),
+            "selection_metric": evidence.get("selection_metric"),
+            "metric": evidence.get("metric"),
+        },
         "direction_norm_before_normalization": direction_norm,
         **meta,
     }
@@ -113,6 +153,7 @@ def main() -> None:
     )
     parser.add_argument("--config", default="configs/experiment/stage4_pause_gprs.yaml")
     parser.add_argument("--hidden_npz", required=True, help="Stage3 hidden NPZ, usually the train split.")
+    parser.add_argument("--stage3_evidence_report", default=None)
     parser.add_argument("--positions", default=None, help="Comma-separated positions. Defaults to steering.target_positions.")
     parser.add_argument("--layer", type=int, default=None)
     parser.add_argument("--probe_checkpoint_source", default=None)
@@ -137,6 +178,10 @@ def main() -> None:
     direction_path = resolve_repo_path(meta["direction_artifact"])
     centroid_path = resolve_repo_path(meta["safe_centroid"])
     probe_target = resolve_repo_path(meta["probe_checkpoint"])
+    evidence_report_raw = args.stage3_evidence_report or meta.get("stage3_evidence_report") or ""
+    if not str(evidence_report_raw).strip():
+        raise SystemExit("GPRS artifact builder requires --stage3_evidence_report or steering.gprs.stage3_evidence_report.")
+    evidence_report = resolve_repo_path(str(evidence_report_raw))
     probe_source = resolve_repo_path(args.probe_checkpoint_source) if args.probe_checkpoint_source else None
     manifest_path = (
         resolve_repo_path(args.manifest_json)
@@ -151,6 +196,7 @@ def main() -> None:
         "safe_centroid": str(centroid_path),
         "probe_checkpoint": str(probe_target),
         "probe_checkpoint_source": str(probe_source) if probe_source else "",
+        "stage3_evidence_report": str(evidence_report),
         "manifest_json": str(manifest_path),
     }
     if args.dry_run:
@@ -162,6 +208,7 @@ def main() -> None:
         centroid_path=centroid_path,
         probe_target=probe_target,
         probe_source=probe_source,
+        stage3_evidence_report=evidence_report,
         layer=layer,
         positions=positions,
         manifest_path=manifest_path,

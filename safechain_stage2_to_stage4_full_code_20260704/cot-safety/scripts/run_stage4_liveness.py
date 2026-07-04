@@ -60,7 +60,11 @@ def main() -> None:
     if args.metrics_json:
         metrics_path = Path(args.metrics_json)
         report = read_json(metrics_path)
-        decision = liveness_decision(report)
+        decision = liveness_decision(
+            report,
+            required_tests=[str(item) for item in liveness.get("tests", [])],
+            gate=liveness.get("gate") or {},
+        )
         payload = {
             "status": decision,
             "decision": decision,

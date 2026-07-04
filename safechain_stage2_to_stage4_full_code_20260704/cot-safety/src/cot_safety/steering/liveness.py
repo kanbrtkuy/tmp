@@ -62,7 +62,34 @@ def liveness_plan_status(plan: dict[str, Any], *, dry_run: bool) -> str:
     return "planned" if dry_run else "not_run"
 
 
-def liveness_decision(report: dict[str, Any]) -> str:
+def _completed_report(report: dict[str, Any]) -> dict[str, Any]:
+    nested = report.get("report")
+    return nested if isinstance(nested, dict) else report
+
+
+def _metric_status(test_name: str, report: dict[str, Any], gate: dict[str, Any] | None) -> str | None:
+    metrics = report.get("metrics") or {}
+    payload = metrics.get(test_name) if isinstance(metrics, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    if test_name == "injection_gain":
+        min_content = float((gate or {}).get("min_pause_vs_content_gain", 0.25))
+        min_bos = float((gate or {}).get("min_pause_vs_bos_gain", 5.0))
+        content = payload.get("pause_vs_content_gain")
+        bos = payload.get("pause_vs_bos_gain")
+        if content is None or bos is None:
+            return "incomplete"
+        return "green" if float(content) >= min_content and float(bos) >= min_bos else "red"
+    status = payload.get("status") or payload.get("decision")
+    return str(status).lower() if status else None
+
+
+def liveness_decision(
+    report: dict[str, Any],
+    *,
+    required_tests: list[str] | None = None,
+    gate: dict[str, Any] | None = None,
+) -> str:
     """Return green/yellow/red/not_run for a completed liveness report.
 
     The first framework version accepts either an explicit top-level decision
@@ -70,13 +97,34 @@ def liveness_decision(report: dict[str, Any]) -> str:
     later without changing downstream orchestration.
     """
 
+    report = _completed_report(report)
     explicit = report.get("decision")
+    statuses = dict(report.get("test_status") or {})
+    if required_tests:
+        normalized_statuses: dict[str, str] = {}
+        missing = []
+        for test in required_tests:
+            metric_status = _metric_status(test, report, gate)
+            status = metric_status or statuses.get(test)
+            if not status:
+                missing.append(test)
+                continue
+            normalized_statuses[test] = str(status).lower()
+        if missing:
+            return "incomplete"
+        values = set(normalized_statuses.values())
+        if "red" in values:
+            return "red"
+        if "yellow" in values:
+            return "yellow"
+        if values == {"green"}:
+            return "green"
+        return "unknown"
     if explicit:
         normalized = str(explicit).strip().lower()
         if normalized in {"green", "yellow", "red", "not_run"}:
             return normalized
         return "unknown"
-    statuses = report.get("test_status") or {}
     if not statuses:
         return "not_run"
     values = {str(value).lower() for value in statuses.values()}
@@ -120,11 +168,29 @@ def liveness_gate_status(
     if not path.exists():
         return {"ready": False, "decision": "missing", "path": str(path)}
     report = read_liveness_report(path)
-    decision = liveness_decision(report)
+    expected = liveness_config(config)
+    required_tests = [str(item) for item in expected.get("tests", [])]
+    gate = expected.get("gate") or {}
+    decision = liveness_decision(report, required_tests=required_tests, gate=gate)
     allowed = {"green", "yellow"} if allow_yellow else {"green"}
+    completed = _completed_report(report)
+    expected_model = str(expected.get("model_under_test") or "")
+    report_model = str(completed.get("model_under_test") or "")
+    model_matches = bool(expected_model and report_model and expected_model == report_model)
+    positive_control_ready = True
+    if gate.get("require_positive_control_green", True):
+        positive_control = completed.get("positive_control") or {}
+        positive_decision = liveness_decision(positive_control) if isinstance(positive_control, dict) else "missing"
+        positive_control_ready = positive_decision == "green"
+    ready = decision in allowed and model_matches and positive_control_ready
     return {
-        "ready": decision in allowed,
+        "ready": ready,
         "decision": decision,
         "path": str(path),
         "allow_yellow": allow_yellow,
+        "required_tests": required_tests,
+        "model_under_test": expected_model,
+        "report_model_under_test": report_model,
+        "model_matches": model_matches,
+        "positive_control_ready": positive_control_ready,
     }
