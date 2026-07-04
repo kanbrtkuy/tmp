@@ -300,6 +300,17 @@ def split_specs(args: argparse.Namespace, layers: list[int]) -> dict[str, SplitS
     return specs
 
 
+def matched_control_path(input_json: Path) -> Path:
+    parts = list(input_json.parts)
+    if "cotpause_shards" in parts:
+        idx = parts.index("cotpause_shards")
+        parts[idx] = "nopause_shards"
+        return Path(*parts)
+    if input_json.parent.name == "cotpause":
+        return input_json.parent.parent / "nopause" / input_json.name
+    return input_json.with_name(input_json.stem + ".nopause_matched.json")
+
+
 def run_base_data_prep(args: argparse.Namespace) -> None:
     cmd = [
         args.python,
@@ -405,6 +416,7 @@ def extraction_cmd(args: argparse.Namespace, spec: SplitSpec, layers: list[int],
         args.save_dtype,
         "--trust_remote_code",
     ]
+    cmd.extend(["--matched_control_file", str(matched_control_path(spec.input_json))])
     if args.prompt_positions:
         cmd.extend(["--prompt_positions", args.prompt_positions])
     if args.hidden_compression == "compressed":
@@ -430,22 +442,44 @@ def split_train_json(args: argparse.Namespace, train_spec: SplitSpec) -> list[Pa
     rows = read_json(train_spec.input_json)
     if not isinstance(rows, list):
         raise ValueError(f"Expected {train_spec.input_json} to contain a JSON list.")
+    control_path = matched_control_path(train_spec.input_json)
+    control_rows_by_id: dict[str, dict[str, Any]] = {}
+    if control_path.exists():
+        control_rows = read_json(control_path)
+        if not isinstance(control_rows, list):
+            raise ValueError(f"Expected {control_path} to contain a JSON list.")
+        control_rows_by_id = {
+            str(row.get("id")): row for row in control_rows if str(row.get("id") or "")
+        }
     shard_dir = Path(args.data_dir) / "cotpause_shards" / "train"
+    control_shard_dir = Path(args.data_dir) / "nopause_shards" / "train"
     shard_dir.mkdir(parents=True, exist_ok=True)
+    control_shard_dir.mkdir(parents=True, exist_ok=True)
     buckets: list[list[dict[str, Any]]] = [[] for _ in range(args.extract_train_shards)]
+    control_buckets: list[list[dict[str, Any]]] = [[] for _ in range(args.extract_train_shards)]
     for idx, row in enumerate(rows):
-        buckets[idx % args.extract_train_shards].append(row)
+        bucket_idx = idx % args.extract_train_shards
+        buckets[bucket_idx].append(row)
+        control_row = control_rows_by_id.get(str(row.get("id")))
+        if control_row is not None:
+            control_buckets[bucket_idx].append(control_row)
 
     paths = []
     for idx, bucket in enumerate(buckets):
         path = shard_dir / f"train.shard{idx}.json"
         write_json(path, bucket)
+        if control_rows_by_id:
+            write_json(control_shard_dir / f"train.shard{idx}.json", control_buckets[idx])
         paths.append(path)
     return paths
 
 
 def train_shard_specs(args: argparse.Namespace, train_spec: SplitSpec, layers: list[int]) -> list[SplitSpec]:
-    shard_paths = split_train_json(args, train_spec)
+    if args.dry_run and not train_spec.input_json.exists():
+        shard_dir = Path(args.data_dir) / "cotpause_shards" / "train"
+        shard_paths = [shard_dir / f"train.shard{idx}.json" for idx in range(args.extract_train_shards)]
+    else:
+        shard_paths = split_train_json(args, train_spec)
     hidden_dir = Path(args.hidden_dir)
     suffix = layer_suffix(layers)
     specs = []

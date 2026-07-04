@@ -55,4 +55,5 @@ sft:
     require_pause_before_continuation_kl: true
     assert_rows_only: true
     post_step_invariant_check: true
+    invariant_check_interval_steps: 50
     teacher_eval_mode: true

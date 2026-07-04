@@ -27,10 +27,18 @@ def main() -> None:
         "configs/experiment/stage2_intra_pause_sft_8b_cot3_control_4xa100.yaml",
         "configs/experiment/stage2_intra_pause_format_only_8b_cot4_4xa100.yaml",
         "configs/experiment/stage2_intra_pause_format_only_8b_cot3_4xa100.yaml",
+        "configs/experiment/stage2_intra_pause_kl_transparent_emit_1p5b_cot3_save25_max400_4xa6000.yaml",
+        "configs/experiment/stage2_intra_pause_kl_transparent_emit_8b_cot4_save50_max400_4xa100.yaml",
         "configs/experiment/stage2_model_comparison_eval.yaml",
         "configs/experiment/stage2_model_comparison_eval_8b_4xa100.yaml",
+        "configs/experiment/stage2_model_comparison_eval_1p5b_kl_transparent_emit_cot3_4xa6000.yaml",
+        "configs/experiment/stage2_model_comparison_eval_8b_kl_transparent_emit_cot4_4xa100.yaml",
         "configs/experiment/stage3_intra_pause_probe.yaml",
+        "configs/experiment/stage3_intra_pause_probe_kl_transparent_1p5b_cot3.yaml",
+        "configs/experiment/stage3_intra_pause_probe_kl_transparent_8b_cot4_4xa100.yaml",
         "configs/experiment/stage4_pause_steering.yaml",
+        "configs/experiment/stage4_pause_gprs.yaml",
+        "configs/experiment/stage4_pause_gprs_8b_4xa100.yaml",
     ]:
         cfg = load_config(path)
         assert "model" in cfg or cfg.get("eval", {}).get("model_conditions") is not None, path
@@ -47,7 +55,7 @@ def main() -> None:
     assert info["parse_status"] == "explicit_think"
     assert positions["pause_0"] == 4
     assert positions["post_pause_1"] == 7
-    assert positions["control_cot_3"] == 7
+    assert "control_cot_3" not in positions
 
     validate_no_pre_post_or_cot_targets(["pause_0", "pause_1", "pause_2"])
 

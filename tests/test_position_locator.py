@@ -14,7 +14,7 @@ class DummyTokenizer:
         return mapping.get(ids[0], f"tok{ids[0]}")
 
 
-def test_locate_intra_pause_positions_and_controls():
+def test_locate_intra_pause_positions_without_alias_controls():
     # <think> tok1 tok2 tok3 <pause><pause><pause> tok4 tok5 tok6 </think>
     input_ids = [10, 1, 2, 3, 99, 99, 99, 4, 5, 6, 11]
     positions, info = locate_intra_cot_positions(
@@ -35,5 +35,5 @@ def test_locate_intra_pause_positions_and_controls():
     assert positions["post_pause_1"] == 7
     assert positions["cot_0"] == 7
     assert positions["cot_1"] == 8
-    assert positions["control_cot_3"] == 7
-    assert positions["control_cot_4"] == 8
+    assert "control_cot_3" not in positions
+    assert "control_cot_4" not in positions

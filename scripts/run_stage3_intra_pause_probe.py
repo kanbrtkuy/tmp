@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 
-ENV_DEFAULT_RE = re.compile(r"\$\{([^}:]+):-([^}]+)\}")
+ENV_DEFAULT_RE = re.compile(r"\$\{([^}:]+):-([^}]*)\}")
 
 
 def resolve_value(value: Any) -> Any:
@@ -243,7 +243,7 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Stage 3 intra-pause probe from a resolved config.")
-    parser.add_argument("--config", default="configs/experiment/stage3_intra_pause_probe.yaml")
+    parser.add_argument("--config", default="configs/experiment/stage3_intra_pause_probe_kl_transparent_1p5b_cot3.yaml")
     parser.add_argument("--legacy-root", default=None)
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--skip_base_data_prep", action="store_true")

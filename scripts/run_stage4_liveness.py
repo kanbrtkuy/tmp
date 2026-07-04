@@ -32,7 +32,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from cot_safety.config import load_config
-    from cot_safety.steering.liveness import liveness_config
+    from cot_safety.steering.liveness import liveness_config, liveness_plan_status
 
     config = load_config(REPO_ROOT / args.config)
     run = config.get("run", {})
@@ -41,10 +41,11 @@ def main() -> None:
         if args.output_json
         else REPO_ROOT / str(run.get("output_dir", "runs/stage4_pause_gprs")) / "liveness_plan.json"
     )
+    liveness = liveness_config(config)
     plan = {
-        "status": "planned" if args.dry_run else "not_run",
+        "status": liveness_plan_status(liveness, dry_run=args.dry_run),
         "config": args.config,
-        "liveness": liveness_config(config),
+        "liveness": liveness,
         "next_step": (
             "Run this battery after the Stage2 kl_transparent_emit checkpoint exists; "
             "green => fixed Stage3 then GPRS; yellow => proceed on live layers only "

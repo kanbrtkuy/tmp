@@ -89,6 +89,7 @@ def bare_trainer(pause_token_id: int = 6):
     trainer.state = SimpleNamespace(global_step=1)
     trainer.args = SimpleNamespace(logging_steps=100, weight_decay=0.0)
     trainer._last_pause_kl_log_step = -1
+    trainer._pause_row_initial = {}
     trainer.log = lambda payload: None
     return trainer
 
@@ -223,6 +224,29 @@ def test_rows_only_invariant_detects_non_pause_row_mutation():
         model.get_input_embeddings().weight[2].add_(1.0)
     with pytest.raises(ValueError, match="non-pause rows changed"):
         callback.on_step_end(None, state, control, model=model)
+
+
+def test_rows_only_invariant_rechecks_after_interval_and_train_end():
+    control = SimpleNamespace()
+    model = TinyLM(vocab_size=7, hidden_size=3)
+    callback = RowsOnlyInvariantCallback(pause_token_id=6, chunk_rows=2, check_interval_steps=2)
+    callback.on_train_begin(None, SimpleNamespace(global_step=0), control, model=model)
+
+    callback.on_step_end(None, SimpleNamespace(global_step=1), control, model=model)
+    with torch.no_grad():
+        model.get_input_embeddings().weight[2].add_(1.0)
+    callback.on_step_end(None, SimpleNamespace(global_step=2), control, model=model)
+    with pytest.raises(ValueError, match="non-pause rows changed"):
+        callback.on_step_end(None, SimpleNamespace(global_step=3), control, model=model)
+
+    callback = RowsOnlyInvariantCallback(pause_token_id=6, chunk_rows=2, check_interval_steps=100)
+    model = TinyLM(vocab_size=7, hidden_size=3)
+    callback.on_train_begin(None, SimpleNamespace(global_step=0), control, model=model)
+    callback.on_step_end(None, SimpleNamespace(global_step=1), control, model=model)
+    with torch.no_grad():
+        model.get_input_embeddings().weight[3].add_(1.0)
+    with pytest.raises(ValueError, match="train end"):
+        callback.on_train_end(None, SimpleNamespace(global_step=2), control, model=model)
 
 
 def test_compute_loss_is_finite_on_batch_with_and_without_pauses():

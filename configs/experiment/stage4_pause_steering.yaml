@@ -9,6 +9,8 @@ run:
 
 steering:
   method: learned_delta
+  deprecated: true
+  acknowledge_deprecated: false
   target_positions: [pause_0, pause_1, pause_2]
   forbidden_target_prefixes: [pre_pause_, post_pause_, cot_, control_cot_]
   layer: 14
