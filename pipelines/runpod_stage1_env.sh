@@ -14,3 +14,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/runpod_base_env.sh"
 
 export COT_SAFETY_STAGE="stage1"
+
+# Stage1 runs many small probe workers. Keep per-worker BLAS thread pools
+# bounded, and raise the open-file limit when the host allows it.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-2}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-2}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-2}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-2}"
+
+ulimit -n 65535 >/dev/null 2>&1 || true
