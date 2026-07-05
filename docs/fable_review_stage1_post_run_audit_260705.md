@@ -4,6 +4,8 @@ Date: 2026-07-05
 
 This packet contains aggregate counts, artifact paths, and process notes only. It intentionally excludes raw prompts, raw completions, and unreleased experimental examples.
 
+Handoff rule: if a direct Fable review channel is blocked by platform policy, follow `docs/fable_review_handoff_protocol_260705.md`: push the sanitized packet to the GitHub tmp review repo and ask Fable to review that repo link/path.
+
 ## Review Request
 
 We need a strict external review of the current Stage1 status after an overnight automatic run. Please identify which items are formal blockers before Stage1 results can be claimed, which items can be treated as diagnostic/provisional, and the minimal remediation order.
