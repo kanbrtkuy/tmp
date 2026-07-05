@@ -8,6 +8,6 @@ Files:
 
 - `fable_review_stage1_post_run_audit_260705.md`: aggregate Stage1 post-run audit packet and review questions.
 - `fable_review_handoff_protocol_260705.md`: fallback protocol for future Fable review handoffs.
+- `fable_review_stage1_post_run_response_260705.md`: Fable response summary and remediation order.
 
 No raw prompts, raw CoT, raw completions, or unreleased example text are included.
-
