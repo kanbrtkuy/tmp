@@ -19,10 +19,8 @@ The archive covers:
 - `/workspace/logs`
 - code/config/plan/doc/test snapshots from `/workspace/cot-safety`
 
-Core experiment restoration does not depend on HuggingFace or model caches.
-Before shutdown, `/dev/shm/cot-safety-hot/hf_cache` was also uploaded as an
-optional cache snapshot. It can save future download time, but it is not unique
-experiment data and can be re-downloaded from HuggingFace.
+It intentionally does not include HuggingFace or model caches. Restore fresh
+model caches from HuggingFace rather than this archive.
 
 ## Key Prefixes
 
@@ -35,7 +33,6 @@ experiment data and can be re-downloaded from HuggingFace.
 | `runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500/` | Excluded-source lead-time confirmation outputs. |
 | `runs/dev_shm/cot-safety-hot/runs/` | Directory backup of `/dev/shm/cot-safety-hot/runs`. |
 | `runs/dev_shm/cot-safety-hot/runs.tar.gz` | Tar sidecar of the same `/dev/shm` runs directory. |
-| `runs/dev_shm/cot-safety-hot/hf_cache/` | Optional HuggingFace cache blob snapshot. It is not required for experiment restore; HF snapshot symlinks were not archived as a tar sidecar. |
 | `manifest/r2_full_backup_260705/` | Backup logs, status, manifests, and final size records. |
 | `configs/`, `scripts/`, `pipelines/`, `src/`, `tests/`, `legacy/` | RunPod code/config/test snapshots. |
 | `plan/`, `docs/`, `res/`, `review-stage/` | Planning, archive docs, result summaries, and Fable reviews. |
@@ -53,23 +50,6 @@ Final R2 size after the fix:
 ```text
 Total objects: 38.469k (38469)
 Total size: 64.545 GiB (69304583047 Byte)
-```
-
-An optional `/dev/shm/cot-safety-hot/hf_cache` blob snapshot was then uploaded
-before shutdown:
-
-```text
-/dev/shm/cot-safety-hot/hf_cache
-  -> runs/dev_shm/cot-safety-hot/hf_cache
-  0 differences, 17 matching files
-  Total size: 14.966 GiB (16070067110 Byte)
-```
-
-R2 size including that optional cache:
-
-```text
-Total objects: 38.486k (38486)
-Total size: 79.511 GiB (85374650157 Byte)
 ```
 
 One-way size checks before shutdown:
