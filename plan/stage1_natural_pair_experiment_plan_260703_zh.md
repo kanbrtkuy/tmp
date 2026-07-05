@@ -126,6 +126,42 @@ docs/fable_decision_review_stage1_retune12288_b20_260705.md
 res/stage1_post_hb_retune12288_b20_results_260705_zh.md
 ```
 
+## 2026-07-05 Post-HB Stage1 最终状态更新
+
+上述 CPU-only gates 和后续确认实验已经完成：
+
+- threshold/calibration reanalysis：hidden balanced accuracy 可从约 `0.604`
+  提升到约 `0.708-0.710`，但这是 operating-point 修正，不改变 AUROC，也不让
+  hidden 超过 surface/length controls。
+- matched-horizon reanalysis：pooled hidden-minus-text delta 在 `k=4` 为
+  `+0.0584`，但 `k=8` 起不稳定或为负，`k=16/32/64` 明显不支持 hidden
+  优势。
+- A1 score pooling：`k=4` 和 `k=8` 有早期正向 diagnostic。
+- A2 feature pooling：Fable-5 要求的 preregistered feature-level rerun
+  未确认 A1；`k=8` delta 为 `-0.0235` 且 CI 全负，触发
+  `STOP_EQUAL_HORIZON_AND_PIVOT`。
+- excluded-source lead-time confirmation：在 `strongreject_full` 和
+  `reasoningshield` 上运行 A1/A2，最终 `confirmed=false`，
+  `decision=drop_leadtime_claim`；Fable-5 复审确认该决策正确。
+
+因此，Stage1 当前最终状态是：
+
+```text
+negative/control result
+no more equal-horizon or lead-time rescue on this frozen test set
+```
+
+更新后的结果总览见：
+
+```text
+res/stage1_experiment_inventory_results_260705_zh.md
+review-stage/stage1_auto_improve_260705/fable5_excluded_leadtime_results_review_260705.md
+```
+
+后续如果要追求 positive result，必须进入 fresh preregistered setting，例如
+Stage2/on-policy 或新的 fresh-data follow-up；不能继续在当前 frozen test set
+上寻找 positive cell。
+
 ## 当前解释原则
 
 - A prime 更像是失败案例：它说明当 rewrite/style artifact 存在时，hidden probe 可以接近完美。
