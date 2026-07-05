@@ -1,0 +1,27 @@
+{
+  "stage": "A2_feature_level_cumulative_pooling",
+  "pooling_rule": "unweighted mean of layer-28 hidden vectors over snapshot positions j <= k",
+  "future_positions_forbidden": true,
+  "selected_layer_fixed": 28,
+  "k_grid": [
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "holm_family": [
+    8
+  ],
+  "surface_family": "char_tfidf",
+  "surface_scores": "unchanged matched-horizon text@k prediction files from pred_dir",
+  "classifier": "StandardScaler + LogisticRegression(class_weight=balanced)",
+  "training_rule": "fit on train split only; validation used for reporting and cross-source score normalization only",
+  "combined_source_normalization": "source=pooled rows z-score hidden and surface arms per source using validation-split aligned rows before concatenation",
+  "n_bootstrap": 500,
+  "seed": 260705,
+  "success_rule": "full success iff k=8 delta CI low >= 0, max adjacent hidden AUROC drop <= monotone_tolerance, and k=64 delta CI upper >= 0",
+  "partial_rule": "if k=8 holds but k=64 CI is fully negative, pivot to lead-time primary and stop equal-horizon variants",
+  "failure_rule": "if k=8 CI low < 0, stop; A1 was score-pooling-specific",
+  "code_commit": "d658ca8"
+}

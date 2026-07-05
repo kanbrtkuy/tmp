@@ -1,0 +1,61 @@
+source	k	split	input_rows	input_pairs	retained_rows	retained_pairs	short_pairs	hidden_left_dropped	surface_right_dropped	frozen_test_pairs	frozen_test_rows	duplicate_rows_ignored	incomplete_pairs	pairs_after	rows_after_pair_complete	surface_rows
+strongreject_full	4	train	1862	931	1862	931	0					0	0			
+strongreject_full	4	val	208	104	208	104	0					0	0			
+strongreject_full	4	test	554	277	554	277	0					0	0			
+strongreject_full	4	val_aligned						0	0					104	208	
+strongreject_full	4	test_aligned_prefreeze						0	0					277	554	
+strongreject_full	8	train	1862	931	1862	931	0					0	0			
+strongreject_full	8	val	208	104	208	104	0					0	0			
+strongreject_full	8	test	554	277	554	277	0					0	0			
+strongreject_full	8	val_aligned						0	0					104	208	
+strongreject_full	8	test_aligned_prefreeze						0	0					277	554	
+strongreject_full	16	train	1862	931	1862	931	0					0	0			
+strongreject_full	16	val	208	104	208	104	0					0	0			
+strongreject_full	16	test	554	277	554	277	0					0	0			
+strongreject_full	16	val_aligned						0	0					104	208	
+strongreject_full	16	test_aligned_prefreeze						0	0					277	554	
+strongreject_full	32	train	1862	931	1862	931	0					0	0			
+strongreject_full	32	val	208	104	208	104	0					0	0			
+strongreject_full	32	test	554	277	554	277	0					0	0			
+strongreject_full	32	val_aligned						0	0					104	208	
+strongreject_full	32	test_aligned_prefreeze						0	0					277	554	
+strongreject_full	64	train	1862	931	1862	931	0					0	0			
+strongreject_full	64	val	208	104	208	104	0					0	0			
+strongreject_full	64	test	554	277	554	277	0					0	0			
+strongreject_full	64	val_aligned						0	0					104	208	
+strongreject_full	64	test_aligned_prefreeze						0	0					277	554	
+strongreject_full	4	test_frozen_written								277	554					554
+strongreject_full	8	test_frozen_written								277	554					554
+strongreject_full	16	test_frozen_written								277	554					554
+strongreject_full	32	test_frozen_written								277	554					554
+strongreject_full	64	test_frozen_written								277	554					554
+reasoningshield	4	train	1758	879	1758	879	0					0	0			
+reasoningshield	4	val	196	98	196	98	0					0	0			
+reasoningshield	4	test	670	335	670	335	0					0	0			
+reasoningshield	4	val_aligned						0	0					98	196	
+reasoningshield	4	test_aligned_prefreeze						0	0					335	670	
+reasoningshield	8	train	1758	879	1758	879	0					0	0			
+reasoningshield	8	val	196	98	196	98	0					0	0			
+reasoningshield	8	test	670	335	670	335	0					0	0			
+reasoningshield	8	val_aligned						0	0					98	196	
+reasoningshield	8	test_aligned_prefreeze						0	0					335	670	
+reasoningshield	16	train	1758	879	1758	879	0					0	0			
+reasoningshield	16	val	196	98	196	98	0					0	0			
+reasoningshield	16	test	670	335	670	335	0					0	0			
+reasoningshield	16	val_aligned						0	0					98	196	
+reasoningshield	16	test_aligned_prefreeze						0	0					335	670	
+reasoningshield	32	train	1758	879	1758	879	0					0	0			
+reasoningshield	32	val	196	98	196	98	0					0	0			
+reasoningshield	32	test	670	335	670	335	0					0	0			
+reasoningshield	32	val_aligned						0	0					98	196	
+reasoningshield	32	test_aligned_prefreeze						0	0					335	670	
+reasoningshield	64	train	1758	879	1758	879	0					0	0			
+reasoningshield	64	val	196	98	196	98	0					0	0			
+reasoningshield	64	test	670	335	670	335	0					0	0			
+reasoningshield	64	val_aligned						0	0					98	196	
+reasoningshield	64	test_aligned_prefreeze						0	0					335	670	
+reasoningshield	4	test_frozen_written								335	670					670
+reasoningshield	8	test_frozen_written								335	670					670
+reasoningshield	16	test_frozen_written								335	670					670
+reasoningshield	32	test_frozen_written								335	670					670
+reasoningshield	64	test_frozen_written								335	670					670

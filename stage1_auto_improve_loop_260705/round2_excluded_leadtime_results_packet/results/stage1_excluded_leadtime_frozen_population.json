@@ -1,0 +1,36 @@
+{
+  "strongreject_full": {
+    "frozen_test_pairs": 277,
+    "k_grid": [
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "eligible_pairs_by_k": {
+      "4": 277,
+      "8": 277,
+      "16": 277,
+      "32": 277,
+      "64": 277
+    }
+  },
+  "reasoningshield": {
+    "frozen_test_pairs": 335,
+    "k_grid": [
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "eligible_pairs_by_k": {
+      "4": 335,
+      "8": 335,
+      "16": 335,
+      "32": 335,
+      "64": 335
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "rule": "zmean",
+  "pooling": "unweighted mean of per-position hidden scores z-normalized with validation split statistics",
+  "combined_source_normalization": "source=pooled rows: each arm z-scored per source with val-split stats before cross-source concatenation",
+  "future_positions_forbidden": true,
+  "k_grid": [
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "holm_family": [
+    8
+  ],
+  "surface_family": "char_tfidf",
+  "selected_layer_fixed": 28,
+  "primary_sources": [
+    "strongreject_full",
+    "reasoningshield"
+  ],
+  "n_bootstrap": 500,
+  "seed": 260705,
+  "monotone_tolerance": 0.02,
+  "success_rule": "max adjacent pooled hidden AUROC drop <= monotone_tolerance and k=8 delta CI low >= 0"
+}

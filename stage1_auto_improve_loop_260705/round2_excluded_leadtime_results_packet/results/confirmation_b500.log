@@ -1,0 +1,23 @@
+{
+  "n_summary_rows": 15,
+  "n_lead_rows": 75,
+  "n_errors": 0,
+  "a1_success": true,
+  "output_dir": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500/a1_score_pooling"
+}
+{
+  "n_summary_rows": 15,
+  "n_lead_rows": 75,
+  "n_errors": 0,
+  "a2_full_success": false,
+  "a2_partial_pivot": false,
+  "a2_failure": true,
+  "output_dir": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500/a2_feature_pooling"
+}
+{
+  "output_dir": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500",
+  "pred_dir": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500/predictions",
+  "n_errors": 0,
+  "decision": "drop_leadtime_claim",
+  "confirmed": false
+}

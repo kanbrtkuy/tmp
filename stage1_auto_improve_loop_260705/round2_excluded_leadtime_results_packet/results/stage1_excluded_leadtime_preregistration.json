@@ -1,0 +1,28 @@
+{
+  "stage": "stage1_excluded_source_leadtime_confirmation",
+  "tmp_prereg_commit": "af3d41f",
+  "config_pinning_amendment": "res/stage1_excluded_source_leadtime_config_pinning_amendment_260705.md",
+  "sources": [
+    "strongreject_full",
+    "reasoningshield"
+  ],
+  "k_grid": [
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "surface_family": "char_tfidf",
+  "layer": 28,
+  "n_bootstrap": 500,
+  "seed": 260705,
+  "frozen_population_rule": "test pairs pair-complete at every k and in both arms; identical across k",
+  "minimum_pairs_per_source": 150,
+  "primary_a1_estimand": "pooled A1 hidden@4 minus text@8 delta AUROC",
+  "a1_primary_gate": "CI low >= 0",
+  "per_source_sanity_gate": "no source A1 point estimate < -0.02",
+  "a2_robustness_gate": "pooled A2 hidden@4 minus text@8 CI high >= 0 and point estimate >= -0.01",
+  "descriptive_only": "all other hidden@k minus text@k' cells, same-horizon diagonals, and pair-rank metrics",
+  "code_commit": "d658ca8"
+}

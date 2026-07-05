@@ -1,0 +1,122 @@
+{
+  "checked_at": "2026-07-05T11:24:06Z",
+  "root": "/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly",
+  "n_manifests": 6,
+  "bad": [],
+  "rows": [
+    {
+      "path": "/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly/stage1_natural_pairs_8b_a100_1x_loso_reasoningshield/natural_pairs_8b_a100_1x_loso_reasoningshield_test_dense_cot_layers_28.manifest.json",
+      "shape": [
+        670,
+        1,
+        5,
+        4096
+      ],
+      "positions": [
+        "cot_4",
+        "cot_8",
+        "cot_16",
+        "cot_32",
+        "cot_64"
+      ],
+      "omit": true,
+      "status": "complete",
+      "metadata_rows": 670
+    },
+    {
+      "path": "/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly/stage1_natural_pairs_8b_a100_1x_loso_reasoningshield/natural_pairs_8b_a100_1x_loso_reasoningshield_train_dense_cot_layers_28.manifest.json",
+      "shape": [
+        1758,
+        1,
+        5,
+        4096
+      ],
+      "positions": [
+        "cot_4",
+        "cot_8",
+        "cot_16",
+        "cot_32",
+        "cot_64"
+      ],
+      "omit": true,
+      "status": "complete",
+      "metadata_rows": 1758
+    },
+    {
+      "path": "/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly/stage1_natural_pairs_8b_a100_1x_loso_reasoningshield/natural_pairs_8b_a100_1x_loso_reasoningshield_val_dense_cot_layers_28.manifest.json",
+      "shape": [
+        196,
+        1,
+        5,
+        4096
+      ],
+      "positions": [
+        "cot_4",
+        "cot_8",
+        "cot_16",
+        "cot_32",
+        "cot_64"
+      ],
+      "omit": true,
+      "status": "complete",
+      "metadata_rows": 196
+    },
+    {
+      "path": "/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly/stage1_natural_pairs_8b_a100_1x_loso_strongreject_full/natural_pairs_8b_a100_1x_loso_strongreject_full_test_dense_cot_layers_28.manifest.json",
+      "shape": [
+        554,
+        1,
+        5,
+        4096
+      ],
+      "positions": [
+        "cot_4",
+        "cot_8",
+        "cot_16",
+        "cot_32",
+        "cot_64"
+      ],
+      "omit": true,
+      "status": "complete",
+      "metadata_rows": 554
+    },
+    {
+      "path": "/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly/stage1_natural_pairs_8b_a100_1x_loso_strongreject_full/natural_pairs_8b_a100_1x_loso_strongreject_full_train_dense_cot_layers_28.manifest.json",
+      "shape": [
+        1862,
+        1,
+        5,
+        4096
+      ],
+      "positions": [
+        "cot_4",
+        "cot_8",
+        "cot_16",
+        "cot_32",
+        "cot_64"
+      ],
+      "omit": true,
+      "status": "complete",
+      "metadata_rows": 1862
+    },
+    {
+      "path": "/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly/stage1_natural_pairs_8b_a100_1x_loso_strongreject_full/natural_pairs_8b_a100_1x_loso_strongreject_full_val_dense_cot_layers_28.manifest.json",
+      "shape": [
+        208,
+        1,
+        5,
+        4096
+      ],
+      "positions": [
+        "cot_4",
+        "cot_8",
+        "cot_16",
+        "cot_32",
+        "cot_64"
+      ],
+      "omit": true,
+      "status": "complete",
+      "metadata_rows": 208
+    }
+  ]
+}
