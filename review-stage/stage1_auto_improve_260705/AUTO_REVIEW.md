@@ -122,6 +122,80 @@ is a **lead-time claim**: *hidden states at ~4 generated tokens predict the even
 
 </details>
 
+### Post-Pivot Diagnostics Memo
+
+- Added `res/stage1_a1_a2_leadtime_diagnostics_260705.md`.
+- Packet for Fable-5 documentation review: `round1_postpivot_diagnostics_packet`.
+- tmp commit: `d436841`.
+- Fable-5 verdict: `EDITS_REQUIRED`, with three surgical text edits and no
+  requested re-review.
+- Required edits applied:
+  - rephrased A1 as a score-pooling-specific ensembling/variance-reduction
+    diagnostic rather than "exposing a signal";
+  - rephrased hidden AUROC above chance as expected in-distribution
+    decodability under teacher forcing, not evidence by itself;
+  - restored the recipe-attenuation parenthetical in the stop/pivot reporting
+    language.
+- Fable-5 stated that, with those edits, the documentation is accepted as the
+  closed Stage1 equal-horizon record and the post-pivot documentation step is
+  complete.
+
+<details>
+<summary>Click to expand full Fable-5 post-pivot documentation review</summary>
+
+```text
+# Fable-5 Review — Stage1 Post-Pivot Diagnostics Documentation
+
+**Packet:** `round1_postpivot_diagnostics_packet` (8 files, aggregate TSV/MD only — confirmed no restricted content; commit `d436841` ≡ local files is asserted by you, not verified — git on the tmp repo was approval-gated this session).
+
+## Verdict: **EDITS_REQUIRED** (3 surgical text edits; interpretation is otherwise faithful)
+
+## Faithfulness verification (done from the artifacts, not the README)
+
+- **Numbers:** all 10 same-horizon cells (A1/A2 hidden, text, delta × 5 k's) match `stage1_score_pooling_summary.tsv` / `stage1_feature_pooling_summary.tsv` at 4-dp rounding; all 50 lead-time cells (25 A1 + 25 A2) match the two lead-matrix TSVs; every CI quoted in the stop/pivot memo matches the summary TSVs. No number in either memo lacks a TSV source — consistent with "no new fits."
+- **Rule compliance:** k=4 correctly scoped exploratory (Holm family {8,16,32,64}); p=0.0 → p<0.002 (B=500) handled; no test-max, no HB-only zero-crossing CIs, no pair-rank headlining, full matrices published rather than cherry-picked cells; A1 and A2 always side by side; the "not 'feature pooling destroys signal'" caveat matches my A2 ruling verbatim; the optional excluded-source lead-time confirmation is stated with both required conditions (both recipes, accept either outcome). No language proposing or smuggling an equal-horizon rescue variant.
+
+## Required edits (exact text)
+
+**Edit 1** — `res/stage1_a1_a2_leadtime_diagnostics_260705.md`, Key Findings #2. "Can expose a signal" is soft-rescue framing; my ruling was that A2 gave the hidden arm strictly richer access and found *less* — the A1 advantage is an ensembling effect, not revealed signal. Replace:
+
+> **A1 remains useful only as a diagnostic.** It shows that the original probe-score ensemble can expose a signal, but the advantage is not robust enough to support a main claim.
+
+with:
+
+> **A1 remains useful only as a diagnostic.** Its k=8 advantage was score-pooling-specific — consistent with an ensembling/variance-reduction effect over per-position probe scores rather than extra extractable information — and does not support a main claim.
+
+**Edit 2** — same file, Key Findings #5. "Hidden states encode safety-relevant signal" was ruled dead as a positive claim in the 2026-07-02 DPI audit (in-distribution decodability under teacher forcing carries no evidence); the allowed statement is the absolute-AUROC fact. Replace:
+
+> **Allowed claim scope is narrow.** Hidden states encode safety-relevant signal, but teacher-forced matched-horizon monitoring does not show a hidden-over-text information advantage.
+
+with:
+
+> **Allowed claim scope is narrow.** Pooled hidden AUROCs stay well above chance (0.736–0.793), but above-chance in-distribution decodability is expected under teacher forcing and is not evidence by itself; the equal-horizon comparison shows no hidden-over-text information advantage.
+
+**Edit 3** — `res/stage1_a2_feature_pooling_stop_pivot_260705.md`, Reporting Language blockquote. The quote is attributed to me but drops the recipe-attenuation parenthetical — the one disclosure that keeps the canonical paragraph self-containedly honest about the exploratory signal. Replace:
+
+> An early-horizon signal is reported as an exploratory diagnostic only.
+
+with:
+
+> An early-horizon signal (hidden@4 ≈ text@16–32 in absolute AUROC under the original probe pipeline, delta@k4 +0.056; attenuated to +0.004, n.s., under the preregistered refit recipe) is reported as an exploratory diagnostic only.
+
+## Non-blocking notes
+
+1. A2 lead-time section: "strongest positive lead cells" — h64/t4, h64/t8 are *lag*-direction cells, not lead cells; the sentence already says "wrong direction," so just consider "strongest positive off-diagonal cells."
+2. The same quantity has slightly different CIs across files (A1 k4 delta: summary [+0.0452, +0.0668] vs lead-matrix [+0.0457, +0.0666]) — independent bootstrap streams, the known duplicate-diagonal caveat. If both TSVs are published, add one line saying diagonal cells are re-bootstrapped so the tiny differences aren't read as inconsistency.
+3. "class_weight=balanced" in the A2 estimator row is asserted from code, not verifiable from this packet; it is inert anyway (paired design ⇒ n_pos=n_neg). Keep only if actually in the code.
+4. The A1 early-warning sentence ("match or exceed text at some later horizons") is supported (exceed: h4/t8 +0.0311 CI positive; match: h16/t32 CI spans 0) but note h4/t16 and h4/t32 are statistically negative — the "≈ text@16–32" reading is about absolute-AUROC magnitude, which Edit 3's wording now makes explicit.
+5. If the optional excluded-source lead-time confirmation is ever exercised, its preregistration must fix the exact estimand (recipes, cells/deltas, success rule) before any generation.
+
+## Completion
+
+**Yes — with the three edits applied, this documentation is accepted as the closed Stage1 equal-horizon record, and the post-pivot documentation step is complete.** The edits are mechanical; no re-review round is needed (commit the edited files and note the edit in AUTO_REVIEW.md). The A2 run remains valid, so no new equal-horizon experiments are warranted or permitted. Memory updated with this outcome.
+```
+
+</details>
+
 ### A2 Run
 
 - Code commit: `d26d03c`.

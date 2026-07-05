@@ -102,7 +102,9 @@ Use Fable-5's recommended formulation:
 > pooling-scheme-specific and terminate equal-horizon probe iteration. Text
 > accuracy grows with horizon faster than pooled hidden readout, consistent
 > with the data-processing inequality under teacher forcing. An early-horizon
-> signal is reported as an exploratory diagnostic only. The motivation for
-> hidden-state methods in this project accordingly rests on causal utility and
-> on-policy settings, not on monitoring advantage in this teacher-forced
-> equal-horizon regime.
+> signal (hidden@4 ≈ text@16-32 in absolute AUROC under the original probe
+> pipeline, delta@k4 +0.056; attenuated to +0.004, n.s., under the
+> preregistered refit recipe) is reported as an exploratory diagnostic only.
+> The motivation for hidden-state methods in this project accordingly rests on
+> causal utility and on-policy settings, not on monitoring advantage in this
+> teacher-forced equal-horizon regime.
