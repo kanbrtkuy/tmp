@@ -252,7 +252,9 @@ def best_ba_threshold(labels: list[int], scores: list[float], sk: dict[str, Any]
             best_thresholds = [threshold]
         elif abs(value - best_ba) <= 1e-12:
             best_thresholds.append(threshold)
-    threshold = (min(best_thresholds) + max(best_thresholds)) / 2.0
+    # Use an actual maximizing candidate.  Averaging non-contiguous maximizers
+    # can land in a worse interval.
+    threshold = min(best_thresholds)
     return float(threshold), float(best_ba)
 
 
@@ -341,7 +343,15 @@ def policy_rows_for_arm(
     test_labels = [int(row["label"]) for row in test_rows]
     test_scores = [float(row["score"]) for row in test_rows]
 
-    def add(policy: str, split: str, metrics: dict[str, Any] | None, *, threshold_source: str, diagnostic_only: bool) -> None:
+    def add(
+        policy: str,
+        split: str,
+        metrics: dict[str, Any] | None,
+        *,
+        threshold_source: str,
+        diagnostic_only: bool,
+        ci_rows: list[dict[str, Any]] | None = None,
+    ) -> None:
         if metrics is None:
             return
         row = dict(item)
@@ -349,7 +359,7 @@ def policy_rows_for_arm(
         row.update(metrics)
         if split == "test":
             boot = bootstrap_metric(
-                test_rows,
+                ci_rows if ci_rows is not None else test_rows,
                 metric="balanced_accuracy",
                 threshold=metrics.get("threshold"),
                 use_current_pred=policy == "current_prediction",
@@ -366,8 +376,21 @@ def policy_rows_for_arm(
     platt = fit_platt(val_rows, sk)
     val_cal = calibrated_rows(val_rows, platt)
     test_cal = calibrated_rows(test_rows, platt)
-    add("platt_0p5", "val", metrics_from_scores([r["label"] for r in val_cal], [r["score"] for r in val_cal], 0.5, sk), threshold_source="validation_calibrator", diagnostic_only=False)
-    add("platt_0p5", "test", metrics_from_scores([r["label"] for r in test_cal], [r["score"] for r in test_cal], 0.5, sk), threshold_source="validation_calibrator", diagnostic_only=False)
+    add(
+        "platt_0p5",
+        "val",
+        metrics_from_scores([r["label"] for r in val_cal], [r["score"] for r in val_cal], 0.5, sk),
+        threshold_source="validation_calibrator",
+        diagnostic_only=False,
+    )
+    add(
+        "platt_0p5",
+        "test",
+        metrics_from_scores([r["label"] for r in test_cal], [r["score"] for r in test_cal], 0.5, sk),
+        threshold_source="validation_calibrator",
+        diagnostic_only=False,
+        ci_rows=test_cal,
+    )
 
     val_threshold, _ = best_ba_threshold(val_labels, val_scores, sk)
     add("val_ba_max", "val", metrics_from_scores(val_labels, val_scores, val_threshold, sk), threshold_source="validation_labels", diagnostic_only=False)

@@ -103,9 +103,11 @@ def write_summary_grid(hidden_root: Path, source: str) -> None:
         writer.writerows(rows)
 
 
-def hidden_predictions(rows: list[dict], *, k: int) -> list[dict]:
+def hidden_predictions(rows: list[dict], *, k: int, split: str) -> list[dict]:
     out = []
     for idx, row in enumerate(rows):
+        if k == 4 and split == "test" and row["pair_id"].endswith("01") and row["trajectory_safety_label"] == "unsafe":
+            continue
         label = 1 if row["trajectory_safety_label"] == "unsafe" else 0
         score = 0.70 + idx * 0.001 if label else 0.30 + idx * 0.001
         if k == 8 and row["pair_id"].endswith("03"):
@@ -130,7 +132,7 @@ def write_hidden_predictions(hidden_root: Path, source: str, folds_root: Path) -
         pred_dir = run / f"linear_cot_{k}_l11"
         for split in ("val", "test"):
             rows = [json.loads(line) for line in (folds_root / source / "normalized" / f"{split}.jsonl").read_text().splitlines()]
-            write_jsonl(pred_dir / f"predictions_{split}.jsonl", hidden_predictions(rows, k=k))
+            write_jsonl(pred_dir / f"predictions_{split}.jsonl", hidden_predictions(rows, k=k, split=split))
 
 
 def test_matched_horizon_reanalysis_runs_and_reports_residual(tmp_path):
@@ -185,7 +187,19 @@ def test_matched_horizon_reanalysis_runs_and_reports_residual(tmp_path):
     assert {row["k"] for row in summary_rows} == {"4", "8"}
     assert all(row["selected_layer"] == "11" for row in summary_rows)
     assert all(row["delta_auroc_hidden_minus_surface"] for row in summary_rows)
+    k4 = [row for row in summary_rows if row["k"] == "4"][0]
+    assert k4["test_pairs_dropped_post_alignment"] == "1"
+    assert k4["hidden_n_rank_pairs"] == "11"
 
     residual_rows = list(csv.DictReader((tmp_path / "out" / "stage1_matched_horizon_residual.tsv").open(), delimiter="\t"))
     assert len(residual_rows) == 2
     assert all(row["residual_protocol"] == "validation_stacker_not_oof_due_missing_hidden_train_predictions" for row in residual_rows)
+
+
+def test_holm_adjust_is_step_down_monotone():
+    script = load_script("run_stage1_matched_horizon_reanalysis")
+    adjusted = script.holm_adjust([0.04, 0.001, None, 0.02])
+    assert adjusted[1] == 0.003
+    assert adjusted[3] == 0.04
+    assert adjusted[0] == 0.04
+    assert adjusted[2] is None

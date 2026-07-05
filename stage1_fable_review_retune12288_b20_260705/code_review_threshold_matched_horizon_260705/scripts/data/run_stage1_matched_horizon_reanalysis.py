@@ -541,6 +541,35 @@ def align_record_sets(
     }
 
 
+def enforce_pair_complete_alignment(
+    left: list[dict[str, Any]],
+    right: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    aligned_left, aligned_right, diagnostics = align_record_sets(left, right)
+    by_pair: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in aligned_left:
+        by_pair[clean(row.get("pair_id")) or clean(row.get("id"))].append(row)
+
+    keep_ids: set[str] = set()
+    for pair_id, rows in by_pair.items():
+        labels_present = {int(row["label"]) for row in rows}
+        if {LABEL_SAFE, LABEL_UNSAFE} <= labels_present:
+            keep_ids.update(clean(row["id"]) for row in rows if int(row["label"]) in {LABEL_SAFE, LABEL_UNSAFE})
+
+    kept_left = [row for row in aligned_left if clean(row["id"]) in keep_ids]
+    kept_right = [row for row in aligned_right if clean(row["id"]) in keep_ids]
+    diagnostics.update(
+        {
+            "pairs_before_post_alignment": len(by_pair),
+            "pairs_after_post_alignment": len({clean(row.get("pair_id")) or clean(row.get("id")) for row in kept_left}),
+            "pairs_dropped_post_alignment": len(by_pair)
+            - len({clean(row.get("pair_id")) or clean(row.get("id")) for row in kept_left}),
+            "rows_dropped_post_alignment": len(aligned_left) - len(kept_left),
+        }
+    )
+    return kept_left, kept_right, diagnostics
+
+
 def flatten_records(records: list[dict[str, Any]]) -> tuple[list[int], list[float]]:
     return [int(row["label"]) for row in records], [float(row["score"]) for row in records]
 
@@ -1008,8 +1037,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         split="test",
                     )
                 )
-                hidden_val, hidden_val_align = align_scores(retained["val"], hidden_val_map)
-                hidden_test, hidden_test_align = align_scores(retained["test"], hidden_test_map)
+                hidden_val_raw, hidden_val_align = align_scores(retained["val"], hidden_val_map)
+                hidden_test_raw, hidden_test_align = align_scores(retained["test"], hidden_test_map)
+                hidden_val, surface_val, post_val_align = enforce_pair_complete_alignment(hidden_val_raw, surface_val)
+                hidden_test, surface_test, post_test_align = enforce_pair_complete_alignment(hidden_test_raw, surface_test)
                 hidden_records_for_pool[source] = hidden_test
                 surface_records_for_pool[source] = surface_test
 
@@ -1043,6 +1074,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "delta_pair_rank_accuracy_ci_low": delta["delta_pair_rank_accuracy_ci_low"],
                     "delta_pair_rank_accuracy_ci_high": delta["delta_pair_rank_accuracy_ci_high"],
                     "delta_pair_rank_accuracy_p_two_sided_zero": delta["delta_pair_rank_accuracy_p_two_sided_zero"],
+                    "hidden_n_rank_pairs": delta["left_n_rank_pairs"],
+                    "surface_n_rank_pairs": delta["right_n_rank_pairs"],
                     "hidden_accuracy_at_0p5": hidden_threshold.get("accuracy"),
                     "hidden_balanced_accuracy_at_0p5": hidden_threshold.get("balanced_accuracy"),
                     "surface_accuracy_at_0p5": surface_threshold.get("accuracy"),
@@ -1054,6 +1087,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "hidden_test_aligned_rows": hidden_test_align["aligned_rows"],
                     "alignment_left_dropped": delta["left_dropped"],
                     "alignment_right_dropped": delta["right_dropped"],
+                    "val_pairs_dropped_post_alignment": post_val_align["pairs_dropped_post_alignment"],
+                    "test_pairs_dropped_post_alignment": post_test_align["pairs_dropped_post_alignment"],
+                    "val_rows_dropped_post_alignment": post_val_align["rows_dropped_post_alignment"],
+                    "test_rows_dropped_post_alignment": post_test_align["rows_dropped_post_alignment"],
                     "n_shared_groups": delta["n_shared_groups"],
                 }
                 summary_rows.append(row)
@@ -1126,6 +1163,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         "delta_pair_rank_accuracy_ci_low": pooled_delta["delta_pair_rank_accuracy_ci_low"],
                         "delta_pair_rank_accuracy_ci_high": pooled_delta["delta_pair_rank_accuracy_ci_high"],
                         "delta_pair_rank_accuracy_p_two_sided_zero": pooled_delta["delta_pair_rank_accuracy_p_two_sided_zero"],
+                        "hidden_n_rank_pairs": pooled_delta["left_n_rank_pairs"],
+                        "surface_n_rank_pairs": pooled_delta["right_n_rank_pairs"],
                         "n_shared_groups": pooled_delta["n_shared_groups"],
                     }
                 )
@@ -1192,6 +1231,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "Hidden probe directories expose validation/test predictions only; no train or OOF hidden scores were available.",
             "E3 therefore uses a validation-trained stacker evaluated on test, not a train-OOF residual stacker.",
             "Full-trajectory text baselines remain hindsight ceilings and are not treated as equal-horizon primary controls.",
+            "Across-k trends are descriptive because pair-complete censoring changes the retained population as k grows.",
         ],
         "input_files": input_files,
         "git": git_info(),
@@ -1226,11 +1266,17 @@ def write_rows_tsv(path: Path, rows: list[dict[str, Any]]) -> None:
         "delta_auroc_holm_p",
         "hidden_pair_rank_accuracy",
         "surface_pair_rank_accuracy",
+        "hidden_n_rank_pairs",
+        "surface_n_rank_pairs",
         "delta_pair_rank_accuracy_hidden_minus_surface",
         "delta_pair_rank_accuracy_ci_low",
         "delta_pair_rank_accuracy_ci_high",
         "delta_pair_rank_accuracy_p_two_sided_zero",
         "delta_pair_rank_accuracy_holm_p",
+        "val_pairs_dropped_post_alignment",
+        "test_pairs_dropped_post_alignment",
+        "val_rows_dropped_post_alignment",
+        "test_rows_dropped_post_alignment",
         "residual_protocol",
         "surface_only_test_log_loss",
         "surface_plus_hidden_test_log_loss",

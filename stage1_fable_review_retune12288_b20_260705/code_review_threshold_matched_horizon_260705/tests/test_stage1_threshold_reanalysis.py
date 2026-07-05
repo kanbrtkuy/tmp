@@ -52,6 +52,29 @@ def prediction_rows(split: str, *, shifted: bool = False) -> list[dict]:
     return rows
 
 
+def offset_prediction_rows(split: str) -> list[dict]:
+    rows = []
+    for idx in range(12):
+        pair_id = f"{split}-offset-p{idx}"
+        for label in (0, 1):
+            # Both labels sit above raw 0.5, but validation Platt scaling learns
+            # a boundary between the classes. This catches CI bootstraps that
+            # accidentally use raw scores for the Platt policy.
+            score = (2.0 + idx * 0.01) if label else (1.0 + idx * 0.01)
+            rows.append(
+                {
+                    "example_id": f"{pair_id}::{label}",
+                    "id": f"{pair_id}::{label}",
+                    "pair_id": pair_id,
+                    "match_family": pair_id,
+                    "label": label,
+                    "unsafe_score": score,
+                    "prediction": 0,
+                }
+            )
+    return rows
+
+
 def write_summary_grid(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -145,3 +168,59 @@ def test_threshold_reanalysis_reports_platt_and_oracle(tmp_path):
     platt_test = [row for row in rows if row["arm"] == "hidden" and row["policy"] == "platt_0p5" and row["split"] == "test"][0]
     current_test = [row for row in rows if row["arm"] == "hidden" and row["policy"] == "current_prediction" and row["split"] == "test"][0]
     assert float(platt_test["balanced_accuracy"]) > float(current_test["balanced_accuracy"])
+
+
+def test_platt_bootstrap_ci_uses_calibrated_scores(tmp_path):
+    script = load_script("run_stage1_threshold_reanalysis")
+
+    archive = tmp_path / "archive"
+    run_dir = archive / "stage1_natural_pairs_8b_a100_1x_loso_harmbench_standard" / "runs" / "linear"
+    summary_grid = run_dir / "summary_grid.tsv"
+    candidate = run_dir / "linear_cot_4_l10"
+    write_summary_grid(summary_grid)
+    write_jsonl(candidate / "predictions_val.jsonl", offset_prediction_rows("val"))
+    write_jsonl(candidate / "predictions_test.jsonl", offset_prediction_rows("test"))
+
+    val_fixed = tmp_path / "val_fixed.tsv"
+    with val_fixed.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            delimiter="\t",
+            fieldnames=["input_tsv", "group", "model", "position", "layer", "val_auroc", "test_auroc"],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "input_tsv": str(summary_grid),
+                "group": "all",
+                "model": "linear",
+                "position": "cot_4",
+                "layer": "10",
+                "val_auroc": "0.80",
+                "test_auroc": "0.75",
+            }
+        )
+
+    args = type(
+        "Args",
+        (),
+        {
+            "val_fixed_tsv": str(val_fixed),
+            "surface_root": str(tmp_path / "surface"),
+            "output_dir": str(tmp_path / "out"),
+            "group_fields": "match_family,pair_id,id",
+            "n_bootstrap": 30,
+            "seed": 7,
+            "include_surface": False,
+            "include_length": False,
+            "fail_on_error": True,
+        },
+    )()
+    summary = script.run(args)
+    assert summary["n_errors"] == 0
+
+    rows = list(csv.DictReader((tmp_path / "out" / "stage1_threshold_reanalysis.tsv").open(), delimiter="\t"))
+    platt_test = [row for row in rows if row["arm"] == "hidden" and row["policy"] == "platt_0p5" and row["split"] == "test"][0]
+    point = float(platt_test["balanced_accuracy"])
+    assert point > 0.95
+    assert float(platt_test["balanced_accuracy_ci_low"]) <= point <= float(platt_test["balanced_accuracy_ci_high"])
