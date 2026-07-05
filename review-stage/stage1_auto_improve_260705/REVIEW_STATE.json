@@ -4,7 +4,7 @@
   "reviewer": "claude-fable-5",
   "tmp_commit": "60b28e3",
   "packet": "/Users/baby/Documents/SafeChain/tmp/stage1_auto_improve_loop_260705/round1_results_packet",
-  "phase": "postpivot_documentation_accepted",
+  "phase": "leadtime_confirmation_code_review_ok_pending_runpod_sync",
   "a1_code_packet_commit": "b0027fb",
   "a1_code_patch_commit": "03854ee",
   "a1_results_packet_commit": "abe8941",
@@ -15,5 +15,12 @@
   "equal_horizon_status": "closed",
   "postpivot_diagnostics_packet_commit": "d436841",
   "postpivot_documentation_review_verdict": "EDITS_REQUIRED_APPLIED_DOC_ACCEPTED",
+  "leadtime_plan_packet_commit": "feefabb",
+  "leadtime_plan_review_verdict": "OK_TO_IMPLEMENT_PLAN_ONLY",
+  "leadtime_config_pinning_amendment": "res/stage1_excluded_source_leadtime_config_pinning_amendment_260705.md",
+  "leadtime_code_local_validation": "py_compile passed; bash -n passed; focused pytest 6 passed",
+  "leadtime_code_packet_commit": "c7a427e",
+  "leadtime_code_review_verdict": "OK_TO_RUN",
+  "leadtime_code_review_response": "review-stage/stage1_auto_improve_260705/fable5_excluded_leadtime_code_review_260705.md",
   "timestamp": "2026-07-05T00:00:00Z"
 }

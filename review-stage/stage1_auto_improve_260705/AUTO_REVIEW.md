@@ -122,6 +122,64 @@ is a **lead-time claim**: *hidden states at ~4 generated tokens predict the even
 
 </details>
 
+## Excluded-Source Lead-Time Confirmation Plan And Code Prep (2026-07-05)
+
+### Fable-5 Plan Review
+
+- Reviewer/model: `claude-fable-5`.
+- Plan packet: `tmp/stage1_auto_improve_loop_260705/round1_leadtime_confirmation_plan_packet`.
+- tmp prereg commit: `feefabb`.
+- Verdict after required edits: `OK_TO_IMPLEMENT_PLAN_ONLY`.
+- Scope allowed: a narrow excluded-source lead-time confirmation on
+  `strongreject_full` and `reasoningshield`, using both A1 score-pooling and
+  A2 feature-pooling recipes.
+- Scope explicitly closed: any new equal-horizon rescue variant, layer search,
+  classifier search, pooling search, k-grid search, or secondary-cell promotion.
+- Required before code review: a config-pinning amendment that fixes the exact
+  Module M `char_tfidf` surface recipe and the original Stage1 single-position
+  hidden probe recipe.
+
+### Actions Taken
+
+- Added required config-pinning amendment:
+  `res/stage1_excluded_source_leadtime_config_pinning_amendment_260705.md`.
+- Updated the prereg plan to reference the amendment explicitly:
+  `res/stage1_excluded_source_leadtime_confirmation_prereg_plan_260705.md`.
+- Implemented confirmation analysis:
+  `scripts/data/run_stage1_excluded_leadtime_confirmation.py`.
+- Added RunPod extract-minimal helper:
+  `pipelines/runpod_stage1_excluded_leadtime_extract_minimal.sh`.
+- Added focused test:
+  `tests/test_stage1_excluded_leadtime_confirmation.py`.
+
+### Local Validation
+
+- `python3 -m py_compile scripts/data/run_stage1_excluded_leadtime_confirmation.py`: passed.
+- `bash -n pipelines/runpod_stage1_excluded_leadtime_extract_minimal.sh`: passed.
+- `cot-safety/.venv-stage1-test/bin/python -m pytest tests/test_stage1_score_pooling_reanalysis.py tests/test_stage1_feature_pooling_reanalysis.py tests/test_stage1_excluded_leadtime_confirmation.py`: `6 passed`.
+
+### Current Status
+
+The plan/amendment/code are ready to package for a separate Fable-5 code
+review. No RunPod execution has been launched for this confirmation yet.
+
+### Fable-5 Code Review
+
+- Packet: `tmp/stage1_auto_improve_loop_260705/round1_excluded_leadtime_code_packet`
+- tmp commit: `c7a427e`
+- Reviewer/model: `claude-fable-5`
+- Verdict: `OK_TO_RUN`
+- Blockers: none
+- Stored raw response:
+  `review-stage/stage1_auto_improve_260705/fable5_excluded_leadtime_code_review_260705.md`
+
+Fable-5 verified all seven load-bearing items: all-k frozen test population,
+minimum-power halt, no future leakage, Module M `char_tfidf` and original
+hidden-score recipe pinning, gate logic, extract-minimal helper, and focused
+tests. Non-blocking operational note: R2 backup remains a post-run step, and
+the results packet must confirm default sources/k-grid and
+`minimum_pairs_per_source=150`.
+
 ### Post-Pivot Diagnostics Memo
 
 - Added `res/stage1_a1_a2_leadtime_diagnostics_260705.md`.
