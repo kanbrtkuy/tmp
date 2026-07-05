@@ -143,6 +143,37 @@ def test_bootstrap_ci_and_delta(tmp_path):
     assert summary["deltas"]["left_minus_right"]["delta_auroc"] == 0.5
 
 
+def test_bootstrap_ci_accepts_probe_prediction_fields(tmp_path):
+    probe = tmp_path / "probe.jsonl"
+    rows = []
+    for idx in range(10):
+        label = idx % 2
+        rows.append(
+            {
+                "example_id": f"e{idx}",
+                "match_family": f"g{idx}",
+                "pair_id": f"p{idx}",
+                "label": label,
+                "unsafe_score": 0.9 if label else 0.1,
+            }
+        )
+    write_jsonl(probe, rows)
+    args = type(
+        "Args",
+        (),
+        {
+            "prediction_jsonl": [f"probe={probe}"],
+            "delta": None,
+            "output_dir": str(tmp_path / "ci_probe"),
+            "group_fields": "match_family,pair_id,id",
+            "n_bootstrap": 30,
+            "seed": 7,
+        },
+    )()
+    summary = bootstrap.run(args)
+    assert summary["models"]["probe"]["auroc"] == 1.0
+
+
 def test_prediction_row_audit_detects_missing_rows(tmp_path):
     prepared = tmp_path / "prepared" / "holdout_source" / "normalized"
     archive = tmp_path / "archive"
