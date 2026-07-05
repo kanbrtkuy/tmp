@@ -33,6 +33,8 @@ Questions:
 - `fable_response.md`
 - `fable_decision_response_260705.md`
 - `fable_probe_redesign_response_260705.md`
+- `threshold_matched_horizon_addendum_260705.md`
+- `fable_threshold_matched_horizon_response_260705.md`
 - `docs/stage1_post_hb_retune12288_b20_gap_audit_260705.md`
 - `val_fixed/val_fixed_probe_report.tsv`
 - `row_audit/stage1_prediction_row_audit_summary.json`
@@ -83,3 +85,19 @@ matched-horizon reanalysis on frozen data: compare hidden states at CoT token
 against full-trajectory hindsight text. GPU is only conditionally allowed to
 regenerate missing RS/SR hidden arrays after the non-GPU gates and Phase-1
 continue criteria pass.
+
+## 2026-07-05 Fable-5 Threshold / Matched-Horizon Follow-up
+
+The thresholded-accuracy and matched-horizon follow-up was reviewed with
+Fable-5 pro/high-rigor mode. The response is archived in
+`fable_threshold_matched_horizon_response_260705.md`.
+
+Decision: `BOTH_CPU_ONLY`.
+
+Fable-5 says thresholded balanced accuracy can likely be improved by a
+leakage-safe CPU threshold/calibration reanalysis, but this does not change
+the scientific conclusion because it only moves the operating point along the
+same ROC curve. The decision-bearing fix remains CPU-only matched-horizon
+reanalysis: compare `hidden@k` against `text@k` built from the same prompt and
+first `k` generated CoT tokens, with pair-complete censoring and the same
+selection/statistical protocol for both arms.
