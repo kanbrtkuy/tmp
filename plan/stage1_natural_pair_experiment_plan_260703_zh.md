@@ -151,6 +151,19 @@ negative/control result
 no more equal-horizon or lead-time rescue on this frozen test set
 ```
 
+Fable-5 Round 3 fresh-path review 将这个边界进一步固化为：
+
+```text
+FRESH_PREREG_ONLY
+STOP_CURRENT_STAGE1 for the frozen test set.
+CODE_AND_RUN_ALLOWED is rejected for current frozen Stage1.
+```
+
+注意：这不是说 hidden 完全没信号。LOSO hidden test AUROC 大约在
+`0.68-0.84`，说明 prefix-hidden state 确实含有可解码的 safe/unsafe signal。
+失败的是 stronger claim：hidden 没有打赢 matched/full surface baselines，也
+没有稳定 lead-time advantage。
+
 更新后的结果总览见：
 
 ```text

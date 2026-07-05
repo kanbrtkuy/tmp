@@ -1,10 +1,10 @@
 {
   "round": 1,
-  "status": "reviewed_negative_control",
+  "status": "current_stage1_closed_fresh_prereg_only",
   "reviewer": "claude-fable-5",
   "tmp_commit": "60b28e3",
   "packet": "/Users/baby/Documents/SafeChain/tmp/stage1_auto_improve_loop_260705/round1_results_packet",
-  "phase": "leadtime_confirmation_results_reviewed_drop_claim",
+  "phase": "fresh_path_reviewed_stop_current_stage1",
   "a1_code_packet_commit": "b0027fb",
   "a1_code_patch_commit": "03854ee",
   "a1_results_packet_commit": "abe8941",
@@ -41,5 +41,26 @@
     "n_errors": 0
   },
   "stage1_final_status": "negative_control_no_more_frozen_test_rescue",
+  "fresh_path_review_packet_commit": "f8c0704",
+  "fresh_path_review_verdict": "FRESH_PREREG_ONLY",
+  "fresh_path_review_response": "review-stage/stage1_auto_improve_260705/fable5_fresh_path_review_260705.md",
+  "current_frozen_stage1_allowed_work": [
+    "operating_point_reporting",
+    "integrity_audit_completion_for_negative_claim",
+    "sensitivity_power_statement",
+    "row_audit_coverage_gap_documentation",
+    "writeup"
+  ],
+  "current_frozen_stage1_forbidden_work": [
+    "new_probe_families",
+    "new_layers_or_positions",
+    "new_classifier_heads",
+    "new_pooling_schemes",
+    "new_calibration_rescues",
+    "new_subgroup_or_per_k_slicing_for_positive_cell",
+    "resplitting_or_reweighting_existing_pairs",
+    "gpu_regeneration_for_current_stage1_rescue"
+  ],
+  "next_positive_path": "fresh_preregistered_stage2_on_policy_only",
   "timestamp": "2026-07-05T00:00:00Z"
 }

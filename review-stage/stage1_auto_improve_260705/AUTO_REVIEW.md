@@ -201,6 +201,53 @@ preregistered setting, preferably Stage2/on-policy or a fresh-data follow-up
 motivated by the short-prefix k=4 diagnostic. No further equal-horizon or
 lead-time rescue variants should be run on this frozen test set.
 
+## Round 3 Fresh-Path Review
+
+Date: 2026-07-05
+
+Artifacts:
+
+- tmp fresh-path review packet commit: `f8c0704`
+- packet:
+  `stage1_auto_improve_loop_260705/round3_fresh_path_review_packet/`
+- Fable-5 response:
+  `review-stage/stage1_auto_improve_260705/fable5_fresh_path_review_260705.md`
+
+### Fable-5 Verdict
+
+```text
+FRESH_PREREG_ONLY
+STOP_CURRENT_STAGE1 for the frozen test set.
+CODE_AND_RUN_ALLOWED is rejected for current frozen Stage1.
+```
+
+Fable-5 explicitly rejected any improvement-seeking code or run on the current
+frozen Stage1 test set. Allowed work is limited to operating-point reporting,
+integrity/audit completion for the negative claim, sensitivity/power statements,
+row-audit coverage-gap documentation, and write-up.
+
+Important nuance:
+
+- Hidden AUROC around `0.68-0.84` is real above-chance, cross-source decodable
+  signal.
+- The failed claim is not "hidden contains no signal"; the failed claim is
+  "hidden beats matched/full surface baselines or has stable lead-time
+  advantage."
+
+Supported framing:
+
+> Stage1 shows linear prefix-hidden probes contain decodable safe/unsafe signal,
+> but in this teacher-forced natural-pair setting they do not beat matched or
+> full-trajectory surface baselines.
+
+Unsupported framing:
+
+> Stage1 demonstrates hidden-state superiority or stable lead-time advantage.
+
+The only legitimate positive path is a new preregistered Stage2/on-policy
+objective with fresh prompts/rollouts, a single early-horizon primary endpoint,
+and a one-shot gate before any unblinding.
+
 ## Excluded-Source Lead-Time Confirmation Plan And Code Prep (2026-07-05)
 
 ### Fable-5 Plan Review

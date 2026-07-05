@@ -9,15 +9,25 @@ Stage1 的工程链路和数据审计大体符合预期：pair freeze、LOSO sou
 dedup、R2 备份和大部分 row audit 都能支持把结果作为一个可解释的
 negative/control run。
 
-但核心科学假设没有成立：当前 hidden-prefix probe 没有稳定超过 text/surface
-baseline，也没有通过 excluded-source lead-time confirmation。Fable-5 对最终
-结果的复审结论是：
+同时需要区分弱结论和强结论：LOSO hidden test AUROC 的绝对数值并不差，
+大约在 `0.68-0.84`，其中 HB/SR/WJB 多数接近或超过 `0.8`。这说明 hidden
+state 里确实有可解码的 safe/unsafe signal。没有成立的是更强的科学假设：
+当前 hidden-prefix probe 没有稳定超过 text/surface baseline，也没有通过
+excluded-source lead-time confirmation。Fable-5 对最终结果的复审结论是：
 
 ```text
 drop_leadtime_claim is correct.
 Stage1 should now be treated as a negative/control result.
 Further re-analysis of the frozen test set to find a positive cell would be
 post-hoc fishing.
+```
+
+Round 3 fresh-path review 进一步确认：
+
+```text
+FRESH_PREREG_ONLY
+STOP_CURRENT_STAGE1 for the frozen test set.
+CODE_AND_RUN_ALLOWED is rejected for current frozen Stage1.
 ```
 
 ## 小实验状态表
@@ -143,10 +153,11 @@ decision = drop_leadtime_claim
 可以写：
 
 > 在当前 natural divergent-pair LOSO/frozen-split 设置下，当前测试过的
-> 线性 hidden-state probes 没有超过 validation-selected full-trajectory
-> surface text baselines，也没有通过 matched-horizon/A2/excluded-source
-> lead-time confirmation。这支持把 Stage1 作为当前 probe design 的
-> negative/control result。
+> 线性 prefix-hidden probes 包含可解码的 safe/unsafe signal，但没有超过
+> validation-selected full-trajectory surface text baselines，也没有通过
+> matched-horizon/A2/excluded-source lead-time confirmation。这支持把 Stage1
+> 作为当前 probe design 的 negative/control result，而不是 hidden-state
+> superiority evidence。
 
 不应写：
 
