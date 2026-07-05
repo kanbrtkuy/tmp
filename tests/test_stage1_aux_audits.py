@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from scripts.data import build_stage1_safe_prompt_diagnostics as safe_diag
+from scripts.data import audit_stage1_prediction_rows as row_audit
 from scripts.data import quarantine_stage1_external_prompts as quarantine
 from scripts.data import run_stage1_bootstrap_ci as bootstrap
 from scripts.data import sample_stage1_human_qa as sample_qa
@@ -140,6 +141,65 @@ def test_bootstrap_ci_and_delta(tmp_path):
     assert summary["models"]["left"]["auroc"] == 1.0
     assert summary["models"]["right"]["auroc"] == 0.5
     assert summary["deltas"]["left_minus_right"]["delta_auroc"] == 0.5
+
+
+def test_prediction_row_audit_detects_missing_rows(tmp_path):
+    prepared = tmp_path / "prepared" / "holdout_source" / "normalized"
+    archive = tmp_path / "archive"
+    pred_dir = archive / "stage1_natural_pairs_8b_a100_1x_loso_holdout_source" / "runs" / "linear" / "linear_last_prompt_token_l4"
+    val_rows = [
+        normalized_row("holdout_source", "p0", "safe", 0),
+        normalized_row("holdout_source", "p0", "unsafe", 1),
+    ]
+    test_rows = [
+        normalized_row("holdout_source", "p1", "safe", 2),
+        normalized_row("holdout_source", "p1", "unsafe", 3),
+    ]
+    write_jsonl(prepared / "val.jsonl", val_rows)
+    write_jsonl(prepared / "test.jsonl", test_rows)
+    write_jsonl(
+        pred_dir / "predictions_val.jsonl",
+        [
+            {
+                "example_id": val_rows[0]["id"],
+                "match_family": "p0",
+                "pair_id": "p0",
+                "label": 0,
+                "unsafe_score": 0.1,
+            }
+        ],
+    )
+    write_jsonl(
+        pred_dir / "predictions_test.jsonl",
+        [
+            {
+                "example_id": row["id"],
+                "match_family": row["match_family"],
+                "pair_id": row["pair_id"],
+                "label": 1 if row["trajectory_safety_label"] == "unsafe" else 0,
+                "unsafe_score": 0.8,
+            }
+            for row in test_rows
+        ],
+    )
+
+    args = type(
+        "Args",
+        (),
+        {
+            "prepared_dir": str(tmp_path / "prepared"),
+            "archive_root": str(archive),
+            "output_dir": str(tmp_path / "audit"),
+            "max_id_hashes": 10,
+        },
+    )()
+    summary = row_audit.run(args)
+    assert summary["passes"] is False
+    assert summary["n_mismatch_files"] == 1
+    mismatch = [row for row in summary["files"] if row["status"] == "mismatch"][0]
+    assert mismatch["split"] == "val"
+    assert mismatch["n_missing_ids"] == 1
+    assert mismatch["missing_label_counts"] == {"unsafe": 1}
 
 
 def test_safe_prompt_diagnostics_dedups_and_filters(tmp_path):
