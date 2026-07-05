@@ -28,6 +28,8 @@ Questions:
 
 ## Key Files
 
+- `decision_addendum_260705.md`
+- `fable_response.md`
 - `docs/stage1_post_hb_retune12288_b20_gap_audit_260705.md`
 - `val_fixed/val_fixed_probe_report.tsv`
 - `row_audit/stage1_prediction_row_audit_summary.json`
