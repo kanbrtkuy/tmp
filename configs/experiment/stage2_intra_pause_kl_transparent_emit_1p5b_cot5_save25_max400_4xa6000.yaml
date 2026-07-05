@@ -3,8 +3,8 @@ defaults:
   - ../runtime/a6000_4x.yaml
 
 run:
-  name: stage2_intra_pause_kl_transparent_emit_deepseek_1p5b_cot3_save25_max400_4xa6000
-  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot3_kl_transparent_emit_trusted_cot_18k_save25_max400_4xa6000
+  name: stage2_intra_pause_kl_transparent_emit_deepseek_1p5b_cot5_save25_max400_4xa6000
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_save25_max400_4xa6000
 
 data:
   input_jsonl: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/trusted_cot_18k/trusted_cot_raw.jsonl
@@ -19,9 +19,9 @@ runtime:
 
 sft:
   method: kl_transparent_emit
-  cot_offset: 3
-  intra_dir_name: intra_pause_cot3
-  tags: [deepseek_1p5b, intra_pause_cot3, before_cot3, kl_transparent_emit, a6000_pcie]
+  cot_offset: 5
+  intra_dir_name: intra_pause_cot5
+  tags: [deepseek_1p5b, intra_pause_cot5, after_cot4_before_cot5, kl_transparent_emit, a6000_pcie]
   learning_rate: 1.0e-3
   weight_decay: 0.0
   num_train_epochs: 1.0

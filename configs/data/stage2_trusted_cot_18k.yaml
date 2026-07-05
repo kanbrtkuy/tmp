@@ -17,6 +17,7 @@ data:
       rows: 6000
       role: high_quality_reasoning
   output_variants:
+    - intra_pause_cot5
     - intra_pause_cot4
     - intra_pause_cot3
     - no_pause

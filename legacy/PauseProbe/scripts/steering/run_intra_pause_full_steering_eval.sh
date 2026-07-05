@@ -26,6 +26,9 @@ pause1_only|pause_1
 pause2_only|pause_2}"
 TARGET_NAME="${TARGET_NAME:-all3}"
 TARGET_POSITIONS="${TARGET_POSITIONS:-pause_0,pause_1,pause_2}"
+MODEL_LABEL="${MODEL_LABEL:-deepseek_intra_pause_cot5_sft}"
+INSERT_PAUSE_AFTER_COT_TOKENS="${INSERT_PAUSE_AFTER_COT_TOKENS:-5}"
+N_INSERT_PAUSES="${N_INSERT_PAUSES:-3}"
 
 GEN_BATCH_SIZE="${GEN_BATCH_SIZE:-4}"
 JUDGE_BATCH_SIZE="${JUDGE_BATCH_SIZE:-4}"
@@ -286,7 +289,7 @@ run_generation_job() {
     --delta_checkpoint "${DELTA}" \
     --input_file "${input_file}" \
     --output_jsonl "${gen_file}" \
-    --model_label deepseek_intra_pause_cot3_sft \
+    --model_label "${MODEL_LABEL}" \
     --run_label "full_steering_${TARGET_NAME}_${dataset}_seed${seed}_alpha${slug}" \
     --layer "${LAYER}" \
     --alphas="${alpha}" \
@@ -294,8 +297,8 @@ run_generation_job() {
     --rows_per_label "${rows_per_label}" \
     --label_filter "${label_filter}" \
     --batch_size "${GEN_BATCH_SIZE}" \
-    --insert_pause_after_cot_tokens 3 \
-    --n_insert_pauses 3 \
+    --insert_pause_after_cot_tokens "${INSERT_PAUSE_AFTER_COT_TOKENS}" \
+    --n_insert_pauses "${N_INSERT_PAUSES}" \
     --max_input_length "${MAX_INPUT_LENGTH}" \
     --max_new_tokens "${MAX_NEW_TOKENS}" \
     --temperature "${TEMPERATURE}" \

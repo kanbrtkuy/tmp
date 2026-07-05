@@ -64,7 +64,7 @@ def main() -> None:
             "per-generation CoT judge labels in labels."
         )
     )
-    parser.add_argument("--config", default="configs/experiment/stage3_intra_pause_probe_kl_transparent_1p5b_cot3.yaml")
+    parser.add_argument("--config", default="configs/experiment/stage3_intra_pause_probe_kl_transparent_1p5b_cot5.yaml")
     parser.add_argument("--npz", default=None, help="Single on-policy NPZ; prompts are split into train/test groups.")
     parser.add_argument("--train_npz", default=None)
     parser.add_argument("--test_npz", default=None)

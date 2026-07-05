@@ -4,7 +4,7 @@ defaults:
 
 run:
   name: stage2_intra_pause_sft_deepseek_1p5b_4xa6000
-  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot3_trusted_cot_18k_4xa6000
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot5_trusted_cot_18k_4xa6000
 
 data:
   input_jsonl: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/trusted_cot_18k/trusted_cot_raw.jsonl
@@ -18,8 +18,10 @@ runtime:
     optim: adamw_torch
 
 sft:
+  cot_offset: 5
+  intra_dir_name: intra_pause_cot5
   max_steps: 250
   save_steps: 25
   eval_steps: 25
   save_total_limit: 20
-  tags: [deepseek_1p5b, intra_pause_cot3, before_cot3, full_sft, a6000_pcie]
+  tags: [deepseek_1p5b, intra_pause_cot5, after_cot4_before_cot5, full_sft, a6000_pcie]

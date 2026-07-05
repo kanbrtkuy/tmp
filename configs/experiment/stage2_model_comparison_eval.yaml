@@ -26,7 +26,7 @@ eval:
     temperature: 0.6
     top_p: 0.95
     forced_prefix: "<think>\n"
-    insert_pause_after_cot_tokens: 3
+    insert_pause_after_cot_tokens: 5
     n_insert_pauses: 3
     vllm:
       gpu_memory_utilization: 0.90

@@ -54,14 +54,16 @@ DEFAULT_SINGLE_POSITIONS = (
     "post_pause_1",
     "post_pause_2",
     "post_pause_3",
-    "control_cot_3",
-    "control_cot_4",
+    "control_cot_5",
+    "control_cot_6",
     "cot_3",
     "cot_4",
+    "cot_5",
+    "cot_6",
     "cot_7",
     "cot_8",
 )
-DEFAULT_COT_OFFSETS = (0, 1, 2, 3, 4, 5, 7, 8)
+DEFAULT_COT_OFFSETS = (0, 1, 2, 3, 4, 5, 6, 7, 8)
 
 
 @dataclass(frozen=True)
@@ -184,6 +186,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--layers", default=",".join(str(x) for x in DEFAULT_LAYERS))
     parser.add_argument("--positions", default=",".join(DEFAULT_SINGLE_POSITIONS))
     parser.add_argument("--cot_offsets", default=",".join(str(x) for x in DEFAULT_COT_OFFSETS))
+    parser.add_argument("--control_cot_offsets", default="5,6")
     parser.add_argument(
         "--prompt_positions",
         default="",
@@ -404,6 +407,8 @@ def extraction_cmd(args: argparse.Namespace, spec: SplitSpec, layers: list[int],
         ",".join(str(x) for x in layers),
         "--cot_offsets",
         args.cot_offsets,
+        "--control_cot_offsets",
+        args.control_cot_offsets,
         "--batch_size",
         str(args.extract_batch_size),
         "--max_length",
@@ -622,7 +627,7 @@ def run_single_scan(args: argparse.Namespace, specs: dict[str, SplitSpec], posit
     run_logged(cmd, Path(args.log_dir) / "intra_pause_single_scan.log", args.dry_run)
 
 
-def pooled_specs(layers: list[int]) -> list[PooledSpec]:
+def pooled_specs(layers: list[int], control_offsets: list[int]) -> list[PooledSpec]:
     pause = ("pause_0", "pause_1", "pause_2")
     pre = ("pre_pause_1", "pre_pause_2", "pre_pause_3")
     post = ("post_pause_1", "post_pause_2", "post_pause_3")
@@ -637,12 +642,14 @@ def pooled_specs(layers: list[int]) -> list[PooledSpec]:
             ]
         )
     all_layers = tuple(layers)
+    control_positions = tuple(f"control_cot_{offset}" for offset in control_offsets)
+    control_name = "control_" + "_".join(f"cot{offset}" for offset in control_offsets) + "_concat_layers_concat"
     specs.extend(
         [
             PooledSpec("pause_mean_layers_mean", pause, all_layers, "mean", "mean"),
             PooledSpec("pause_mean_layers_concat", pause, all_layers, "concat", "mean"),
             PooledSpec("pause_concat_layers_concat", pause, all_layers, "concat", "concat"),
-            PooledSpec("control_cot3_cot4_concat_layers_concat", ("control_cot_3", "control_cot_4"), all_layers, "concat", "concat"),
+            PooledSpec(control_name, control_positions, all_layers, "concat", "concat"),
         ]
     )
     return specs
@@ -778,7 +785,8 @@ def run_pooled(args: argparse.Namespace, splits: dict[str, SplitSpec], layers: l
     if not args.dry_run:
         for name in ("train", "val", "test"):
             require_file(splits[name].output_npz)
-    jobs = pooled_specs(layers)
+    control_offsets = parse_layers(args.control_cot_offsets)
+    jobs = pooled_specs(layers, control_offsets)
     probe_devices = parse_csv(args.probe_devices) if args.probe_devices else [args.probe_device]
     if not probe_devices:
         probe_devices = [args.probe_device]
@@ -816,6 +824,7 @@ def main() -> None:
     args = parse_args()
     layers = parse_layers(args.layers)
     positions = parse_csv(args.positions)
+    control_offsets = parse_layers(args.control_cot_offsets)
     splits = split_specs(args, layers)
 
     write_json(
@@ -824,8 +833,9 @@ def main() -> None:
             "args": vars(args),
             "layers": layers,
             "positions": positions,
+            "control_cot_offsets": control_offsets,
             "split_specs": {name: asdict(spec) for name, spec in splits.items()},
-            "pooled_specs": [asdict(spec) for spec in pooled_specs(layers)],
+            "pooled_specs": [asdict(spec) for spec in pooled_specs(layers, control_offsets)],
         },
     )
 

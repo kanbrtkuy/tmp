@@ -134,6 +134,7 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
     positions = stage3_positions(hidden)
     prompt_baselines = prompt_positions(hidden)
     cot_offsets = hidden.get("cot_offsets", [pause.get("cot_offset", 3)])
+    control_cot_offsets = hidden.get("control_cot_offsets", [3, 4])
     if not layers or not positions:
         raise SystemExit("Stage 3 config must define hidden.layers and hidden.positions.")
 
@@ -171,6 +172,8 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
         csv(positions),
         "--cot_offsets",
         csv(cot_offsets),
+        "--control_cot_offsets",
+        csv(control_cot_offsets),
         "--insert_cot_offset",
         str(insert_cot_offset),
         "--pre_pause_window",
@@ -243,7 +246,7 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Stage 3 intra-pause probe from a resolved config.")
-    parser.add_argument("--config", default="configs/experiment/stage3_intra_pause_probe_kl_transparent_1p5b_cot3.yaml")
+    parser.add_argument("--config", default="configs/experiment/stage3_intra_pause_probe_kl_transparent_1p5b_cot5.yaml")
     parser.add_argument("--legacy-root", default=None)
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--skip_base_data_prep", action="store_true")

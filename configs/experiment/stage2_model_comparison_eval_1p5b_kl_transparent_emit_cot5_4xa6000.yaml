@@ -4,8 +4,8 @@ defaults:
   - ../runtime/a6000_4x.yaml
 
 run:
-  name: stage2_model_comparison_eval_deepseek_1p5b_kl_transparent_emit_cot3_4xa6000
-  output_dir: ${COT_SAFETY_RUN_ROOT:-/workspace/cot-safety/runs}/eval/stage2_model_comparison_deepseek_1p5b_kl_transparent_emit_cot3_4xa6000
+  name: stage2_model_comparison_eval_deepseek_1p5b_kl_transparent_emit_cot5_4xa6000
+  output_dir: ${COT_SAFETY_RUN_ROOT:-/workspace/cot-safety/runs}/eval/stage2_model_comparison_deepseek_1p5b_kl_transparent_emit_cot5_4xa6000
 
 eval:
   devices: ["0", "1", "2", "3"]
@@ -17,18 +17,18 @@ eval:
       insert_pause_after_cot_tokens: -1
       n_insert_pauses: 0
       batch_size: 32
-    - label: kl_emit_cot3_natural
+    - label: kl_emit_cot5_natural
       kind: sft
-      path: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot3_kl_transparent_emit_trusted_cot_18k_save25_max400_4xa6000/final
+      path: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_save25_max400_4xa6000/final
       generation_backend: vllm
       insert_pause_after_cot_tokens: -1
       n_insert_pauses: 0
       batch_size: 32
-    - label: kl_emit_cot3_forced
+    - label: kl_emit_cot5_forced
       kind: sft
-      path: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot3_kl_transparent_emit_trusted_cot_18k_save25_max400_4xa6000/final
+      path: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_save25_max400_4xa6000/final
       generation_backend: vllm
-      insert_pause_after_cot_tokens: 3
+      insert_pause_after_cot_tokens: 5
       n_insert_pauses: 3
       batch_size: 32
   generation:

@@ -5,8 +5,11 @@ model:
   name: deepseek_r1_distill_qwen_1_5b
   base_model: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
   local_base_model: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Qwen-1.5B
-  sft_checkpoint: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_intra_pause_cot3_trusted_cot_18k_lr2e5_260615/final
+  sft_checkpoint: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot5_trusted_cot_18k_4xa6000/final
   tokenizer: null
   trust_remote_code: false
   max_length: 4096
   default_layers: [7, 14, 17, 21, 22, 28]
+
+pause:
+  cot_offset: 5

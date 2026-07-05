@@ -32,7 +32,7 @@ def main() -> None:
             "it does not replace the on-policy within-prompt confirmatory run."
         )
     )
-    parser.add_argument("--config", default="configs/experiment/stage3_intra_pause_probe_kl_transparent_1p5b_cot3.yaml")
+    parser.add_argument("--config", default="configs/experiment/stage3_intra_pause_probe_kl_transparent_1p5b_cot5.yaml")
     parser.add_argument("--summary", default=None, help="summary_grid.json/tsv from the Stage3 single-position scan.")
     parser.add_argument("--output_json", default=None)
     parser.add_argument(

@@ -457,12 +457,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Optional no-pause matched JSON/JSONL rows. When provided, "
-            "control_cot_3/control_cot_4 are extracted from a separate "
+            "control_cot_* positions are extracted from a separate "
             "pause-free forward pass instead of aliasing post-pause activations."
         ),
     )
     parser.add_argument("--layers", type=parse_csv_ints, default=[-1])
     parser.add_argument("--cot_offsets", type=parse_nonnegative_csv_ints, default=[0, 8, 16, 32, 64, 128])
+    parser.add_argument(
+        "--control_cot_offsets",
+        type=parse_nonnegative_csv_ints,
+        default=[3, 4],
+        help="Comma-separated no-pause CoT offsets to extract as matched control_cot_* positions.",
+    )
     parser.add_argument("--cot_fracs", type=parse_float_list, default=[])
     parser.add_argument(
         "--omit_think_last",
@@ -637,7 +643,7 @@ def main() -> None:
             position_names.extend(f"pre_pause_{idx}" for idx in range(1, args.pre_pause_window + 1))
             position_names.extend(f"post_pause_{idx}" for idx in range(1, args.post_pause_window + 1))
             if matched_lookup:
-                position_names.extend(["control_cot_3", "control_cot_4"])
+                position_names.extend(f"control_cot_{offset}" for offset in args.control_cot_offsets)
         position_names.extend(f"cot_{offset}" for offset in args.cot_offsets)
         position_names.extend(f"cot_frac_{int(round(frac * 100)):03d}" for frac in args.cot_fracs)
     position_names = list(dict.fromkeys(position_names))
@@ -720,7 +726,7 @@ def main() -> None:
                 think_ids=think_ids,
                 end_think_ids=end_think_ids,
                 n_pause_tokens=0,
-                cot_offsets=[3, 4],
+                cot_offsets=args.control_cot_offsets,
                 cot_fracs=[],
                 prompt_positions=[],
                 require_explicit_think=True,
@@ -731,12 +737,15 @@ def main() -> None:
             if control_parse_info.get("parse_status") != "explicit_think":
                 dropped[f"matched_control_{control_parse_info.get('parse_status', 'bad_parse')}"] += 1
                 continue
-            if "cot_3" not in raw_control_positions or "cot_4" not in raw_control_positions:
-                dropped["matched_control_missing_cot3_or_cot4"] += 1
+            missing_control_offsets = [
+                offset for offset in args.control_cot_offsets if f"cot_{offset}" not in raw_control_positions
+            ]
+            if missing_control_offsets:
+                dropped["matched_control_missing_control_cot_offsets"] += 1
                 continue
             control_positions = {
-                "control_cot_3": raw_control_positions["cot_3"],
-                "control_cot_4": raw_control_positions["cot_4"],
+                f"control_cot_{offset}": raw_control_positions[f"cot_{offset}"]
+                for offset in args.control_cot_offsets
             }
         examples.append(
             {
@@ -952,7 +961,9 @@ def main() -> None:
         "pre_pause_window": args.pre_pause_window,
         "post_pause_window": args.post_pause_window,
         "matched_control_file": args.matched_control_file,
-        "matched_control_positions": ["control_cot_3", "control_cot_4"] if matched_lookup else [],
+        "matched_control_positions": (
+            [f"control_cot_{offset}" for offset in args.control_cot_offsets] if matched_lookup else []
+        ),
         "assistant_token_ids": assistant_ids,
         "think_token_ids": think_ids,
         "end_think_token_ids": end_think_ids,

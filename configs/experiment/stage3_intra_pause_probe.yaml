@@ -12,10 +12,11 @@ hidden:
   positions:
     prompt_baselines: [last_prompt_token, pre_think]
     main: [pause_0, pause_1, pause_2]
-    diagnostics: [pre_pause_1, pre_pause_2, pre_pause_3, post_pause_1, post_pause_2, post_pause_3, control_cot_3, control_cot_4, cot_3, cot_4, cot_7, cot_8]
+    diagnostics: [pre_pause_1, pre_pause_2, pre_pause_3, post_pause_1, post_pause_2, post_pause_3, control_cot_5, control_cot_6, cot_4, cot_5, cot_6, cot_9, cot_10]
   pre_pause_window: 3
   post_pause_window: 3
-  cot_offsets: [3, 4, 7, 8]
+  cot_offsets: [4, 5, 6, 9, 10]
+  control_cot_offsets: [5, 6]
   extraction:
     train_shards: 1
     scheduler: dynamic_worker_queue
@@ -41,7 +42,7 @@ probe:
     label_source: cot_segment_judge
     layer: 14
     positions: [pause_0, pause_1, pause_2]
-    true_content_control_positions: [control_cot_3, control_cot_4]
+    true_content_control_positions: [control_cot_5, control_cot_6]
     require_true_content_control: true
     position_pool: mean
     require_all_positions: true

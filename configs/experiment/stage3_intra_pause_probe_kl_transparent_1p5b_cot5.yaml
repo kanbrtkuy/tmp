@@ -1,0 +1,38 @@
+defaults:
+  - stage3_intra_pause_probe.yaml
+
+run:
+  name: stage3_intra_pause_probe_kl_transparent_deepseek_1p5b_cot5
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_kl_transparent_deepseek_1p5b_cot5
+
+model:
+  sft_checkpoint: ${STAGE2_KL_CHECKPOINT:-/workspace/outputs/deepseek_1p5b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_save25_max400_4xa6000/checkpoint-400}
+
+pause:
+  cot_offset: 5
+
+hidden:
+  positions:
+    prompt_baselines: [last_prompt_token, pre_think]
+    main: [pause_0, pause_1, pause_2]
+    diagnostics: [pre_pause_1, pre_pause_2, pre_pause_3, post_pause_1, post_pause_2, post_pause_3, control_cot_5, control_cot_6, cot_4, cot_5, cot_6, cot_9, cot_10]
+  cot_offsets: [4, 5, 6, 9, 10]
+  control_cot_offsets: [5, 6]
+
+legacy:
+  base_data_dir: data/stage3_kl_transparent_1p5b_cot5_base
+  data_dir: data/stage3_kl_transparent_1p5b_cot5
+  hidden_dir: data/hidden/stage3_kl_transparent_1p5b_cot5
+  hidden_prefix: intra_pause_kl_transparent_1p5b_cot5
+  log_dir: logs/stage3_kl_transparent_1p5b_cot5
+  single_scan_out_root: runs/probes/stage3_kl_transparent_1p5b_cot5_single
+  pooled_out_root: runs/probes/stage3_kl_transparent_1p5b_cot5_pooled
+
+probe:
+  on_policy:
+    enabled: false
+    samples_per_prompt: 10
+    label_source: cot_segment_judge
+    primary_endpoint: within_prompt_auroc
+    status: not_implemented
+    true_content_control_positions: [control_cot_5, control_cot_6]

@@ -40,3 +40,14 @@ def test_insert_pause_before_cot3_word_offset():
     assert rewritten == "<think> alpha beta gamma <|pause|><|pause|><|pause|>delta epsilon </think>\nanswer"
     assert info["cot_offset"] == 3
     assert info["n_pause_tokens"] == 3
+
+
+def test_insert_pause_after_cot4_before_cot5_word_offset():
+    template = ChatTemplate(name="test")
+    spec = PauseSpec(pause_token="<|pause|>", n_pause_tokens=3, cot_offset=5)
+    output = "<think> t0 t1 t2 t3 t4 t5 t6 </think>\nanswer"
+
+    rewritten, info = insert_pause_before_cot_offset(output, DummyTokenizer(), template, spec)
+
+    assert rewritten == "<think> t0 t1 t2 t3 t4 <|pause|><|pause|><|pause|>t5 t6 </think>\nanswer"
+    assert info["cot_offset"] == 5
