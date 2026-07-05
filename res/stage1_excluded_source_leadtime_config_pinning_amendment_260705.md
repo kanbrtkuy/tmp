@@ -170,12 +170,16 @@ under the following minimal settings:
 
 - frozen splits from
   `/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/loso_freeze_fixed_budget_samples_000_099/stage1_prepared/{source}/`
+- output root:
+  `/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly`
 - model/tokenizer from the archived resolved Stage1 configs
 - `pause_layout=none`
 - `n_pause_tokens=0`
 - `label_field=trajectory_safety_label`
 - `layers=28`
 - `cot_offsets=4,8,16,32,64`
+- `omit_think_last=true`; the extractor must not save the default
+  `think_last` trajectory position for this preregistered cot-only run
 - `max_length=12288`
 - no additional layers, positions, sources, prompts, rollouts, or resampling
 

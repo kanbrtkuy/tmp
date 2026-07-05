@@ -4,7 +4,7 @@
   "reviewer": "claude-fable-5",
   "tmp_commit": "60b28e3",
   "packet": "/Users/baby/Documents/SafeChain/tmp/stage1_auto_improve_loop_260705/round1_results_packet",
-  "phase": "leadtime_confirmation_code_review_ok_pending_runpod_sync",
+  "phase": "leadtime_confirmation_cotonly_patch_ok_pending_runpod_extraction",
   "a1_code_packet_commit": "b0027fb",
   "a1_code_patch_commit": "03854ee",
   "a1_results_packet_commit": "abe8941",
@@ -22,5 +22,8 @@
   "leadtime_code_packet_commit": "c7a427e",
   "leadtime_code_review_verdict": "OK_TO_RUN",
   "leadtime_code_review_response": "review-stage/stage1_auto_improve_260705/fable5_excluded_leadtime_code_review_260705.md",
+  "leadtime_cotonly_patch_review_verdict": "OK_TO_RUN",
+  "leadtime_cotonly_patch_review_response": "review-stage/stage1_auto_improve_260705/fable5_excluded_leadtime_cotonly_patch_review_260705.md",
+  "leadtime_official_hidden_archive_root": "/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly",
   "timestamp": "2026-07-05T00:00:00Z"
 }

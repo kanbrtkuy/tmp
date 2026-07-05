@@ -11,7 +11,7 @@ VENV_DIR="${VENV_DIR:-/workspace/venvs/cot-natural}"
 PYTHON="${PYTHON:-${VENV_DIR}/bin/python}"
 FREEZE_DIR="${FREEZE_DIR:-/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/loso_freeze_fixed_budget_samples_000_099}"
 PREPARED_ROOT="${PREPARED_ROOT:-${FREEZE_DIR}/stage1_prepared}"
-HIDDEN_ARCHIVE_ROOT="${HIDDEN_ARCHIVE_ROOT:-/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives}"
+HIDDEN_ARCHIVE_ROOT="${HIDDEN_ARCHIVE_ROOT:-/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly}"
 LOG_DIR="${LOG_DIR:-/workspace/logs/stage1_excluded_leadtime_260705}"
 
 MODEL="${MODEL:-deepseek-ai/DeepSeek-R1-Distill-Llama-8B}"
@@ -68,6 +68,7 @@ for source in ${SOURCES}; do
       --label_field trajectory_safety_label \
       --layers "${LAYER}" \
       --cot_offsets "${COT_OFFSETS}" \
+      --omit_think_last \
       --prompt_positions "" \
       --pause_layout none \
       --n_pause_tokens 0 \

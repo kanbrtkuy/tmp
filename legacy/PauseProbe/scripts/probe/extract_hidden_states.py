@@ -465,6 +465,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cot_offsets", type=parse_nonnegative_csv_ints, default=[0, 8, 16, 32, 64, 128])
     parser.add_argument("--cot_fracs", type=parse_float_list, default=[])
     parser.add_argument(
+        "--omit_think_last",
+        action="store_true",
+        help=(
+            "Do not save the default think_last trajectory position. This is "
+            "for preregistered cot-offset-only extractions; parsing still uses "
+            "the think markers to locate CoT offsets."
+        ),
+    )
+    parser.add_argument(
         "--prompt_positions",
         default="",
         help=(
@@ -622,7 +631,8 @@ def main() -> None:
     if args.n_pause_tokens > 0 and args.pause_layout != "none":
         position_names.extend(f"pause_{i}" for i in range(args.n_pause_tokens))
     if require_explicit_think:
-        position_names.append("think_last")
+        if not args.omit_think_last:
+            position_names.append("think_last")
         if args.pause_layout in {"intra_cot", "auto"}:
             position_names.extend(f"pre_pause_{idx}" for idx in range(1, args.pre_pause_window + 1))
             position_names.extend(f"post_pause_{idx}" for idx in range(1, args.post_pause_window + 1))
@@ -933,6 +943,7 @@ def main() -> None:
         "layer_ids": selected_layer_ids,
         "position_names": position_names,
         "prompt_positions": args.prompt_positions,
+        "omit_think_last": args.omit_think_last,
         "label_counts": dict(label_counts),
         "parse_counts": dict(parse_counts),
         "dropped": dict(dropped),

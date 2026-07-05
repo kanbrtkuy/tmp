@@ -180,6 +180,34 @@ tests. Non-blocking operational note: R2 backup remains a post-run step, and
 the results packet must confirm default sources/k-grid and
 `minimum_pairs_per_source=150`.
 
+### Cot-Only Extraction Patch Review
+
+During the first RunPod extraction attempt, the legacy extractor saved an
+extra default `think_last` position. The run was stopped before interpretation,
+and official outputs were moved to a fresh cot-only root:
+`/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly`.
+
+Patch:
+
+- `legacy/PauseProbe/scripts/probe/extract_hidden_states.py` adds
+  `--omit_think_last`.
+- `pipelines/runpod_stage1_excluded_leadtime_extract_minimal.sh` passes
+  `--omit_think_last`.
+- The config-pinning amendment now requires `omit_think_last=true` and the
+  cot-only output root.
+
+Fable-5 narrow patch verdict: `OK_TO_RUN`.
+
+Required result-review checks carried forward:
+
+- official hidden archives must originate from
+  `hidden_archives_excluded_leadtime_cotonly`;
+- each manifest must have `omit_think_last: true`;
+- each manifest `position_names` must be exactly
+  `cot_4,cot_8,cot_16,cot_32,cot_64`;
+- old partial artifacts under `hidden_archives` remain quarantined and must not
+  be used.
+
 ### Post-Pivot Diagnostics Memo
 
 - Added `res/stage1_a1_a2_leadtime_diagnostics_260705.md`.
