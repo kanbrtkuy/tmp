@@ -297,6 +297,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--multilayer_out_root", default="runs/probes/position_scan_full_external_multilayer")
     parser.add_argument("--sources", nargs="+", default=list(DEFAULT_SOURCES))
     parser.add_argument("--heldout_source", action="append", default=None)
+    parser.add_argument(
+        "--no_heldout_sources",
+        action="store_true",
+        help="Do not create source-heldout split specs. Use for prepared paired data with only train/val/test files.",
+    )
     parser.add_argument("--star_min_score", type=float, default=8.0)
     parser.add_argument("--max_per_source", type=int, default=None)
     parser.add_argument("--max_prompt_words", type=int, default=800)
@@ -434,7 +439,9 @@ def parse_args() -> argparse.Namespace:
         args.probe_cpu_threads,
         max(args.scan_jobs, args.multilayer_jobs),
     )
-    if args.heldout_source is None:
+    if args.no_heldout_sources:
+        args.heldout_source = []
+    elif args.heldout_source is None:
         args.heldout_source = list(DEFAULT_HELDOUT_SOURCES)
     return args
 

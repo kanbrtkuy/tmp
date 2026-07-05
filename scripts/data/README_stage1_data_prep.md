@@ -25,7 +25,66 @@ raw source data
   -> completeness audit and clean manifests
   -> Stage 1 split freeze
   -> Stage 1 teacher-forcing export
+  -> CPU text/surface baselines
 ```
+
+## Natural Same-Prompt CoT Pair Pilot
+
+After the A-prime/B-prime OpenAI rewrite audit, the next diagnostic pipeline is
+natural same-prompt pair collection. It resamples prompts from the same source
+model that produced the original unsafe CoT, then uses a safety judge plus local
+quality checks to select one high-quality naturally safe CoT per prompt.
+
+Main files:
+
+```text
+configs/data/natural_cot_pair_pilot.yaml
+scripts/data/run_natural_cot_pair_pipeline.py
+```
+
+Typical command sequence on a GPU node:
+
+```bash
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml prepare
+
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml generate --model r1-8b
+
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml generate --model r1-32b
+
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml judge
+
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml select
+
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml summarize
+```
+
+Important outputs:
+
+```text
+runs/natural_cot_pair_pilot_v1/prompt_manifest.jsonl
+runs/natural_cot_pair_pilot_v1/unsafe_reference_manifest.jsonl
+runs/natural_cot_pair_pilot_v1/unsafe_reference_pool.jsonl
+runs/natural_cot_pair_pilot_v1/candidates_<model>.jsonl
+runs/natural_cot_pair_pilot_v1/judged_candidates_<model>.jsonl
+runs/natural_cot_pair_pilot_v1/natural_safe_pairs.jsonl
+runs/natural_cot_pair_pilot_v1/natural_pair_summary.json
+```
+
+The generation cap is controlled by `generation.max_new_tokens`. This is only a
+maximum, not a length target; the pilot should inspect hit-cap rates before
+raising the cap from `8192` to `16384` or `32768`. The selected pair file keeps
+natural safe/unsafe length differences for analysis rather than forcing length
+or style matching.
+
+Hardware note: full bf16 `r1-32b` normally needs more memory than one 48GB A6000.
+Use a larger GPU, tensor parallelism, or a documented quantized checkpoint before
+running the 32B leg at scale.
 
 The primary Stage 1 data should use the completeness-clean manifests:
 
@@ -265,7 +324,9 @@ python3 scripts/data/freeze_stage1_prompt_splits.py \
 Status:
 
 - Tiny synthetic dry-run passed.
-- Real clean-manifest prompt split freeze has not been run yet.
+- Real clean-manifest prompt split freeze passed on the RunPod CPU node.
+- Frozen split summary: `2556` pairs, `1670` prompt groups,
+  train/val/test prompt groups = `1503/84/83`.
 
 ### 7. Stage 1 Export
 
@@ -308,9 +369,48 @@ python3 scripts/data/export_safe_rewrite_pairs_for_stage1.py \
 
 Status:
 
-- Pending the real clean-manifest prompt split artifact.
+- Real `reasoning_only` export passed on the RunPod CPU node.
+- A-prime export: `2192` rows / `1096` pairs.
+- B-prime export: `2920` rows / `1460` pairs.
 
-### 8. External Review Bundle
+### 8. CPU Text Baselines
+
+#### `run_stage1_text_baselines.py`
+
+Purpose:
+
+- Run CPU-only surface baselines from exported
+  `normalized/{train,val,test}.jsonl` rows.
+- Provide checks that hidden-state probes are not only rediscovering shallow
+  text artifacts.
+
+Default baselines:
+
+- length-only logistic regression.
+- prompt-only TF-IDF logistic regression.
+- word TF-IDF logistic regression.
+- word bag-of-words logistic regression.
+- character n-gram TF-IDF logistic regression.
+- first-sentence-removed TF-IDF logistic regression.
+
+Example:
+
+```bash
+OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8 NUMEXPR_NUM_THREADS=8 \
+python3 scripts/data/run_stage1_text_baselines.py \
+  --export-dir runs/stage1_exports/A_prime_reasoning_only \
+  --output-dir runs/stage1_text_baselines/A_prime \
+  --n-jobs 8
+```
+
+Notes:
+
+- The script rejects `match_family` overlap across train/val/test by default.
+- The original-unsafe vs OpenAI-paraphrased provenance classifier is skipped
+  until a reviewed pair-id-aligned original unsafe source is provided.
+- Tiny fixture tests for this script passed on the RunPod CPU node.
+
+### 9. External Review Bundle
 
 #### `build_fable5_pipeline_review_bundle.py`
 
@@ -356,7 +456,7 @@ split.
   `res/stage1_data_preparation_status_260702.md` to verify local copies.
 - Do not overwrite original frozen manifests. Use the completeness-clean
   directory for Stage 1.
-- Execution order is: local freeze/export tests and tiny synthetic dry-run,
-  then real clean-manifest prompt split freeze, then real `reasoning_only`
-  Stage 1 export. Do not start CPU baselines or GPU extraction until the real
-  split/export artifacts exist.
+- Execution order is: freeze/export tests and tiny synthetic dry-run, real
+  clean-manifest prompt split freeze, real `reasoning_only` Stage 1 export,
+  then CPU text/surface baselines. Do not start GPU extraction until CPU/text
+  baselines and prompt-only controls have been run and reviewed.

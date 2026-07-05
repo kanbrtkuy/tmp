@@ -1,0 +1,59 @@
+defaults:
+  - stage1b_natural_pairs_1p5b.yaml
+  - ../model/deepseek_r1_distill_qwen_32b.yaml
+
+run:
+  name: stage1b_natural_pairs_32b_a100_1x
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1b_natural_pairs_32b_a100_1x
+
+probe:
+  layers: [8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64]
+  prompt_positions: [last_prompt_token, assistant_start, assistant_last, pre_think]
+  positions:
+    - last_prompt_token
+    - assistant_start
+    - assistant_last
+    - pre_think
+    - think_last
+    - cot_2
+    - cot_3
+    - cot_4
+    - cot_7
+  multilayer_concat:
+    positions: [last_prompt_token, pre_think, think_last, cot_2, cot_3, cot_4, cot_7]
+
+runtime:
+  name: a100_1x_80g_32b_hidden
+  num_gpus: 1
+  cuda_visible_devices: "0"
+  devices: [cuda:0]
+  hf_home: ${HF_HOME:-/workspace/hf-cache}
+  torch_dtype: bfloat16
+  pytorch_cuda_alloc_conf: expandable_segments:True
+  hidden:
+    extract_jobs: 1
+    extract_devices: [cuda:0]
+    extract_train_shards: 1
+    batch_size_per_gpu: 1
+    compression: uncompressed
+  probes:
+    single_scan_backend: batched
+    dynamic_task_multiplier: 96
+    jobs: 96
+    devices: [cuda:0]
+    worker_slots_per_gpu: 48
+    jobs_per_gpu: 48
+    scan_batch_size: 4096
+    scan_eval_batch_size: 8192
+    multilayer_jobs: 24
+    multilayer_fallback_device: cpu
+    cpu_threads_per_job: 2
+    probe_timeout_seconds: 0
+    device: cuda
+
+legacy:
+  hidden_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/hidden/stage1b_natural_pairs_32b_a100_1x
+  hidden_prefix: stage1b_natural_pairs_32b_a100_1x
+  log_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/logs/stage1b_natural_pairs_32b_a100_1x
+  single_scan_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1b_natural_pairs_32b_a100_1x/linear
+  multilayer_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1b_natural_pairs_32b_a100_1x/multilayer

@@ -27,6 +27,7 @@ raw source data
   -> completeness audit and clean manifests
   -> Stage 1 split freeze
   -> Stage 1 teacher-forcing export
+  -> CPU text/surface baselines
 ```
 
 Stage 1 primary 数据应使用 completeness-clean manifests：
@@ -35,6 +36,61 @@ Stage 1 primary 数据应使用 completeness-clean manifests：
 runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/A_prime_manifest.jsonl
 runs/openai_full_ab_quality_audit_v1/frozen_manifests_v1_completeness_clean/B_prime_manifest.jsonl
 ```
+
+## Natural same-prompt CoT pair pilot
+
+A-prime/B-prime 的 OpenAI rewrite audit 显示 surface baseline 太强后，下一条
+诊断路径是自然采样 same-prompt pair：对已经有原始 unsafe CoT 的 prompt，用
+产生该 unsafe CoT 的同一个 source model 重新采样，再用 safety judge 和本地
+quality checks 选出一条高质量、自然生成的 safe CoT。
+
+主要文件：
+
+```text
+configs/data/natural_cot_pair_pilot.yaml
+scripts/data/run_natural_cot_pair_pipeline.py
+```
+
+GPU 节点上的典型命令顺序：
+
+```bash
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml prepare
+
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml generate --model r1-8b
+
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml generate --model r1-32b
+
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml judge
+
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml select
+
+python3 scripts/data/run_natural_cot_pair_pipeline.py \
+  --config configs/data/natural_cot_pair_pilot.yaml summarize
+```
+
+重要输出：
+
+```text
+runs/natural_cot_pair_pilot_v1/prompt_manifest.jsonl
+runs/natural_cot_pair_pilot_v1/unsafe_reference_manifest.jsonl
+runs/natural_cot_pair_pilot_v1/unsafe_reference_pool.jsonl
+runs/natural_cot_pair_pilot_v1/candidates_<model>.jsonl
+runs/natural_cot_pair_pilot_v1/judged_candidates_<model>.jsonl
+runs/natural_cot_pair_pilot_v1/natural_safe_pairs.jsonl
+runs/natural_cot_pair_pilot_v1/natural_pair_summary.json
+```
+
+`generation.max_new_tokens` 是生成上限，不是长度控制。pilot 先用 `8192`，
+如果 hit-cap rate 明显，尤其是长 CoT 上被截断，再升到 `16384` 或 `32768`。
+这一轮保留 safe/unsafe 的自然长度差，不强行做长度或风格匹配。
+
+硬件提醒：full bf16 `r1-32b` 通常不能放进单张 48GB A6000。运行 32B leg
+之前，需要更大显存、多卡 tensor parallelism，或者明确记录使用量化 checkpoint。
 
 ## 脚本索引
 
@@ -262,7 +318,9 @@ python3 scripts/data/freeze_stage1_prompt_splits.py \
 状态：
 
 - Tiny synthetic dry-run 已通过。
-- 真实 clean-manifest prompt split freeze 尚未执行。
+- 真实 clean-manifest prompt split freeze 已在 RunPod CPU 节点通过。
+- Frozen split summary：`2556` pairs、`1670` prompt groups，
+  train/val/test prompt groups = `1503/84/83`。
 
 ### 7. Stage 1 export
 
@@ -304,9 +362,47 @@ python3 scripts/data/export_safe_rewrite_pairs_for_stage1.py \
 
 状态：
 
-- 等待真实 clean-manifest prompt split artifact。
+- 真实 `reasoning_only` export 已在 RunPod CPU 节点通过。
+- A-prime export：`2192` rows / `1096` pairs。
+- B-prime export：`2920` rows / `1460` pairs。
 
-### 8. External review bundle
+### 8. CPU text baselines
+
+#### `run_stage1_text_baselines.py`
+
+用途：
+
+- 从导出的 `normalized/{train,val,test}.jsonl` rows 运行 CPU-only surface
+  baselines。
+- 用来检查 hidden-state probes 是否只是学到了浅层文本 artifact。
+
+默认 baselines：
+
+- length-only logistic regression。
+- prompt-only TF-IDF logistic regression。
+- word TF-IDF logistic regression。
+- word bag-of-words logistic regression。
+- character n-gram TF-IDF logistic regression。
+- first-sentence-removed TF-IDF logistic regression。
+
+示例：
+
+```bash
+OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8 NUMEXPR_NUM_THREADS=8 \
+python3 scripts/data/run_stage1_text_baselines.py \
+  --export-dir runs/stage1_exports/A_prime_reasoning_only \
+  --output-dir runs/stage1_text_baselines/A_prime \
+  --n-jobs 8
+```
+
+注意：
+
+- 脚本默认拒绝 train/val/test 之间存在 `match_family` overlap。
+- original-unsafe vs OpenAI-paraphrased provenance classifier 继续跳过，直到
+  有经过 review 且 pair-id 对齐的 original unsafe source。
+- 这个脚本的 tiny fixture tests 已在 RunPod CPU 节点通过。
+
+### 9. External review bundle
 
 #### `build_fable5_pipeline_review_bundle.py`
 
@@ -350,7 +446,7 @@ Primary paired data 已经准备好，但 `S->S` diagnostic data 仍待准备。
   track，请使用 `res/stage1_data_preparation_status_260702.md` 或中文版本中的
   SHA-256 校验本地副本。
 - 不要覆盖原始 frozen manifests。Stage 1 应使用 completeness-clean directory。
-- 执行顺序是：local freeze/export tests 和 tiny synthetic dry-run，真实
-  clean-manifest prompt split freeze，真实 `reasoning_only` Stage 1 export。
-  在真实 split/export artifacts 生成前，不启动 CPU baselines 或 GPU
-  extraction。
+- 执行顺序是：freeze/export tests 和 tiny synthetic dry-run，真实
+  clean-manifest prompt split freeze，真实 `reasoning_only` Stage 1 export，
+  然后 CPU text/surface baselines。在 CPU/text baselines 和 prompt-only
+  controls 运行并 review 之前，不启动 GPU extraction。

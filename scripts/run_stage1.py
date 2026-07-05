@@ -199,12 +199,18 @@ def remove_synced_hot(src: Path, dst: Path) -> None:
 
 def stage1_hot_paths(config: dict[str, Any]) -> list[Path]:
     paths = stage1_legacy.stage_paths(config)
-    return [
-        resolve_path(paths["data_dir"]),
+    prepared_data_dir = config.get("data", {}).get("prepared_data_dir")
+    data_dir = resolve_path(paths["data_dir"])
+    hot_paths = [
         resolve_path(paths["hidden_dir"]),
         resolve_path(paths["log_dir"]),
         resolve_path(paths["single_scan_out_root"]).parent,
     ]
+    # A prepared natural-pair data directory is an input artifact, not a hot
+    # cache owned by this run. Do not sync/remove it after module completion.
+    if not prepared_data_dir or not same_path(data_dir, resolve_path(prepared_data_dir)):
+        hot_paths.insert(0, data_dir)
+    return hot_paths
 
 
 def cold_config_for_hot(config: dict[str, Any]) -> dict[str, Any]:

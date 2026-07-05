@@ -25,7 +25,10 @@ liveness:
   gate:
     min_pause_vs_content_gain: 0.25
     min_pause_vs_bos_gain: 5.0
+    min_pause_attention_mass: 0.0
+    min_pause_vs_content_attention_ratio: 0.25
     require_positive_control_green: true
+    allow_yellow_for_gprs: true
 
 steering:
   method: gprs
@@ -46,6 +49,8 @@ steering:
     direction_artifact: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts/mean_diff_direction.pt
     safe_centroid: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts/safe_centroid.pt
     probe_checkpoint: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_kl_transparent_deepseek_1p5b_cot3/probe.pt
+    artifact_manifest: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts/gprs_artifact_manifest.json
+    stage3_evidence_report: legacy/PauseProbe/runs/probes/stage3_kl_transparent_1p5b_cot3_single/stage3_evidence_report.json
     gate_threshold: 0.95
     norm_cap: 0.10
     random_direction_control: true

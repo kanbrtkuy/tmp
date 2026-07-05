@@ -29,3 +29,5 @@ steering:
     direction_artifact: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts_8b/mean_diff_direction.pt
     safe_centroid: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts_8b/safe_centroid.pt
     probe_checkpoint: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_kl_transparent_deepseek_8b_cot4_4xa100/probe.pt
+    artifact_manifest: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts_8b/gprs_artifact_manifest.json
+    stage3_evidence_report: legacy/PauseProbe/runs/probes/stage3_kl_transparent_8b_cot4_single/stage3_evidence_report.json

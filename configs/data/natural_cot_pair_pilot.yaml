@@ -1,0 +1,113 @@
+run:
+  name: natural_cot_pair_pilot_v1
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/natural_cot_pair_pilot_v1
+  resolved_config: ${COT_SAFETY_RUN_ROOT:-runs}/natural_cot_pair_pilot_v1/resolved_config.yaml
+
+data:
+  unsafe_seed_jsonls:
+    - data/reasoningshield_rewrite_all4813/unsafe_trajectory_seeds.jsonl
+    - data/harmthoughts_rewrite_300/unsafe_trajectory_seeds.jsonl
+    - data/harmthoughts_rewrite_remaining718/unsafe_trajectory_seeds.jsonl
+    - data/harmthoughts_rewrite_remaining233/unsafe_trajectory_seeds.jsonl
+  target_models:
+    - r1-8b
+    - r1-32b
+  # Hardware note: full bf16 r1-32b usually does not fit on one 48GB A6000.
+  # Use a larger GPU / multi-GPU tensor parallelism / documented quantized
+  # checkpoint before enabling the 32B leg at scale.
+  deduplicate_prompts_within_model: true
+  primary_unsafe_reference_strategy: seeded_random
+  # 0 means "all available prompts". For first GPU pilot, override this to a
+  # small value such as 100 or 200.
+  max_prompts_per_model: 0
+  selection_seed: 260702
+  min_unsafe_reasoning_words: 30
+
+model_aliases:
+  r1-8b:
+    canonical: r1-8b
+    hf_model: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+    family: deepseek-r1-distill
+    recommended_source: DeepSeek R1 model card
+  r1-32b:
+    canonical: r1-32b
+    hf_model: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+    family: deepseek-r1-distill
+    recommended_source: DeepSeek R1 model card
+  qwq:
+    canonical: qwq-32b
+    hf_model: Qwen/QwQ-32B
+    family: qwq
+    recommended_source: Qwen QwQ model card
+  qwq-32b:
+    canonical: qwq-32b
+    hf_model: Qwen/QwQ-32B
+    family: qwq
+    recommended_source: Qwen QwQ model card
+  ot-7b:
+    canonical: ot-7b
+    hf_model: open-thoughts/OpenThinker-7B
+    family: openthinker
+    recommended_source: OpenThinker model card lacks explicit decoding defaults
+
+generation:
+  # Main profile: official DeepSeek/QwQ model-card defaults discussed in notes.
+  parameter_profile: official_model_cards
+  temperature: 0.6
+  top_p: 0.95
+  samples_per_prompt: 10
+  # This is a cap, not a length target. Increase to 16384/32768 if hit-cap
+  # rate is non-negligible in the pilot, especially for unsafe/natural long CoT.
+  max_new_tokens: 8192
+  max_model_len: 32768
+  dtype: bfloat16
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.90
+  trust_remote_code: true
+  batch_size: 128
+  seed: 260702
+  use_chat_template: true
+  system_prompt: ""
+  # DeepSeek model cards recommend forcing the thinking prefix when the model
+  # bypasses the expected thinking format. This is recorded explicitly so it can
+  # be ablated.
+  assistant_prefill: "<think>\n"
+  stop: []
+
+alternative_generation_profiles:
+  # ReasoningShield paper appendix reports temperature=0.6 and top_p=0.9 for
+  # open LRM trace generation. Keep this profile for a reproducibility ablation.
+  reasoningshield_paper_table:
+    temperature: 0.6
+    top_p: 0.9
+
+quality:
+  min_reasoning_words: 30
+  require_final_answer: false
+  require_explicit_think: false
+  reject_hit_max_tokens: true
+  max_repeated_4gram_fraction: 0.35
+  max_repeated_line_fraction: 0.40
+  max_unusual_char_fraction: 0.20
+
+judge:
+  enabled: true
+  model_path: ReasoningShield/ReasoningShield-1B
+  prompt_file: configs/judge/reasoningshield_prompt.txt
+  temperature: 0.0
+  top_p: 1.0
+  max_tokens: 1024
+  max_model_len: 16384
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.85
+  dtype: bfloat16
+  trust_remote_code: true
+  batch_size: 256
+
+selection:
+  require_safety_label: safe
+  require_quality_pass: true
+  prefer_complete: true
+  prefer_low_repetition: true
+  # The selected safe CoT should not be chosen merely because it is longest.
+  length_is_tiebreaker_only: true

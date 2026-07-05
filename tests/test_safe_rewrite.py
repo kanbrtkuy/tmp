@@ -122,11 +122,16 @@ def test_normalize_generated_rewrite_parses_legacy_think_trajectory():
 
 
 def test_merge_generated_pair_and_long_rows():
+    unsafe_reasoning = " ".join(f"unsafe_step_{idx}" for idx in range(40))
+    safe_reasoning = (
+        "Assess the request at a high level, identify the safety risk, refuse operational details, "
+        "and redirect toward defensive review and benign alternatives."
+    )
     rows = [
         {
             "id": "p001",
             "query": "User prompt",
-            "bad_cot": "Unsafe reasoning.",
+            "bad_cot": unsafe_reasoning,
             "bad_final": "Unsafe final.",
             "label": "unsafe",
         }
@@ -135,7 +140,7 @@ def test_merge_generated_pair_and_long_rows():
     record = merge_generated_pair(
         task,
         {
-            "safe_reasoning": "Safe high-level rationale.",
+            "safe_reasoning": safe_reasoning,
             "safe_final_answer": "Safe answer.",
             "label": "safe",
             "length_notes": "within target",
@@ -147,8 +152,8 @@ def test_merge_generated_pair_and_long_rows():
 
     assert record["ok"] is True
     assert record["label"] == "safe"
-    assert record["unsafe_trajectory"] == "Unsafe reasoning."
-    assert record["safe_reasoning"] == "Safe high-level rationale."
+    assert record["unsafe_trajectory"] == unsafe_reasoning
+    assert record["safe_reasoning"] == safe_reasoning
     assert record["safe_trajectory"].startswith("<think>")
     assert record["length_match_pass"] is False
     assert record["style_profile"] in {"defensive_technical", "risk_assessment"}

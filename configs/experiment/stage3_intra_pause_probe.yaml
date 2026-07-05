@@ -25,6 +25,7 @@ probe:
   sample_weight_mode: source_label
   threshold_max_fpr: 0.05
   primary_endpoint: teacher_forced_pause_minus_prompt_screen
+  min_pause_margin_over_baselines: 0.01
   confirmatory_endpoint:
     name: within_prompt_auroc
     status: not_implemented
@@ -38,6 +39,18 @@ probe:
     enabled: false
     samples_per_prompt: 10
     label_source: cot_segment_judge
+    layer: 14
+    positions: [pause_0, pause_1, pause_2]
+    true_content_control_positions: [control_cot_3, control_cot_4]
+    require_true_content_control: true
+    position_pool: mean
+    require_all_positions: true
+    min_mixed_prompts: 20
+    min_within_prompt_auroc: 0.55
+    min_pause_margin_over_baselines: 0.01
+    bootstrap_samples: 1000
+    test_prompt_fraction: 0.5
+    seed: 260704
   scan:
     single_scan_backend: batched
     single_position_single_layer: true
