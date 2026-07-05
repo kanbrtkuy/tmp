@@ -1,0 +1,34 @@
+{
+  "stage": "stage1_threshold_reanalysis",
+  "script_version": "stage1_threshold_reanalysis_v1",
+  "val_fixed_tsv": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/val_fixed_probe_report_retune12288_b20/val_fixed_probe_report.tsv",
+  "surface_root": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/text_baseline_predictions_retune12288_b20",
+  "output_dir": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/cpu_reanalysis_threshold_matched_horizon_260705_b500/threshold",
+  "policies": {
+    "current_prediction": "stored prediction labels from existing files",
+    "platt_0p5": "Platt scaling on validation scores, threshold calibrated probability at 0.5",
+    "val_ba_max": "validation-label balanced-accuracy threshold sweep",
+    "test_score_median_transductive": "held-out score median, no held-out labels used for threshold",
+    "oracle_test_ba_max": "test-label balanced-accuracy maximum; diagnostic only"
+  },
+  "selection_policy": {
+    "hidden": "validation-selected rows from val_fixed_tsv",
+    "surface_selected": "highest validation AUROC in source metrics",
+    "length_only": "same source length_only prediction files"
+  },
+  "group_fields": [
+    "match_family",
+    "pair_id",
+    "id"
+  ],
+  "n_bootstrap": 500,
+  "seed": 260705,
+  "n_rows": 192,
+  "n_errors": 0,
+  "errors": [],
+  "git": {
+    "commit": null,
+    "dirty": false,
+    "dirty_short": null
+  }
+}
