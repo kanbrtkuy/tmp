@@ -13,6 +13,9 @@ MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-768}"
 MAX_INPUT_LENGTH="${MAX_INPUT_LENGTH:-2048}"
 ALPHAS="${ALPHAS:-0,1,2}"
 SEEDS="${SEEDS:-260618 260619 260620}"
+MODEL_LABEL="${MODEL_LABEL:-deepseek_intra_pause_cot5_sft}"
+INSERT_PAUSE_AFTER_COT_TOKENS="${INSERT_PAUSE_AFTER_COT_TOKENS:-5}"
+N_INSERT_PAUSES="${N_INSERT_PAUSES:-3}"
 
 cd "${ROOT}"
 mkdir -p "${OUT_ROOT}" "${HF_HOME}"
@@ -42,14 +45,14 @@ for seed in ${SEEDS}; do
       --delta_checkpoint "${DELTA}" \
       --input_file "${INPUT}" \
       --output_jsonl "${gen_file}" \
-      --model_label deepseek_intra_pause_cot3_sft \
+      --model_label "${MODEL_LABEL}" \
       --run_label "learned_delta_zero_l14_multiseed_${seed}" \
       --layer 14 \
       --alphas="${ALPHAS}" \
       --rows_per_label "${ROWS_PER_LABEL}" \
       --batch_size "${BATCH_SIZE}" \
-      --insert_pause_after_cot_tokens 3 \
-      --n_insert_pauses 3 \
+      --insert_pause_after_cot_tokens "${INSERT_PAUSE_AFTER_COT_TOKENS}" \
+      --n_insert_pauses "${N_INSERT_PAUSES}" \
       --max_input_length "${MAX_INPUT_LENGTH}" \
       --max_new_tokens "${MAX_NEW_TOKENS}" \
       --temperature 0.6 \

@@ -10,3 +10,6 @@ model:
   trust_remote_code: false
   max_length: 4096
   default_layers: [7, 14, 17, 21, 22, 28]
+
+pause:
+  cot_offset: 5

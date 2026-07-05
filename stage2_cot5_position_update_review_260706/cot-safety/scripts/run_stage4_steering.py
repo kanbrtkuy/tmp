@@ -150,6 +150,9 @@ def build_env(config: dict[str, Any], legacy_root: Path, repo_root: Path, args: 
 
     env.setdefault("LAYER", str(steering.get("layer", 14)))
     env.setdefault("STEERING_METHOD", str(steering.get("method", "learned_delta")))
+    env.setdefault("INSERT_PAUSE_AFTER_COT_TOKENS", str(steering.get("insert_pause_after_cot_tokens", 5)))
+    env.setdefault("N_INSERT_PAUSES", str(steering.get("n_insert_pauses", 3)))
+    env.setdefault("MODEL_LABEL", str(steering.get("model_label", "deepseek_intra_pause_cot5_sft")))
     env.setdefault("ALPHAS", csv(steering.get("alpha_grid", [0.0, 1.0, 2.0])))
     env.setdefault("SEEDS", words(steering.get("seeds", [260618, 260619, 260620])))
     env["TARGET_SPECS"] = target_specs(steering)
