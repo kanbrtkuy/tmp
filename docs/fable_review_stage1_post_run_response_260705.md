@@ -133,3 +133,51 @@ Fable's example CLI flag names in its prose used `--stage1_max_*`; the implement
 
 Use the implemented flag names in actual runs.
 
+## Addendum: Length/Style Naturalness Correction
+
+After recording this response, the user reminded us of an earlier Fable point:
+safe and unsafe CoTs generated naturally under the same prompt/model can have
+different length and style for real reasons. Forcing length/style matching by
+dropping many pairs can erase the natural distribution and make the experiment
+less faithful.
+
+Therefore, the execution plan is revised:
+
+1. **Do not use word-budget caps as the primary LOSO freeze rule.**
+   The main post-HB pipeline no longer passes `--max-prompt-words`,
+   `--max-reasoning-words`, or `--max-final-words` to the LOSO builder.
+
+2. **Treat length/style as measured surface confounds, not matching criteria.**
+   The planned controls remain:
+   - length-only baseline
+   - word/char TF-IDF and BoW baselines
+   - embedding baseline
+   - token-matched truncation curves
+   - length-stratified reporting or pre-registered caliper sensitivity
+   - paired bootstrap probe-minus-surface delta CIs
+
+3. **Handle extractor feasibility separately.**
+   If a row cannot be processed because the rendered tokenizer length exceeds
+   extractor limits, prefer increasing or adapting extractor `max_length` where
+   feasible. Only use pair exclusion as a technical, pre-registered last resort,
+   not as length/style matching.
+
+4. **Re-ask Fable on this corrected interpretation before formal reruns.**
+   The key question is whether the confirmed too-long row should be preserved
+   by a higher extraction length/fallback path rather than dropped by a word cap.
+
+Fable narrow correction review result:
+
+- Verdict: the corrected plan is methodologically preferable.
+- The natural same-prompt generated/generated length and style variation should
+  be preserved in the primary freeze.
+- Word-cap flags may remain only as disabled-by-default technical escape hatches.
+- Downstream controls should carry the burden: length-only, TF-IDF/BoW,
+  embedding, token-matched truncation, length-stratified/caliper sensitivity,
+  and paired probe-minus-surface delta CIs.
+- Tokenizer-only audit found 13,438 rendered rows, 1 unique row/pair over 4096
+  and 8192 tokens, max length 8576 tokens, and 0 rows over 12288 tokens.
+- GPU sanity runs found that `batch_size=20`, `max_length=12288`, and
+  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` complete with no drops,
+  peak observed memory of 78,363 MiB, and 100% GPU utilization. `batch_size=22`
+  OOMed, so 20 is the highest validated A100 extraction batch for this path.

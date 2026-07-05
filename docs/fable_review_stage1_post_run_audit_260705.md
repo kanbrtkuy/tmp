@@ -268,7 +268,7 @@ The following are not yet formalized as completed:
 
 ## Post-Packet Remediation Update
 
-After the first post-run packet, we added a fail-closed LOSO freeze word-budget gate:
+After the first post-run packet, we initially added a fail-closed LOSO freeze word-budget gate:
 
 - Code: `scripts/data/build_stage1_loso_freeze.py`
 - Pipeline call: `pipelines/runpod_stage1_post_hb_freeze_then_loso.sh`
@@ -301,7 +301,15 @@ Drop reason counts:
 | `final_answer_words_gt_cap` | 97 |
 | `reasoning_words_gt_cap` | 7 |
 
-This should eliminate the confirmed too-long WildJailbreak unsafe row from the next formal freeze. It also reduces WJB below its previous ideal count of 2000, though it remains above the minimum floor. Please review whether this fail-closed word-budget gate is preferable to extractor-side truncation, and whether these post-gate source counts are still acceptable for formal Stage1.
+Important correction after user review:
+
+- This word-budget gate must **not** become the primary formal freeze rule.
+- Same-prompt, same-model safe/unsafe CoTs can naturally differ in length and style.
+- Forcing length/style matching by dropping many pairs can erase the natural generated/generated distribution.
+- The main pipeline has been changed back so it does not pass word-budget caps by default.
+- Length/style are to be handled through surface baselines, token-matched truncation, length-stratified reporting or pre-registered caliper sensitivity, and paired delta CIs.
+- The too-long row is now treated as an extractor-feasibility issue. Prefer increasing/adapting extraction length where feasible; use pair exclusion only as a technical last resort, not as length/style matching.
+- The 8B A100 extraction path now uses `max_length=12288` and the highest validated long-context batch setting: `batch_size_per_gpu=20` with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`; `batch_size=22` OOMed in sanity testing.
 
 ## Questions for Fable
 

@@ -484,9 +484,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=260705)
     parser.add_argument("--val-frac", type=float, default=0.10)
     parser.add_argument("--wjb-trainval-cap", type=int, default=700)
-    parser.add_argument("--max-prompt-words", type=int, default=0, help="Drop a pair if any row prompt exceeds this word cap; 0 disables.")
-    parser.add_argument("--max-reasoning-words", type=int, default=0, help="Drop a pair if any row reasoning exceeds this word cap; 0 disables.")
-    parser.add_argument("--max-final-words", type=int, default=0, help="Drop a pair if any row final answer exceeds this word cap; 0 disables.")
+    # Disabled by default. These caps are a last-resort technical extractability
+    # escape hatch, not a length/style matching rule for natural CoT pairs.
+    parser.add_argument(
+        "--max-prompt-words",
+        type=int,
+        default=0,
+        help=(
+            "Technical extractability cap only: drop a pair if any row prompt exceeds this word cap. "
+            "Do not use this for primary length/style matching. 0 disables."
+        ),
+    )
+    parser.add_argument(
+        "--max-reasoning-words",
+        type=int,
+        default=0,
+        help=(
+            "Technical extractability cap only: drop a pair if any row reasoning exceeds this word cap. "
+            "Do not use this for primary length/style matching. 0 disables."
+        ),
+    )
+    parser.add_argument(
+        "--max-final-words",
+        type=int,
+        default=0,
+        help=(
+            "Technical extractability cap only: drop a pair if any row final answer exceeds this word cap. "
+            "Do not use this for primary length/style matching. 0 disables."
+        ),
+    )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     if not (0.0 <= args.val_frac < 0.5):

@@ -26,9 +26,6 @@ WAIT_POLL_SECONDS="${WAIT_POLL_SECONDS:-300}"
 FIXED_BUDGET_SAMPLE_START="${FIXED_BUDGET_SAMPLE_START:-0}"
 FIXED_BUDGET_MAX_SAMPLE_IDX="${FIXED_BUDGET_MAX_SAMPLE_IDX:-100}"
 WJB_TRAINVAL_CAP="${WJB_TRAINVAL_CAP:-700}"
-STAGE1_MAX_PROMPT_WORDS="${STAGE1_MAX_PROMPT_WORDS:-800}"
-STAGE1_MAX_REASONING_WORDS="${STAGE1_MAX_REASONING_WORDS:-1600}"
-STAGE1_MAX_FINAL_WORDS="${STAGE1_MAX_FINAL_WORDS:-800}"
 QA_ROWS_PER_SOURCE="${QA_ROWS_PER_SOURCE:-60}"
 QA_UNSAFE_AGREEMENT_BAR="${QA_UNSAFE_AGREEMENT_BAR:-0.90}"
 REQUIRED_LOSO_SOURCES="${REQUIRED_LOSO_SOURCES:-reasoningshield,strongreject_full,wildjailbreak_vanilla_harmful,harmbench_standard}"
@@ -496,9 +493,6 @@ run_step "build_loso_freeze_${fixed_tag}" "${PYTHON}" scripts/data/build_stage1_
   "${LOSO_INPUT_ARGS[@]}" \
   --output-dir "${FREEZE_DIR}" \
   --wjb-trainval-cap "${WJB_TRAINVAL_CAP}" \
-  --max-prompt-words "${STAGE1_MAX_PROMPT_WORDS}" \
-  --max-reasoning-words "${STAGE1_MAX_REASONING_WORDS}" \
-  --max-final-words "${STAGE1_MAX_FINAL_WORDS}" \
   --force
 verify_frozen_loso_sources "${FREEZE_DIR}/stage1_loso_freeze_summary.json" "${REQUIRED_LOSO_SOURCES}" "${MIN_LOSO_SOURCE_PAIRS}"
 
