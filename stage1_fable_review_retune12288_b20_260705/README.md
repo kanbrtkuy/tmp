@@ -32,6 +32,7 @@ Questions:
 - `probe_redesign_addendum_260705.md`
 - `fable_response.md`
 - `fable_decision_response_260705.md`
+- `fable_probe_redesign_response_260705.md`
 - `docs/stage1_post_hb_retune12288_b20_gap_audit_260705.md`
 - `val_fixed/val_fixed_probe_report.tsv`
 - `row_audit/stage1_prediction_row_audit_summary.json`
@@ -66,3 +67,19 @@ hidden probe has a negative AUROC delta against the strongest
 validation-selected surface baseline.
 
 Human QA remains unannotated, so all GPU results remain provisional.
+
+## 2026-07-05 Fable-5 Probe Redesign Review
+
+The probe-redesign follow-up was reviewed with Fable-5 pro/high-rigor mode.
+The response is archived in `fable_probe_redesign_response_260705.md`.
+
+Decision: `ONLY AFTER GATES`.
+
+Fable-5 keeps the current Stage1 run as a negative/control result for the
+current linear hidden-probe design. It does not approve another GPU sweep of
+the same design. If Stage1 is redesigned, the approved next step is a CPU-only
+matched-horizon reanalysis on frozen data: compare hidden states at CoT token
+`k` against surface features computed from the same emitted prefix, not
+against full-trajectory hindsight text. GPU is only conditionally allowed to
+regenerate missing RS/SR hidden arrays after the non-GPU gates and Phase-1
+continue criteria pass.
