@@ -4,11 +4,14 @@
   "reviewer": "claude-fable-5",
   "tmp_commit": "60b28e3",
   "packet": "/Users/baby/Documents/SafeChain/tmp/stage1_auto_improve_loop_260705/round1_results_packet",
-  "phase": "a2_code_ok_to_run",
+  "phase": "a2_results_reviewed_stop_equal_horizon_pivot",
   "a1_code_packet_commit": "b0027fb",
   "a1_code_patch_commit": "03854ee",
   "a1_results_packet_commit": "abe8941",
   "a2_code_packet_commit": "58d6eeb",
   "a2_code_review_verdict": "OK_TO_RUN",
+  "a2_results_packet_commit": "5c1b2de",
+  "a2_results_review_verdict": "STOP_EQUAL_HORIZON_AND_PIVOT",
+  "equal_horizon_status": "closed",
   "timestamp": "2026-07-05T00:00:00Z"
 }

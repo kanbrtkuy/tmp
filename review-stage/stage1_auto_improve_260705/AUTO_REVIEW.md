@@ -122,6 +122,128 @@ is a **lead-time claim**: *hidden states at ~4 generated tokens predict the even
 
 </details>
 
+### A2 Run
+
+- Code commit: `d26d03c`.
+- RunPod output:
+  `/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/feature_pooling_a2_260705_b500`
+- R2 backup:
+  `cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n100/runs/stage1_post_hb_260705_after_hb_n100_loso/feature_pooling_a2_260705_b500/`
+- `n_errors=0`, `a2_full_success=false`, `a2_partial_pivot=false`,
+  `a2_failure=true`.
+- Pooled same-horizon delta AUROC:
+  - k=4: `+0.0041`, CI `[-0.0082, +0.0158]`
+  - k=8: `-0.0235`, CI `[-0.0350, -0.0123]`
+  - k=16: `-0.0428`, CI `[-0.0547, -0.0315]`
+  - k=32: `-0.0430`, CI `[-0.0533, -0.0323]`
+  - k=64: `-0.0564`, CI `[-0.0667, -0.0448]`
+- A2 results packet tmp commit: `5c1b2de`.
+- Fable-5 A2 results review returned `STOP_EQUAL_HORIZON_AND_PIVOT`.
+
+### Fable-5 A2 Results Review
+
+- Verdict: `STOP_EQUAL_HORIZON_AND_PIVOT`.
+- Run validity: accepted.
+- Failure branch: confirmed, because k=8 delta CI low `< 0`.
+- Mandatory stop: equal-horizon probe-variant iteration is closed.
+- Interpretation:
+  - A1's k=8 advantage was score-pooling-specific and not confirmed by A2.
+  - A2 shows text evidence accumulates faster than the pooled hidden readout.
+  - Do not overclaim "hidden has no signal"; A2 hidden AUROCs remain
+    `0.73-0.79`, but they do not beat matched-horizon text.
+  - A1/A2 recipe-strength caveat must be disclosed: at k=4 both use `cot_4`,
+    but A1 hidden AUROC was `0.788` while A2 refit was `0.736`.
+- Allowed next actions:
+  - document and close equal-horizon thread;
+  - report A1 and A2 side by side;
+  - run only descriptive, zero-new-fit diagnostics from existing artifacts;
+  - optional future pre-registered confirmation on excluded sources if
+    lead-time is to be treated as more than exploratory.
+- Disallowed actions:
+  - no A2b rescue variant, no new pooling/classifier/layer/hyperparameter
+    search, no metric/cell shopping.
+
+<details>
+<summary>Click to expand full Fable-5 A2 results review</summary>
+
+```text
+Memory updated. Full review below.
+
+---
+
+# Fable-5 Review — Stage1 A2 Feature-Level Cumulative Pooling Results
+
+**Packet:** `round1_a2_results_packet` (7 files, matches README manifest; aggregate-only, no restricted content). All numbers below re-verified from `stage1_feature_pooling_summary.tsv/.json`, `_preregistration.json`, `_lead_time_matrix.tsv`, and the two diagnostics TSVs — not taken from the README.
+
+## Verdict: **STOP_EQUAL_HORIZON_AND_PIVOT**
+
+The run is valid, the preregistered failure branch fired exactly as written, and A2 was the pre-declared last equal-horizon attempt. The stop is mandatory, not discretionary.
+
+## 1. Run validity (checked before interpreting anything)
+
+| Check | Result |
+|---|---|
+| Prereg echoed in artifact, rules written pre-execution | ✓ `_preregistration.json`: failure rule = "if k=8 CI low < 0, stop; A1 was score-pooling-specific" |
+| Code commit | ✓ `git.commit=d26d03c`, `dirty=false`, matches prereg — my required run condition satisfied |
+| Exit / errors | ✓ `n_errors=0`, `errors=[]` |
+| Frozen population | ✓ constant 152 (HB) / 2019 (WJB) / 2171 (pooled) test pairs at every k; zero drops in split/fit diagnostics; val alignment 264/264 and 124/124 with 0 label/pair mismatches — the fail-closed guards held |
+| No future positions | ✓ pool indices strictly cumulative: [5] → [5,9] → [5,9,13] → [5,9,13,15] → [5,9,13,15,17] (cot_4…cot_64) |
+| Val-only z-norm, both arms | ✓ `hidden_val_stats`/`surface_val_stats` per source×k, n = val rows (264/124) |
+| Holm family {8,16,32,64}, k4 exploratory | ✓ k4 rows have empty `holm_p`; k8–k64 pooled Holm p reported |
+
+Not an INVALID_RUN by any criterion I set at code review.
+
+## 2. Task 1 — Failure branch verification: **YES, satisfied**
+
+Pooled same-horizon Δ AUROC (hidden − char-tfidf), from the summary TSV:
+
+| k | hidden | text | Δ | 95% CI | Holm p |
+|---:|---:|---:|---:|---|---:|
+| 4 | 0.7364 | 0.7323 | +0.0041 | [−0.0082, +0.0158] | (exploratory) |
+| 8 | 0.7335 | 0.7570 | **−0.0235** | **[−0.0350, −0.0123]** | <0.002 |
+| 16 | 0.7589 | 0.8018 | −0.0428 | [−0.0547, −0.0315] | <0.002 |
+| 32 | 0.7646 | 0.8077 | −0.0430 | [−0.0533, −0.0323] | <0.002 |
+| 64 | 0.7932 | 0.8495 | −0.0564 | [−0.0667, −0.0448] | <0.002 |
+
+k8 CI low = −0.0350 < 0 → failure branch. Not marginal: the entire k8 CI is negative, both sources individually significant (HB −0.068, WJB −0.019), and every k ≥ 8 is fully negative. Full-success and partial-pivot conditions both fail (partial required k8 to hold). The `a2_failure=true` flag is consistent with the underlying rows, not just asserted. Max adjacent hidden drop 0.0029 passed the monotone check — the failure is not a mechanical artifact of pooling collapse; pooled hidden genuinely grows slower than text.
+
+## 3. Task 2 — Stop rule: **applies now**
+
+A2 was declared in advance (A1 results review, echoed in the artifact's own prereg) as the final equal-horizon attempt, with "failure → stop, no rescue attempts." The branch fired. Equal-horizon probe-variant iteration is over. Two prior forecasts corroborate that this is signal, not bad luck: my round-1 assessment called the equal-horizon race "unwinnable" with a realistic A2 ceiling of parity (it landed below that), and the 2026-07-02 DPI audit predicted exactly this regime.
+
+## 4. Task 3 — Interpretation
+
+**A1 vs A2.** A1's k8 advantage (+0.0274, CI [+0.0183, +0.0366]) reversed to −0.0235 under feature pooling. Preregistered reading stands: the advantage was score-pooling-specific — an ensembling effect (averaging several calibrated per-position probe decisions reduces variance) rather than extra extractable information. Feature-level pooling, which gives the hidden arm strictly richer access to the same information, found less, not more.
+
+**One caveat the report must carry** (visible in the packet, changes attribution, not the verdict): at k=4 both arms pool only `cot_4`, so A1-k4 and A2-k4 use *identical features* — yet A1's pipeline probe scored 0.788 while A2's preregistered refit (StandardScaler+LogReg) scored 0.7364. The refit recipe is ~0.05 AUROC weaker on the same inputs. A2's negative deltas therefore conflate (a) pooling scheme and (b) probe-recipe strength, and the packet cannot separate them. This does not rescue equal-horizon — even A1's stronger recipe only tied text at k16/k32 and lost at k64 — but it means "feature pooling destroys signal" is an overclaim; "the equal-horizon advantage is not robust to the probe estimator" is what the data supports.
+
+**Hidden-vs-text fairness.** A2 was the fair comparison: cumulative access on both arms, matched horizons, frozen population, refit per k, no future leakage. Its answer is clean: text evidence accumulates faster (0.732→0.850) than pooled hidden readout (0.736→0.793), because at larger k char-tfidf reads the model's own verbalized decision. This is the DPI-consistent outcome — under teacher forcing, hidden@k is a deterministic function of the same prefix, so hidden could only ever win on extractor efficiency, and it doesn't. The lead-time direction also vanishes under A2's recipe (hidden@4 vs text@8: −0.021 CI fully negative; hidden@64 ≈ text@16, < text@32), so the A1 lead-time result (hidden@4 ≈ text@16–32) is likewise recipe-sensitive.
+
+## 5. Tasks 4–5 — Allowed next actions ONLY
+
+1. **Document, don't run.** Write the failure-branch outcome into `AUTO_REVIEW.md`/registry; mark the equal-horizon thread CLOSED with the full k-table. No new equal-horizon experiments of any kind.
+2. **Report both A1 and A2 side by side**, always — A1 is not deleted (it passed its own gate); it is re-scoped as pooling-scheme-specific.
+3. **Cheap allowed diagnostics (descriptive, zero new fits):** (a) diff the A1 pipeline probe config vs A2's refit recipe from *existing* artifacts to document the 0.788-vs-0.736 k4 gap; (b) footnote the k4→k8 pooled-hidden dip (0.7364→0.7335) as evidence unweighted mean pooling dilutes early positions; (c) publish the lead-time matrix as-is; (d) report bootstrap p=0.0 as p < 0.002 (B=500); (e) per-source rows with the HB n=152 power caveat.
+4. **Optional, decision for you/professor, not required:** one pre-registered *confirmation* (not variant search) of the k4 lead-time diagnostic on the two excluded sources (strongreject_full, reasoningshield), running **both** recipes (A1 pipeline probe + A2 refit) and accepting either outcome. This was pre-flagged in round 1 §5 before A2 ran, so it is not a forked path — but it only matters if you want lead-time in the paper as more than exploratory.
+5. **Proceed on the separately registered workstreams** unaffected by this stop: Gates 3/4 (S→S FPR, encoder controls), on-policy OOD eval, and the LOSO source-expansion memo (still pending sign-off).
+
+## 6. Disallowed (forking-path / cherry-picking guard)
+
+- Any new pooling rule (max/attention/learned-weight/concat/last-token), layer, classifier, hyperparameter tuning, surface-family swap, k-grid, re-split, or re-normalization aimed at the equal-horizon question. **Specifically: no "A2b" that retunes the refit recipe to match A1's probe strength** — that is the canonical rescue variant.
+- Headlining favorable cells or metrics: pair-rank k4 (+0.025, CI positive) stays in the table but never becomes the headline (metric shopping); lead-matrix cells like hidden@64 vs text@8 (+0.036) are the wrong direction for any lead claim (cell shopping).
+- Citing HB-only k32/k64 CIs that cross zero as "parity on HarmBench" — underpowered subgroup (n=152).
+- Reporting A1 without A2, or A2's failure without A1's pass. The pair is the finding.
+- Standing rules: no test-max numbers; don't over-rotate into "hidden states carry no safety signal" — absolute AUROCs 0.73–0.79 are well above chance; the negative is strictly about *relative* advantage over text at equal horizon under teacher forcing.
+
+## 7. Concrete Stage1 reporting language
+
+> **Equal-horizon comparison (preregistered, final).** On teacher-forced natural pairs (harmbench_standard n=152, wildjailbreak_vanilla_harmful n=2019 test pairs), linear probes on layer-28 hidden states do not outperform a matched-horizon character TF-IDF baseline. A score-pooled analysis (A1) showed an advantage at k=8 (ΔAUROC +0.027, 95% CI [+0.018, +0.037]), but the preregistered feature-level rerun (A2: cumulative mean of layer-28 vectors over positions j≤k, probe refit per k, frozen evaluation population) reversed it: k=8 Δ = −0.024, CI [−0.035, −0.012]; k=64 Δ = −0.056, CI [−0.067, −0.045]; Holm-corrected p < 0.002. Per the pre-declared decision rule we conclude the A1 advantage was pooling-scheme-specific and terminate equal-horizon probe iteration. Text accuracy grows with horizon faster than pooled hidden readout (0.732→0.850 vs 0.736→0.793 from k=4→64), consistent with the data-processing inequality under teacher forcing: the text prefix upper-bounds hidden-state information, so hidden-state monitoring cannot be motivated by an information advantage in this regime. An early-horizon signal (hidden@4 ≈ text@16–32 under the original probe pipeline, Δ@k4 +0.056; attenuated to +0.004, n.s., under the preregistered refit recipe) is reported as an exploratory diagnostic only. The motivation for hidden-state methods in this project accordingly rests on causal utility (steering) and on-policy settings (Stage 3 pause positions), where the text-prefix bound does not apply, rather than on monitoring advantage.
+
+**Summary:** valid run, failure branch confirmed from the artifacts, hard stop on equal-horizon variants, pivot to documenting the preregistered negative + exploratory lead-time diagnostic, with the A1-vs-A2 recipe-strength caveat disclosed. Memory updated with the closed-loop state.
+```
+
+</details>
+
 ### Planned Actions
 
 1. Implement A1 CPU-only cumulative score-pooling script.
