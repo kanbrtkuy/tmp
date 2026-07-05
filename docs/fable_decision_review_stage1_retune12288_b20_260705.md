@@ -80,6 +80,53 @@ Non-GPU gates before any redesigned GPU run:
 - Pre-GPU data completeness audit.
 - Validation-only hyperparameter protocol fixed before running.
 
+## Fable-5 Probe Redesign Review
+
+Follow-up review:
+
+- tmp repo commit: `0ea86e7`
+- packet path: `stage1_fable_review_retune12288_b20_260705/`
+- response: `fable_probe_redesign_response_260705.md`
+- reviewer mode: Fable-5 pro/high-rigor
+
+Final decision label:
+
+> ONLY AFTER GATES
+
+Fable-5 keeps the current Stage1 run as a negative/control result for the
+current linear hidden-probe design. It does not approve another GPU sweep of
+the same design.
+
+The methodological diagnosis is sharper than the first decision review:
+
+- The dominant failure is the evaluation contrast, not simply linear probe
+  capacity.
+- Hidden probes use a prefix-limited hidden snapshot, while surface baselines
+  use full-trajectory hindsight text.
+- `length_only` beats the selected hidden probe on all four sources, suggesting
+  that much of the surface advantage is outcome-correlated hindsight structure.
+- The early-position variant has effectively already been run through Stage1b;
+  trying more early positions alone is not a scientific fix.
+
+The approved redesign is CPU-only matched-horizon reanalysis on frozen data:
+
+- Compare hidden@k against surface features from the same emitted prefix
+  at k, not against full-completion text.
+- Use k in `{4, 8, 16, 32, 64}`.
+- Report paired delta AUROC, within-pair ranking accuracy, and residual
+  delta log-loss / delta AUROC.
+- Treat full-text surface baselines and `length_only` as hindsight reference
+  lines, not matched competitors.
+
+GPU is only conditionally allowed after non-GPU gates pass and Phase-1 HB+WJB
+results satisfy continue criteria. Its only approved use is regeneration of
+missing RS/SR hidden arrays from frozen configs; it is not approval for another
+position/layer/classifier sweep.
+
+The kill criterion is also explicit: if hidden@k does not beat matched text@k
+with CI-separated deltas at early horizons on HB and WJB, Stage1 probing should
+stop permanently and be reported as a well-posed negative/control result.
+
 ## Allowed Claims After Remaining Checks
 
 After human QA, S-to-S safe-prompt diagnostics, and HT quarantine/external

@@ -84,6 +84,48 @@ cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260704-a100-8b-remaining-n10
 remaining-prompt run，将合并后的 R1-8B safe/original pairs 从 663 提升到
 746，同时包含日志、manifest 和小型代码快照。
 
+2026-07-05 post-HB Stage1 LOSO/retune12288_b20 run、hidden archives、日志、
+`/dev/shm` run artifacts 和代码快照已全量归档到：
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n100/
+```
+
+该归档记录在 `docs/stage1_post_hb_r2_archive_260705_zh.md`。最终 R2 size
+为 38,224 objects / 64.186 GiB，并包含 `/dev/shm/cot-safety-hot/runs`
+的目录式备份和 `runs.tar.gz` sidecar。
+
+## 2026-07-05 Post-HB Stage1 计划更新
+
+post-HB retune12288/b20 sequence 已完成，但 Fable 和 Fable-5 均不建议把
+当前结果作为 hidden-state superiority 证据。当前线性 hidden-probe 设计应作为
+negative/control result 记录；不再继续跑同一设计的 GPU position/layer/classifier
+sweep。
+
+Fable-5 的后续复审结论为 `ONLY AFTER GATES`。如果继续 Stage1，下一步不是调大
+probe 或换模型，而是先做 CPU-only matched-horizon reanalysis：
+
+- 对比 hidden@k 与同一前缀 token 的 surface@k，而不是 full-trajectory text。
+- k 固定为 `{4, 8, 16, 32, 64}`。
+- 先在已保存 hidden arrays 的 HB + WJB 上跑 Phase 1。
+- 只有 Phase 1 continue criteria 和 G1-G8 非 GPU gates 都通过，才允许用 GPU
+  补回 RS/SR 丢失的 hidden arrays。
+- 如果 HB + WJB 上 hidden@k 对 text@k 没有 CI-separated early-horizon 优势，
+  Stage1 probing 永久停止，转为 well-posed negative/control claim。
+
+Fable-5 review 已归档在 tmp repo commit `0ea86e7`：
+
+```text
+stage1_fable_review_retune12288_b20_260705/fable_probe_redesign_response_260705.md
+```
+
+主 repo 摘要见：
+
+```text
+docs/fable_decision_review_stage1_retune12288_b20_260705.md
+res/stage1_post_hb_retune12288_b20_results_260705_zh.md
+```
+
 ## 当前解释原则
 
 - A prime 更像是失败案例：它说明当 rewrite/style artifact 存在时，hidden probe 可以接近完美。

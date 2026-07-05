@@ -50,6 +50,16 @@ cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260704-a100-8b-remaining-n10
 详见 `docs/stage1_paired_8b_remaining_r2_archive_260704.md` 与
 `docs/stage1_paired_8b_remaining_r2_archive_260704_zh.md`。
 
+2026-07-05 post-HB Stage1 LOSO/retune12288_b20 run 和 GPU/`/dev/shm` artifacts
+已全量归档到：
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n100/
+```
+
+详见 `docs/stage1_post_hb_r2_archive_260705_zh.md`。对应 post-HB 结果记录见
+`res/stage1_post_hb_retune12288_b20_results_260705_zh.md`。
+
 ## CPU 表层 Baselines
 
 ### Natural 8B generated/generated
@@ -150,3 +160,19 @@ natural 8B generated/generated 的 provenance re-join 成功覆盖 934 rows / 46
 - surface baselines 同样很强，这是当前最大限制：目前结果能说明 separability 存在，但还不能干净说明它是 safety semantics。
 - 多个 dense scans 中 test-set max 和 validation-selected test score 差距较大。主结果应该报告 validation-selected position/layer，而不是 post-hoc test maximum。
 - 下一步最关键的是 source-balanced LOSO、token-matched truncation、embedding-based surface baselines、paired bootstrap confidence intervals，以及 validation-selected hidden-probe reporting。
+
+## 2026-07-05 Post-HB 更新
+
+post-HB retune12288/b20 run 完成后，hidden-minus-surface CI audit 显示
+16 个 validation-selected hidden probe 对 strongest validation-selected
+surface baseline 的 AUROC delta 全部为负。Fable-5 复审结论为：
+
+```text
+ONLY AFTER GATES
+```
+
+当前 Stage1 run 应作为当前线性 hidden-probe 设计的 negative/control result，
+而不是 hidden-state superiority 结果。若继续 Stage1，下一步只允许先做
+CPU-only matched-horizon reanalysis：hidden@k 对比同一前缀 token 的 surface@k。
+GPU 仅在 HB + WJB Phase-1 通过和 G1-G8 非 GPU gates 通过后，用于补回 RS/SR
+丢失 hidden arrays。
