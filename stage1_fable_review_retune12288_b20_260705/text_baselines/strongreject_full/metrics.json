@@ -1,0 +1,312 @@
+{
+  "script_version": "stage1_text_baselines_v1",
+  "export_dir": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/loso_freeze_fixed_budget_samples_000_099/stage1_prepared/strongreject_full",
+  "output_dir": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/text_baseline_predictions_retune12288_b20/strongreject_full",
+  "input_files": {
+    "train": {
+      "path": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/loso_freeze_fixed_budget_samples_000_099/stage1_prepared/strongreject_full/normalized/train.jsonl",
+      "sha256": "8ee7a2b9ca27ffe8c0bf01313e45334c7a8cc1a83343cb429d5f5ee2d65be97d",
+      "n_rows": 1862
+    },
+    "val": {
+      "path": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/loso_freeze_fixed_budget_samples_000_099/stage1_prepared/strongreject_full/normalized/val.jsonl",
+      "sha256": "8496b34a5a0bf668c904ab18ef1ae8fa6ec735ac0f23f7aaeaa95c32035d3020",
+      "n_rows": 208
+    },
+    "test": {
+      "path": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/loso_freeze_fixed_budget_samples_000_099/stage1_prepared/strongreject_full/normalized/test.jsonl",
+      "sha256": "e534802f18ca8ff314dcc7dc1b64e336978234993245f9bc6bd4687f84fb7fb8",
+      "n_rows": 554
+    }
+  },
+  "config": {
+    "baselines": [
+      "length_only",
+      "prompt_only_tfidf",
+      "word_tfidf",
+      "word_bow",
+      "char_tfidf",
+      "first_sentence_removed_tfidf"
+    ],
+    "n_jobs": 1,
+    "seed": 260702,
+    "max_iter": 2000,
+    "min_df": 1,
+    "max_features_word": 100000,
+    "max_features_char": 200000,
+    "char_ngram_range": [
+      3,
+      5
+    ],
+    "binary_bow": true,
+    "allow_split_overlap": false,
+    "write_predictions": true
+  },
+  "split_summary": {
+    "train": {
+      "n_rows": 1862,
+      "n_pairs": 931,
+      "n_match_families": 931,
+      "labels": {
+        "unsafe": 931,
+        "safe": 931
+      },
+      "reasoning_words": {
+        "min": 80,
+        "mean": 465.83995703544576,
+        "median": 427.0,
+        "max": 1718
+      }
+    },
+    "val": {
+      "n_rows": 208,
+      "n_pairs": 104,
+      "n_match_families": 104,
+      "labels": {
+        "unsafe": 104,
+        "safe": 104
+      },
+      "reasoning_words": {
+        "min": 143,
+        "mean": 466.5432692307692,
+        "median": 405.0,
+        "max": 6305
+      }
+    },
+    "test": {
+      "n_rows": 554,
+      "n_pairs": 277,
+      "n_match_families": 277,
+      "labels": {
+        "unsafe": 277,
+        "safe": 277
+      },
+      "reasoning_words": {
+        "min": 60,
+        "mean": 468.40252707581226,
+        "median": 442.5,
+        "max": 1069
+      }
+    }
+  },
+  "results": [
+    {
+      "name": "length_only",
+      "metrics": {
+        "train": {
+          "n": 1862,
+          "accuracy": 0.7830290010741139,
+          "balanced_accuracy": 0.7830290010741139,
+          "f1": 0.7745535714285714,
+          "precision": 0.8060394889663183,
+          "recall": 0.7454350161117078,
+          "positive_rate": 0.462406015037594,
+          "auroc": 0.8538386014137691
+        },
+        "val": {
+          "n": 208,
+          "accuracy": 0.8413461538461539,
+          "balanced_accuracy": 0.8413461538461539,
+          "f1": 0.835820895522388,
+          "precision": 0.865979381443299,
+          "recall": 0.8076923076923077,
+          "positive_rate": 0.46634615384615385,
+          "auroc": 0.8927514792899409
+        },
+        "test": {
+          "n": 554,
+          "accuracy": 0.7924187725631769,
+          "balanced_accuracy": 0.7924187725631768,
+          "f1": 0.7935368043087971,
+          "precision": 0.7892857142857143,
+          "recall": 0.7978339350180506,
+          "positive_rate": 0.5054151624548736,
+          "auroc": 0.8628549831224178
+        }
+      }
+    },
+    {
+      "name": "prompt_only_tfidf",
+      "metrics": {
+        "train": {
+          "n": 1862,
+          "accuracy": 0.5,
+          "balanced_accuracy": 0.5,
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "positive_rate": 0.0,
+          "auroc": 0.5
+        },
+        "val": {
+          "n": 208,
+          "accuracy": 0.5,
+          "balanced_accuracy": 0.5,
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "positive_rate": 0.0,
+          "auroc": 0.5
+        },
+        "test": {
+          "n": 554,
+          "accuracy": 0.5,
+          "balanced_accuracy": 0.5,
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "positive_rate": 0.0,
+          "auroc": 0.5
+        }
+      }
+    },
+    {
+      "name": "word_tfidf",
+      "metrics": {
+        "train": {
+          "n": 1862,
+          "accuracy": 0.9232008592910849,
+          "balanced_accuracy": 0.9232008592910848,
+          "f1": 0.9260981912144702,
+          "precision": 0.8924302788844621,
+          "recall": 0.9624060150375939,
+          "positive_rate": 0.5392051557465092,
+          "auroc": 0.984667053547633
+        },
+        "val": {
+          "n": 208,
+          "accuracy": 0.9182692307692307,
+          "balanced_accuracy": 0.9182692307692308,
+          "f1": 0.9216589861751152,
+          "precision": 0.8849557522123894,
+          "recall": 0.9615384615384616,
+          "positive_rate": 0.5432692307692307,
+          "auroc": 0.9682877218934911
+        },
+        "test": {
+          "n": 554,
+          "accuracy": 0.8501805054151624,
+          "balanced_accuracy": 0.8501805054151625,
+          "f1": 0.8595600676818951,
+          "precision": 0.8089171974522293,
+          "recall": 0.9169675090252708,
+          "positive_rate": 0.5667870036101083,
+          "auroc": 0.9407785843683614
+        }
+      }
+    },
+    {
+      "name": "word_bow",
+      "metrics": {
+        "train": {
+          "n": 1862,
+          "accuracy": 1.0,
+          "balanced_accuracy": 1.0,
+          "f1": 1.0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "positive_rate": 0.5,
+          "auroc": 1.0
+        },
+        "val": {
+          "n": 208,
+          "accuracy": 0.9134615384615384,
+          "balanced_accuracy": 0.9134615384615384,
+          "f1": 0.9134615384615384,
+          "precision": 0.9134615384615384,
+          "recall": 0.9134615384615384,
+          "positive_rate": 0.5,
+          "auroc": 0.9737426035502958
+        },
+        "test": {
+          "n": 554,
+          "accuracy": 0.855595667870036,
+          "balanced_accuracy": 0.855595667870036,
+          "f1": 0.8513011152416357,
+          "precision": 0.8773946360153256,
+          "recall": 0.8267148014440433,
+          "positive_rate": 0.4711191335740072,
+          "auroc": 0.9370902787733452
+        }
+      }
+    },
+    {
+      "name": "char_tfidf",
+      "metrics": {
+        "train": {
+          "n": 1862,
+          "accuracy": 0.8882921589688507,
+          "balanced_accuracy": 0.8882921589688507,
+          "f1": 0.8949494949494949,
+          "precision": 0.8446139180171592,
+          "recall": 0.9516648764769066,
+          "positive_rate": 0.5633727175080558,
+          "auroc": 0.9680419400503715
+        },
+        "val": {
+          "n": 208,
+          "accuracy": 0.9038461538461539,
+          "balanced_accuracy": 0.9038461538461539,
+          "f1": 0.9074074074074074,
+          "precision": 0.875,
+          "recall": 0.9423076923076923,
+          "positive_rate": 0.5384615384615384,
+          "auroc": 0.9624630177514792
+        },
+        "test": {
+          "n": 554,
+          "accuracy": 0.8483754512635379,
+          "balanced_accuracy": 0.8483754512635379,
+          "f1": 0.8551724137931035,
+          "precision": 0.8184818481848185,
+          "recall": 0.8953068592057761,
+          "positive_rate": 0.5469314079422383,
+          "auroc": 0.9301828513339154
+        }
+      }
+    },
+    {
+      "name": "first_sentence_removed_tfidf",
+      "metrics": {
+        "train": {
+          "n": 1862,
+          "accuracy": 0.920515574650913,
+          "balanced_accuracy": 0.920515574650913,
+          "f1": 0.9238683127572016,
+          "precision": 0.8864758144126358,
+          "recall": 0.9645542427497314,
+          "positive_rate": 0.5440386680988185,
+          "auroc": 0.9858461559760995
+        },
+        "val": {
+          "n": 208,
+          "accuracy": 0.9134615384615384,
+          "balanced_accuracy": 0.9134615384615385,
+          "f1": 0.9174311926605505,
+          "precision": 0.8771929824561403,
+          "recall": 0.9615384615384616,
+          "positive_rate": 0.5480769230769231,
+          "auroc": 0.9684726331360947
+        },
+        "test": {
+          "n": 554,
+          "accuracy": 0.8592057761732852,
+          "balanced_accuracy": 0.8592057761732852,
+          "f1": 0.8673469387755102,
+          "precision": 0.819935691318328,
+          "recall": 0.9205776173285198,
+          "positive_rate": 0.5613718411552346,
+          "auroc": 0.9411565379452358
+        }
+      }
+    }
+  ],
+  "skipped": {
+    "original_vs_openai_paraphrase_provenance": "Skipped because --original-unsafe-jsonl was not provided. Current Stage1 clean/export manifests contain OpenAI-paraphrased unsafe text but not the original unsafe trajectory body."
+  },
+  "git": {
+    "commit": null,
+    "dirty": false,
+    "dirty_short": null
+  }
+}
