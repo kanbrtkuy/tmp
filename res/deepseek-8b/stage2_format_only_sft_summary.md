@@ -130,6 +130,15 @@ Safe prompts, `unsafe_valid_rate`:
 - `cot3 full checkpoint-250` is the current stage3 candidate because it has the strongest overall capability among the cot3 full-SFT checkpoints tested so far (`0.646`) while still reducing unsafe-prompt unsafe_valid_rate relative to base.
 - These results support the current 8B hypothesis: pause insertion should target the stronger stage1 signal position around `cot_4`, while `cot_3` is a position ablation rather than the main downstream steering model.
 
+2026-07-05 Fable-5 pause-position review updates the wording: `before cot_4`
+is the current DeepSeek-8B mainline only as the least-bad engineering default,
+pending Stage3 matched-horizon confirmation. The review rejects `cot_120` as a
+mainline pause port because it is a late hindsight readout location with
+censoring and little prevention lead time. Before Stage3 extraction, the cot4
+ckpt250 path still needs missing acceptance checks for benign over-refusal,
+CoT-length drift, and output validity. See
+`docs/fable_pause_position_review_stage1_to_stage2_260705.md`.
+
 ## Result Provenance
 
 Confirmed comparison runs and configs:
