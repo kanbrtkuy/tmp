@@ -163,3 +163,128 @@ is a **lead-time claim**: *hidden states at ~4 generated tokens predict the even
 - Non-blocking caveats carried forward: rank-accuracy bootstrap duplication,
   exact-zero bootstrap p-values, duplicate diagonal rows in summary/lead
   matrices, and missing persisted position-metadata audit dict.
+
+### A1 Run
+
+- RunPod output:
+  `/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/score_pooling_a1_260705_b500`
+- R2 backup:
+  `cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n100/runs/stage1_post_hb_260705_after_hb_n100_loso/score_pooling_a1_260705_b500/`
+- `n_errors=0`, `a1_success=true`.
+- Pooled same-horizon delta AUROC:
+  - k=4: `+0.0558`
+  - k=8: `+0.0274`, CI `[0.0183, 0.0366]`
+  - k=16: `-0.0035`, CI `[-0.0121, 0.0061]`
+  - k=32: `+0.0061`, CI `[-0.0035, 0.0149]`
+  - k=64: `-0.0206`, CI `[-0.0298, -0.0120]`
+- A1 results packet tmp commit: `abe8941`.
+- Fable-5 A1 results review launched; waiting for decision on A2/pivot.
+
+### Fable-5 A1 Results Review
+
+- Verdict: `IMPLEMENT A2`.
+- A2 is declared in advance as the last equal-horizon attempt.
+- A1 gate passed exactly:
+  - max adjacent AUROC drop `0.0038 <= 0.02`
+  - k=8 delta CI low `+0.0183 >= 0`
+  - `n_errors=0`
+- A1 is diagnostic/reframing evidence, not confirmatory equal-horizon evidence,
+  because it reuses existing predictions and val stats.
+- Required next step: feature-level cumulative mean pooling over layer-28 hidden
+  vectors at positions `j <= k`, refit probe per k, compare to unchanged text@k
+  scores.
+- Hard stop after A2:
+  - Full success: k=8 CI low >= 0, max adjacent hidden AUROC drop <= 0.02, and
+    k=64 delta CI upper >= 0.
+  - Partial: k=8 holds but k=64 remains fully negative -> pivot to lead-time as
+    primary and stop equal-horizon variants.
+  - Failure: k=8 CI low < 0 -> A1 advantage was pooling-scheme-specific; no
+    rescue attempts.
+
+### A2 Code Packet
+
+- Implemented `scripts/data/run_stage1_feature_pooling_reanalysis.py`.
+- Added `tests/test_stage1_feature_pooling_reanalysis.py`.
+- Local validation:
+  - `python3 -m py_compile ...` passed.
+  - `pytest tests/test_stage1_feature_pooling_reanalysis.py`: `2 passed`.
+- Restored hidden archives from R2 to RunPod:
+  `/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives`
+- Confirmed real archive shape/keys:
+  `features (2360, 19, 20, 4096) float16`, `valid_mask`, `labels`,
+  `example_ids`, `pair_ids`, `match_families`, `position_names`, `layer_ids`.
+- tmp code packet: `stage1_auto_improve_loop_260705/round1_a2_code_packet`
+- tmp commit: `58d6eeb`
+- Fable-5 code review returned `OK_TO_RUN`.
+
+### Fable-5 A2 Code Review
+
+- Verdict: `OK_TO_RUN`.
+- No blockers.
+- Reviewer independently ran packet tests and three adversarial checks:
+  future-position guard, fail-closed population guard, and cross-source
+  z-normalization offset check.
+- Required run conditions:
+  - pass `--fail-on-error`
+  - pass non-null `--code-commit`
+  - accept run only if exit code 0 and `n_errors=0`
+- Non-blocking caveats:
+  - if `--code-commit` is omitted on RunPod, provenance would be null;
+  - A1 caveats still apply for exact-zero bootstrap p-values and rank bootstrap
+    duplication;
+  - this remains the final equal-horizon variant before success/pivot/stop.
+
+<details>
+<summary>Click to expand full Fable-5 A2 code review</summary>
+
+```text
+---
+
+# Fable-5 Code Review — Stage1 A2 Feature-Level Cumulative Pooling
+
+**Packet:** `round1_a2_code_packet` (local copy; note: I could not run git against the tmp repo in this session, so 58d6eeb ≡ local files is asserted by you, not verified by me — everything below reviews the local files).
+
+## Verdict: **OK_TO_RUN**
+
+No blockers. I read all four files line-by-line and, beyond static review, independently executed the packet's tests (2/2 pass) plus three adversarial checks I wrote against the guards the tests don't cover (all pass).
+
+## Checklist findings
+
+**1. Future-position leakage — PASS.** `pool_ks_for` (`run_stage1_score_pooling_reanalysis.py:364`) selects `{j ∈ k_grid : j ≤ k}` and asserts `max(pool) ≤ target_k`. `choose_position_indices` (`run_stage1_feature_pooling_reanalysis.py:233`) looks up exact names `cot_{k}` via string match (no index arithmetic → no off-by-one possible), raises on missing names, and the slice/mean in `load_feature_split:338-346` uses only those indices. Packet test poisons `cot_16` with 999.0 at target k=8 and asserts it never enters the mean — I reran it: passes.
+
+**2. Split hygiene — PASS.** `fit_model` is called only with the train split (`:622`); the StandardScaler lives inside the pipeline so scaling stats are train-only. Val is used solely for prediction reporting and `hidden_val_stats`/`surface_val_stats` (`:639-641`). Test scores never enter any stats dict or fitting path (grep-verified). No selection anywhere: layer hard-pinned to 28 in `parse_args` (`:877-878`), family/k-grid/Holm family fixed, prereg JSON written before the fit loop (`:574`).
+
+**3. Frozen evaluation population — PASS, verified adversarially.** `align_and_pair_complete` (`:443-459`) raises if any frozen surface row would be dropped (`right_dropped != 0`) or any pair-complete pair lost. My Check A (surface rows with no hidden counterpart) → fails closed with the population-guard message, never silently shrinks. Check B (extra hidden-only rows) → correctly tolerated, population stays exactly the frozen surface rows.
+
+**4. Pooled cross-source z-norm — PASS, verified.** Both arms z-scored per source with val-aligned stats before concatenation: summary `:707-708`; lead-time matrix correctly uses `surface_val_stats[(source, surface_k)]` at `:760`. My Check C: shifting one source's surface scores by +5.0 (val+test) leaves the pooled k=8 delta bit-identical — the A1 round-1 blocker class is closed in A2.
+
+**5. Loader hygiene — PASS.** `metadata_to_safe_row` (`:162`) extracts only id/pair_id/match_family/label; the npz `labels` array is cross-checked against metadata (`:324-330`); no text field is read, used, or written to any output.
+
+**6. Artifacts — PASS with one caveat.** Prereg JSON (with success/partial/failure rules + commit), split + fit diagnostics TSVs, success preview with the three gate booleans, commit pass-through via `--code-commit` (test-verified). Caveat: **non-null is not enforced** — omit the flag on the pod (not a git checkout) and `git.commit` is silently `null`. Covered by the command below; optional 1-line hardening (`parser.error` if empty on pod) if you want belt-and-suspenders.
+
+**7. Tests — adequate** for the two declared purposes (no-future pooling at feature level; end-to-end run + provenance). My adversarial checks now cover the fail-closed and z-norm guards on top.
+
+## Non-blocking notes
+
+- **Run with `--fail-on-error`.** Without it a failed (source,k) cell is only recorded in `errors`, and `source="pooled"` rows would quietly degrade to single-source (n_errors>0 / exit 2 do flag it, but the gate preview would be misleading if read carelessly). For a confirmatory gate run, hard-stop semantics are correct.
+- Gate rules leave one cell unclassified: k8 CI low ≥ 0 ∧ k64 CI high ≥ 0 ∧ max drop > 0.02 → all three preview booleans false. Faithful to the pre-declared rules; if it lands there, it's human adjudication with all inputs present in `success_preview`.
+- Surface files are loaded with `expected_k=None` (`:440`) — weaker than A1's metadata assertion, but the same frozen files passed that assertion in the A1 run and the `k_{k}` path assert remains. Near-zero risk.
+- Carried A1 caveats still apply (duplicate diagonal Holm rows in the lead matrix, exact-zero bootstrap p-values, rank-metric bootstrap duplication).
+- Efficiency only: each (source,k,split) reloads the full ~GB features npz (15 loads/source). Fine on the pod (peak RAM = one file); `mmap_mode="r"` is a later nicety.
+- Reminder for downstream claims: harmbench_standard stays test-fold-only for the LOSO headline — this equal-horizon thread's within-source use is fine and required for A1/M comparability.
+
+## Expected RunPod command
+
+```bash
+cd /workspace/cot-safety && python scripts/data/run_stage1_feature_pooling_reanalysis.py \
+  --hidden-archive-root <root containing stage1_natural_pairs_8b_a100_1x_loso_{source}/ dirs> \
+  --pred-dir runs/stage1_post_hb_260705_after_hb_n100_loso/matched_horizon/predictions \
+  --output-dir runs/stage1_post_hb_260705_after_hb_n100_loso/feature_pooling_a2_260705_b500 \
+  --code-commit <cot-safety code commit SHA> \
+  --fail-on-error
+```
+
+Defaults supply the rest (sources HB+WJB, k-grid 4,8,16,32,64, Holm 8,16,32,64, layer 28, char_tfidf, B=500, seed 260705, tolerance 0.02). Accept the run only if exit code 0 and `n_errors=0`; then R2 backup as usual. Per the pre-declared stop rule, whatever the outcome, this is the last equal-horizon variant — full success, partial→lead-time pivot, or failure→stop.
+```
+
+</details>
