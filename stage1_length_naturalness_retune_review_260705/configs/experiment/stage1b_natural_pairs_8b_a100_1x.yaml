@@ -1,0 +1,68 @@
+defaults:
+  - stage1b_natural_pairs_1p5b.yaml
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+
+run:
+  name: stage1b_natural_pairs_8b_a100_1x
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1b_natural_pairs_8b_a100_1x
+
+probe:
+  layers: [4, 6, 7, 8, 10, 12, 14, 16, 17, 18, 20, 21, 22, 24, 25, 26, 28, 30, 32]
+  prompt_positions: [last_prompt_token, assistant_start, assistant_last, pre_think]
+  positions:
+    - last_prompt_token
+    - assistant_start
+    - assistant_last
+    - pre_think
+    - think_last
+    - cot_2
+    - cot_3
+    - cot_4
+    - cot_7
+  multilayer_concat:
+    positions: [last_prompt_token, pre_think, think_last, cot_2, cot_3, cot_4, cot_7]
+
+model:
+  # Preserve naturally long same-prompt generated/generated CoTs. The previous
+  # 4096-token extraction cap dropped one valid WJB unsafe trajectory; length
+  # and style differences are handled by surface/truncation controls, not by
+  # filtering pairs out of the primary freeze.
+  max_length: 12288
+
+runtime:
+  name: a100_1x_80g_8b_hidden
+  num_gpus: 1
+  cuda_visible_devices: "0"
+  devices: [cuda:0]
+  hf_home: ${HF_HOME:-/workspace/hf-cache}
+  torch_dtype: bfloat16
+  pytorch_cuda_alloc_conf: expandable_segments:True
+  hidden:
+    extract_jobs: 1
+    extract_devices: [cuda:0]
+    extract_train_shards: 1
+    # Retuned on A100 with the longest frozen row: batch 20 completes with
+    # expandable CUDA segments; batch 22 OOMs.
+    batch_size_per_gpu: 20
+    compression: uncompressed
+  probes:
+    single_scan_backend: batched
+    dynamic_task_multiplier: 128
+    jobs: 16
+    devices: [cuda:0]
+    worker_slots_per_gpu: 16
+    jobs_per_gpu: 16
+    scan_batch_size: 4096
+    scan_eval_batch_size: 8192
+    multilayer_jobs: 8
+    multilayer_fallback_device: cpu
+    cpu_threads_per_job: 2
+    probe_timeout_seconds: 0
+    device: cuda
+
+legacy:
+  hidden_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/hidden/stage1b_natural_pairs_8b_a100_1x
+  hidden_prefix: stage1b_natural_pairs_8b_a100_1x
+  log_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/logs/stage1b_natural_pairs_8b_a100_1x
+  single_scan_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1b_natural_pairs_8b_a100_1x/linear
+  multilayer_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1b_natural_pairs_8b_a100_1x/multilayer
