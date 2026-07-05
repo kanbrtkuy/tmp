@@ -44,6 +44,10 @@
   "fresh_path_review_packet_commit": "f8c0704",
   "fresh_path_review_verdict": "FRESH_PREREG_ONLY",
   "fresh_path_review_response": "review-stage/stage1_auto_improve_260705/fable5_fresh_path_review_260705.md",
+  "construct_validity_prompt_baseline_packet_commit": "4039bdf",
+  "construct_validity_prompt_baseline_review_verdict": "CONSTRUCT_VALIDITY_CONCERN_SUBSTANTIALLY_RESOLVED_IN_DOWNGRADED_FORM",
+  "construct_validity_prompt_baseline_review_response": "review-stage/stage1_auto_improve_260705/fable5_construct_validity_prompt_baseline_review_260705.md",
+  "construct_validity_prompt_baseline_status": "writeup_only_stop_current_stage1_unchanged",
   "current_frozen_stage1_allowed_work": [
     "operating_point_reporting",
     "integrity_audit_completion_for_negative_claim",

@@ -24,11 +24,11 @@
 | 分离 SFT-data effect 与 steering effect | SFT-only vs SFT+steering | **部分解决** | Stage2 有 base vs SFT checkpoint capability/unsafe_valid 表；Stage4 有 base、alpha=0、alpha=1/2 安全行为表 | 还缺同一 checkpoint 下的 capability 对照：SFT-only/alpha=0 vs SFT+steering alpha=1/2 的 GSM8K/MATH |
 | delta 到底相关什么 | refusal rate、length、topic correlation | **基本未解决** | Stage4 CSV 已有 `refusal_keyword_rate`、`avg_generated_chars`、dataset/topic breakdown，可用于分析 | 还需正式 correlation/regression：steering alpha 或 delta projection 与 refusal、length、dataset/topic 的关系 |
 | 证明 delta 是 unsafe axis 不是 structured/careful axis | 语义解释 | **未解决** | 当前只能说 steering 降低 unsafe-prompt unsafe-valid rate；不能证明 delta 是纯 unsafe axis | 需要 SFT-vs-steering 拆分 + correlation/ablation，证明不是 general careful/structured direction |
-| Construct validity：`token_3` 是 prompt 还是 reasoning | 增加 prompt-only / pre-CoT probe baseline | **基本解决** | Stage1b 已把 `last_prompt_token`、`pre_think`、`think_last` 作为一等扫描位置；`last_prompt_token` 是严格 prompt-only baseline | 需要在最终论文主表中把 prompt-only/pre-CoT 控制和 post-HB LOSO 结果放到同一个叙事里 |
-| prompt-only 是否已经达到 `~0.97` | 检查 prompt-only / pre-CoT AUROC | **基本解决，未观察到该失败模式** | natural same-prompt runs 是主证据：prompt-only TF-IDF 为 `0.5000`；prompt/pre-CoT hidden best 在 R1-8B 上 `0.5000`，R1-32B 上约 `0.51` | 2026-06-30 旧 source-family Stage1b 中 prompt-only heldout mean 为 `0.785/0.801`，可作为历史补充，但不应作为回应该担忧的主口径 |
-| trajectory 是否在 prompt 之上增加信号 | 比较 early-CoT 与 prompt/pre-CoT controls | **基本解决** | natural runs 中 prompt/pre-CoT 基本随机，而 CoT-position hidden 有信号：Natural 8B generated/generated Stage1b `cot_4/layer18` AUROC `0.7328`；Natural 32B generated/generated Stage1b dense R1-32B test-max `0.8148`、val-selected test `0.7890` | 这个只能支持“CoT-position hidden contains signal beyond prompt/pre-CoT”，不能支持 hidden 优于 text/surface baseline |
-| same-prompt teacher-forcing 反证 | prompt 相同情况下 prompt-only 是否仍有信号 | **解决得更强** | natural same-prompt pairs 直接控制了 prompt：safe/unsafe 两臂共享 prompt，prompt-only text 与 prompt/pre-CoT hidden 仍接近随机 | 仍不能排除 CoT 内部 surface/style/length/refusal pattern 等表层混淆 |
-| trajectory-monitoring framing | 是否仍能说不是 prompt classification | **部分解决** | prompt-only failure mode 没有成立，same-prompt natural pairs 更支持“不是纯 prompt 分类” | framing 仍需降级：因为 surface/text/length baselines 很强，不能说 clean latent safety semantics 或 hidden superiority |
+| Construct validity：`token_3` 是 prompt 还是 reasoning | 增加 prompt-only / pre-CoT probe baseline | **基本解决** | Stage1b 已把 `last_prompt_token`、`pre_think`、`think_last` 作为一等扫描位置；natural runs 另有 prompt-only TF-IDF | 需要最终表中明确 natural same-prompt 是主证据，旧 source-family 是 appendix/secondary |
+| prompt-only 是否已经达到 `~0.97` | 检查 prompt-only / pre-CoT AUROC | **解决，但要披露限制** | natural same-prompt runs 是主证据：prompt-only TF-IDF 为 `0.5000`；prompt/pre-CoT hidden best 在 R1-8B 上 `0.5000`，R1-32B 上约 `0.51`；这是 by construction 的控制，实测值确认实现正确 | 旧 source-family Stage1b 中 prompt-only heldout mean 为 `0.785/0.801`，且 in-domain test mean `0.92-0.93`、test best `0.945-0.952`，写作时必须披露，不能只报 heldout |
+| trajectory 是否在 prompt 之上增加信号 | 比较 early-CoT 与 prompt/pre-CoT controls | **弱 claim 基本解决；frozen set 上部分解决** | natural runs 中 prompt/pre-CoT 基本随机，而 validation-selected CoT-position hidden 约 `0.6983/0.7188/0.7890`；late-CoT Stage1 可到约 `0.83` | 主文不能引用 test-max `0.73-0.81`；需要报告 n 和 paired bootstrap CI；只能说 signal beyond prompt，不是 hidden superiority |
+| same-prompt teacher-forcing 反证 | prompt 相同情况下 prompt-only 是否仍有信号 | **解决得更强** | natural same-prompt pairs 直接控制了 prompt：safe/unsafe 两臂共享 prompt，所以 prompt identity by construction 不含 label 信息；prompt-only text 与 prompt/pre-CoT hidden 接近随机 | natural 8B provenance drop 后只剩 ReasoningShield family，construct-validity 的跨源泛化仍未知 |
+| trajectory-monitoring framing | 是否仍能说不是 prompt classification | **未解决，必须降级** | prompt-classification failure mode 被 clean setting refuted；但 surface controls 仍强：length-only `0.83-0.88`，word TF-IDF `0.94-0.97` | 不能说 “trajectory monitoring works” 或 “probe reads reasoning”；只能说 above-chance decodable signal beyond prompt |
 
 ## 对教授意见的当前答复口径
 
@@ -48,10 +48,11 @@
 > 基本解决：Stage1b 已实现严格 prompt-only 和更强 pre-CoT controls，
 > later natural same-prompt runs 中 prompt-only TF-IDF 为 `0.5000`，
 > prompt/pre-CoT hidden best 为 `0.5000` 到约 `0.51`，而 CoT-position
-> hidden 仍有 `0.73-0.81` 级别信号。因此“只是 prompt classification”
-> 这个失败模式没有被数据支持。但这个结论只能证明 CoT-position signal
-> 超过 prompt/pre-CoT，不能推翻 surface/text/length baselines 很强这一
-> 更大的负面结论。
+> hidden 的 validation-selected AUROC 约为 `0.70-0.79`。因此“只是 prompt
+> classification”这个失败模式在 clean same-prompt 设置中没有被数据支持。
+> 但这个 `0.5000` 控制是 by construction 的，应写成“确认控制实现正确”，
+> 不是意外发现。这个结论只能证明 CoT-position signal 超过 prompt/pre-CoT，
+> 不能推翻 surface/text/length baselines 很强这一更大的负面结论。
 
 ## 建议后续任务
 
@@ -67,11 +68,16 @@
    `avg_generated_chars`、dataset/topic 对 alpha/delta 的响应。
 4. **补最终 construct-validity 小表**：主表应以 natural same-prompt 为准，
    报告 prompt-only TF-IDF `0.5000`、prompt/pre-CoT hidden `0.5000/约0.51`、
-   以及对应 CoT-position hidden `0.73-0.81`。2026-06-30 的
-   `last_prompt_token/pre_think/think_last` source-family 结果可放 appendix
-   作为历史补充。这个是整理现有结果，不是在当前 frozen Stage1 上做新的
-   rescue run。
-5. **写作上降级 claim**：把 GSM8K/MATH 上升称为 yellow flag，而不是
+   以及 validation-selected CoT-position hidden `0.6983/0.7188/0.7890`。
+   2026-06-30 的 `last_prompt_token/pre_think/think_last` source-family 结果
+   只放 appendix，并同时披露 heldout 与 in-domain prompt-only 水平。
+5. **只对已有 predictions 做对称 CI**：允许对预先指定的 validation-selected
+   cells 做 paired bootstrap CI；不允许重新选择 position/layer，也不能用 CI
+   结果决定是否报告。
+6. **修正文档口径**：补 by-construction note、n per split、natural 8B
+   provenance collapse；修正或弃用 2026-06-30 LOSO 表中的 legacy
+   `Trajectory - prompt gap` 列。
+7. **写作上降级 claim**：把 GSM8K/MATH 上升称为 yellow flag，而不是
    capability benefit；把 delta 称为 safety-associated steering direction，
    不称为 clean unsafe axis。
 
@@ -80,7 +86,8 @@
 - Generalization/LOSO：**部分解决**，足以回应“不是只有 RS-Test”，但不够回应
   “all six sources”。
 - Steering confound：**尚未解决**，需要新的 capability/correlation audit。
-- Construct validity / prompt-only：**基本解决**，以 natural same-prompt
-  结果为主证据：prompt-only/prompt-pre-CoT 基本随机，CoT-position hidden
-  仍有信号；但 Stage1 总体 claim 仍应受 surface/length confound 和当前
-  negative/control 结论限制。
+- Construct validity / prompt-only：**在降级 claim 下基本解决**，以 natural
+  same-prompt 结果为主证据：prompt-only/prompt-pre-CoT by construction
+  接近随机，CoT-position hidden 仍有 validation-selected `~0.70-0.79` 信号。
+  但 Stage1 总体 claim 仍应受 surface/length confound 和当前
+  negative/control 结论限制；`STOP_CURRENT_STAGE1` 不变。
