@@ -41,9 +41,9 @@ runtime:
     extract_jobs: 1
     extract_devices: [cuda:0]
     extract_train_shards: 1
-    # Retuned on A100 with the longest frozen row: batch 20 completes with
-    # expandable CUDA segments; batch 22 OOMs.
-    batch_size_per_gpu: 20
+    # Retuned after strongreject_full val OOM at batch 20; batch 18 keeps
+    # natural long CoTs while leaving headroom on the 80GB A100.
+    batch_size_per_gpu: 18
     compression: uncompressed
   probes:
     single_scan_backend: batched
