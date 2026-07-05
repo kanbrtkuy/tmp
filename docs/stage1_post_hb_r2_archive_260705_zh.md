@@ -49,6 +49,7 @@ tests/
 |---|---|
 | `runs/stage1_post_hb_260705_after_hb_n100_loso/` | post-HB Stage1 LOSO 主 run 根目录。 |
 | `runs/stage1-results/stage1_post_hb_260705_retune12288_b20/` | `/workspace/stage1-results` 下的 GPU archive root。 |
+| `runs/hidden_archives/` | 普通 Stage1/Stage1b hidden archive 目录。它们从 `/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives` 分离归档到顶层 `runs/hidden_archives/`，用于恢复 A1/A2/diagnostic hidden 输入。 |
 | `runs/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly/` | excluded-source lead-time confirmation 使用的正式 cot-only hidden archive，只有 `cot_4,cot_8,cot_16,cot_32,cot_64`，不含 `think_last`。 |
 | `runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500/` | excluded-source lead-time confirmation 的聚合结果、gate、diagnostics 和 prediction-score JSONL。 |
 | `runs/dev_shm/cot-safety-hot/runs/` | `/dev/shm/cot-safety-hot/runs` 的目录式对象备份。 |
@@ -84,6 +85,47 @@ ALL_DONE_RESUMED 2026-07-05T05:46:14+00:00
 ```text
 Total objects: 38.224k (38224)
 Total size: 64.186 GiB (68919322192 Byte)
+```
+
+2026-07-05 追加关机前审计后，补传了一个漏掉的普通 hidden archive：
+
+```text
+runs/hidden_archives/stage1_natural_pairs_8b_a100_1x_loso_strongreject_full/
+```
+
+该目录补传 `9` 个文件，大小 `105.772 MiB`。补传后的最终 R2 size：
+
+```text
+Total objects: 38.469k (38469)
+Total size: 64.545 GiB (69304583047 Byte)
+```
+
+关机前 one-way size checks：
+
+```text
+/workspace/cot-safety/runs
+  -> runs/
+  0 differences, 1967 matching files
+
+/workspace/stage1-results/stage1_post_hb_260705_after_hb_n100_loso
+  -> runs/stage1-results/stage1_post_hb_260705_after_hb_n100_loso
+  0 differences, 11441 matching files
+
+/dev/shm/cot-safety-hot/runs
+  -> runs/dev_shm/cot-safety-hot/runs
+  0 differences, 11423 matching files
+
+/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20
+  -> runs/stage1-results/stage1_post_hb_260705_retune12288_b20
+  0 differences, 12400 matching files
+  excluding ordinary hidden_archives, which are restored from runs/hidden_archives/
+```
+
+代码/文档目录的关机前 one-way checks 也已补齐并通过：
+
+```text
+configs, scripts, src, pipelines, plan, res, review-stage, docs, tests, data,
+legacy, logs: 0 differences
 ```
 
 `/dev/shm/cot-safety-hot/runs` 先完成目录式备份：
@@ -125,6 +167,16 @@ rclone copy \
 rclone copy \
   cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n100/runs/stage1-results/stage1_post_hb_260705_retune12288_b20 \
   /workspace/stage1-results/stage1_post_hb_260705_retune12288_b20 \
+  --s3-no-check-bucket --transfers=16 --checkers=32 --fast-list --progress
+```
+
+恢复普通 hidden archives：
+
+```bash
+mkdir -p /workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives
+rclone copy \
+  cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n100/runs/hidden_archives \
+  /workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives \
   --s3-no-check-bucket --transfers=16 --checkers=32 --fast-list --progress
 ```
 

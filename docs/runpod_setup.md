@@ -432,6 +432,38 @@ bash pipelines/runpod_stage_hot_storage.sh \
 
 ## Cloudflare R2 Archives
 
+### Stage1 Post-HB A100 Archive, 2026-07-05
+
+The current post-HB Stage1 A100 archive is:
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n100/
+```
+
+It contains the post-HB LOSO run, `/workspace/stage1-results`, ordinary hidden
+archives, excluded-source cot-only lead-time hidden archives, `/dev/shm` run/log
+sidecars, code/config/docs snapshots, and backup manifests. See:
+
+```text
+docs/stage1_post_hb_r2_archive_260705_zh.md
+docs/stage1_post_hb_r2_archive_260705.md
+```
+
+Important restore prefixes:
+
+```text
+runs/stage1_post_hb_260705_after_hb_n100_loso/
+runs/stage1-results/stage1_post_hb_260705_retune12288_b20/
+runs/hidden_archives/
+runs/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly/
+runs/dev_shm/cot-safety-hot/runs/
+```
+
+Do not restore model caches from this archive; re-download base models and judge
+models on a fresh pod.
+
+### Stage1/Stage1b A6000 Archive, 2026-07-01
+
 Stage1/Stage1b A6000 archives are stored in Cloudflare R2 under one canonical
 prefix:
 
