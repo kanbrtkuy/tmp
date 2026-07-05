@@ -3,6 +3,12 @@
 本文档汇总 post-HB Stage1 run 中已经完成的小实验、审计和 Fable-5 复审结论。
 不包含 raw prompts、raw CoTs、completions 或 hidden arrays。
 
+教授关于 LOSO generalization 与 steering/capability confound 的逐项回应见：
+
+```text
+res/professor_feedback_status_260705_zh.md
+```
+
 ## 总结论
 
 Stage1 的工程链路和数据审计大体符合预期：pair freeze、LOSO source 数量、

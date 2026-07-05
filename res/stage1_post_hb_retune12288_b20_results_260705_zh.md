@@ -55,6 +55,12 @@ negative/control result，而不是 hidden-state superiority 证据。
 res/stage1_experiment_inventory_results_260705_zh.md
 ```
 
+教授关于 LOSO generalization 与 steering/capability confound 的逐项回应见：
+
+```text
+res/professor_feedback_status_260705_zh.md
+```
+
 这意味着：当前数据不是完全不可解释；更大的问题是 evaluation contrast。
 当前 hidden arm 是 prefix-limited hidden snapshot，而 surface arm 是
 full-trajectory hindsight text features。这个对比不能直接回答

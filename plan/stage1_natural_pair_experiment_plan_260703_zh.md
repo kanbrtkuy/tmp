@@ -169,6 +169,7 @@ CODE_AND_RUN_ALLOWED is rejected for current frozen Stage1.
 ```text
 res/stage1_experiment_inventory_results_260705_zh.md
 review-stage/stage1_auto_improve_260705/fable5_excluded_leadtime_results_review_260705.md
+res/professor_feedback_status_260705_zh.md
 ```
 
 后续如果要追求 positive result，必须进入 fresh preregistered setting，例如
