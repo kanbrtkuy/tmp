@@ -23,6 +23,7 @@ LOG_DIR = Path(os.environ.get("LOG_DIR", f"/workspace/logs/{RUN_ID}"))
 REMOTE = os.environ.get("R2_REMOTE", "cloudflare_r2_cot_safety")
 DEST_PREFIX = os.environ.get("R2_DEST_PREFIX", f"cot-safety/stage1-paired/{RUN_ID}").strip("/")
 DELETE_AFTER_UPLOAD = os.environ.get("DELETE_AFTER_UPLOAD", "1") == "1"
+DELETE_ALREADY_UPLOADED_LOCAL = os.environ.get("DELETE_ALREADY_UPLOADED_LOCAL", "1") == "1"
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "30"))
 MAX_HOURS = float(os.environ.get("MAX_HOURS", "48"))
 TRANSFERS = os.environ.get("RCLONE_TRANSFERS", "8")
@@ -31,6 +32,9 @@ S3_CHUNK_SIZE = os.environ.get("RCLONE_S3_CHUNK_SIZE", "256M")
 
 EVENT_LOG = LOG_DIR / "hidden_r2_uploader_events.log"
 LEDGER = LOG_DIR / "hidden_r2_uploaded_ledger.jsonl"
+UPLOADED_MARK_ROOT = Path(
+    os.environ.get("UPLOADED_MARK_ROOT", str(ARCH_ROOT.parent / "hidden_archives_r2_uploaded"))
+)
 
 
 def now() -> str:
@@ -61,6 +65,38 @@ def local_size(path: Path) -> dict[str, int]:
             files += 1
             total += item.stat().st_size
     return {"objects": files, "bytes": total}
+
+
+def marker_path(name: str) -> Path:
+    return UPLOADED_MARK_ROOT / f"{name}.r2_uploaded.ok"
+
+
+def write_marker(name: str, record: dict[str, object]) -> Path:
+    UPLOADED_MARK_ROOT.mkdir(parents=True, exist_ok=True)
+    path = marker_path(name)
+    path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def restore_markers_from_ledger() -> set[str]:
+    uploaded: set[str] = set()
+    if not LEDGER.exists():
+        return uploaded
+    for line in LEDGER.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            log(f"skip malformed ledger line: {exc}")
+            continue
+        name = record.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        uploaded.add(name)
+        if not marker_path(name).exists():
+            write_marker(name, record)
+    return uploaded
 
 
 def manifest_ready(path: Path) -> list[dict[str, object]] | None:
@@ -111,10 +147,28 @@ def upload_housekeeping() -> None:
                 "--s3-no-check-bucket",
             ]
         )
+    if UPLOADED_MARK_ROOT.exists():
+        run(
+            [
+                "rclone",
+                "copy",
+                str(UPLOADED_MARK_ROOT),
+                rclone_dest("manifest", "hidden_archives_uploaded"),
+                "--s3-no-check-bucket",
+            ]
+        )
 
 
 def upload_one(path: Path) -> bool:
     if not path.is_dir():
+        return False
+    uploaded = restore_markers_from_ledger()
+    if path.name in uploaded or marker_path(path.name).exists():
+        if DELETE_ALREADY_UPLOADED_LOCAL:
+            log(f"{path.name} already has R2 upload marker; deleting local duplicate {path}")
+            shutil.rmtree(path)
+            upload_housekeeping()
+            return True
         return False
     if (path / ".r2_uploaded.ok").exists():
         return False
@@ -156,6 +210,7 @@ def upload_one(path: Path) -> bool:
     uploaded_ok = path / ".r2_uploaded.ok"
     uploaded_ok.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
     run(["rclone", "copyto", str(uploaded_ok), f"{dest}/.r2_uploaded.ok", "--s3-no-check-bucket"])
+    write_marker(path.name, record)
 
     with LEDGER.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, sort_keys=True) + "\n")
@@ -171,10 +226,11 @@ def upload_one(path: Path) -> bool:
 
 
 def main() -> None:
+    restore_markers_from_ledger()
     log(
         "hidden R2 uploader started "
         f"arch_root={ARCH_ROOT} dest={rclone_dest('runs', 'hidden_archives')} "
-        f"delete_after_upload={DELETE_AFTER_UPLOAD}"
+        f"delete_after_upload={DELETE_AFTER_UPLOAD} uploaded_mark_root={UPLOADED_MARK_ROOT}"
     )
     deadline = time.time() + MAX_HOURS * 3600
     while time.time() < deadline:
