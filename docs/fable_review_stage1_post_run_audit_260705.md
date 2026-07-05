@@ -19,6 +19,9 @@ The core concern is that GPU Stage1 ran automatically before human QA was comple
 - Archive root: `/workspace/stage1-results/stage1_post_hb_260705_after_hb_n100_loso`
 - Freeze dir: `/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/loso_freeze_fixed_budget_samples_000_099`
 - Local/GitHub code commit for batch tuning: `a8cdf34`
+- Local/GitHub code commit for prediction row audit: `5432326`
+- Local/GitHub code commit for Fable tmp handoff protocol: `a82163f`
+- Local/GitHub code commit for LOSO word-budget gate: `21cada5`
 
 ## Data Status
 
@@ -262,6 +265,43 @@ The following are not yet formalized as completed:
 - Fable review of this final post-run state.
 - Certification that CPU/surface baseline artifacts satisfy all planned controls.
 - Certification that bootstrap CIs are validation-selected and compare the intended quantities.
+
+## Post-Packet Remediation Update
+
+After the first post-run packet, we added a fail-closed LOSO freeze word-budget gate:
+
+- Code: `scripts/data/build_stage1_loso_freeze.py`
+- Pipeline call: `pipelines/runpod_stage1_post_hb_freeze_then_loso.sh`
+- Test: `tests/test_stage1_loso_freeze_build.py`
+- Commit: `21cada5`
+
+The gate drops an entire pair if any row exceeds the configured Stage1 text budgets:
+
+- `STAGE1_MAX_PROMPT_WORDS=800`
+- `STAGE1_MAX_REASONING_WORDS=1600`
+- `STAGE1_MAX_FINAL_WORDS=800`
+
+A non-destructive rebuild probe on RunPod wrote:
+
+- `loso_freeze_fixed_budget_samples_000_099_wordcap_probe/stage1_loso_freeze_summary.json`
+
+Probe counts:
+
+| Source | keep pairs after word-budget gate |
+|---|---:|
+| HarmBench | 151 |
+| ReasoningShield | 304 |
+| StrongReject | 271 |
+| WildJailbreak | 1953 |
+
+Drop reason counts:
+
+| reason | pairs |
+|---|---:|
+| `final_answer_words_gt_cap` | 97 |
+| `reasoning_words_gt_cap` | 7 |
+
+This should eliminate the confirmed too-long WildJailbreak unsafe row from the next formal freeze. It also reduces WJB below its previous ideal count of 2000, though it remains above the minimum floor. Please review whether this fail-closed word-budget gate is preferable to extractor-side truncation, and whether these post-gate source counts are still acceptable for formal Stage1.
 
 ## Questions for Fable
 
