@@ -17,7 +17,9 @@ STAGE1_FOLDS="${STAGE1_FOLDS:-reasoningshield strongreject_full wildjailbreak_va
 # current one-A100 RunPod and use aggressive per-job parallelism in the configs.
 CONFIGS="${CONFIGS:-configs/experiment/stage1_natural_pairs_8b_a100_1x.yaml configs/experiment/stage1b_natural_pairs_8b_a100_1x.yaml}"
 
-# Keep hidden arrays only if you need to rerun probes without re-extraction.
+# Archive hidden arrays to ARCHIVE_ROOT before optionally freeing /dev/shm.
+ARCHIVE_HIDDEN_AFTER_STAGE="${ARCHIVE_HIDDEN_AFTER_STAGE:-1}"
+# Free /dev/shm after archiving hidden arrays.
 CLEAN_HIDDEN_AFTER_STAGE="${CLEAN_HIDDEN_AFTER_STAGE:-1}"
 STAGE1_SEQUENCE_DRY_RUN="${STAGE1_SEQUENCE_DRY_RUN:-0}"
 STAGE1_PROVISIONAL_GPU_RUN="${STAGE1_PROVISIONAL_GPU_RUN:-0}"
@@ -214,6 +216,11 @@ run_and_archive() {
   archive_dir_contents "${COT_SAFETY_HOT_ROOT}/runs/logs/${run_name}" "${ARCHIVE_ROOT}/${run_name}/logs"
   archive_file "${ROOT}/runs/${run_name}_resolved.yaml" "${ARCHIVE_ROOT}/${run_name}"
   archive_file "${config}" "${ARCHIVE_ROOT}/${run_name}"
+
+  if [[ "${STAGE1_SEQUENCE_DRY_RUN}" != "1" && "${ARCHIVE_HIDDEN_AFTER_STAGE}" == "1" && -n "${hidden_dir}" && -d "${hidden_dir}" ]]; then
+    echo "Archiving hidden arrays for ${run_name}: ${hidden_dir}"
+    archive_dir_contents "${hidden_dir}" "${ARCHIVE_ROOT}/${run_name}/hidden"
+  fi
 
   if [[ "${STAGE1_SEQUENCE_DRY_RUN}" != "1" && "${CLEAN_HIDDEN_AFTER_STAGE}" == "1" && -n "${hidden_dir}" ]]; then
     echo "Cleaning hidden arrays for ${run_name}: ${hidden_dir}"
