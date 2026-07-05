@@ -133,3 +133,38 @@ def test_position_metadata_mismatch_fails(tmp_path):
     )
     with pytest.raises(AssertionError):
         script.read_predictions(path, expected_k=8)
+
+
+def test_pooled_rows_are_cross_source_calibrated(tmp_path):
+    script = load_script("run_stage1_score_pooling_reanalysis")
+    pred_dir = tmp_path / "predictions"
+    for source, offset in (("harmbench_standard", 0.0), ("wildjailbreak_vanilla_harmful", 5.0)):
+        for k in (4, 8):
+            for split in ("val", "test"):
+                hidden = rows_for(split, k=k, model="hidden")
+                surface = [dict(row, score=row["score"] + offset) for row in rows_for(split, k=k, model="hidden")]
+                write_jsonl(pred_dir / source / f"k_{k}" / f"hidden.{split}.predictions.jsonl", hidden)
+                write_jsonl(pred_dir / source / f"k_{k}" / f"char_tfidf.{split}.predictions.jsonl", surface)
+
+    args = type(
+        "Args",
+        (),
+        {
+            "pred_dir": str(pred_dir),
+            "output_dir": str(tmp_path / "out"),
+            "sources": "harmbench_standard,wildjailbreak_vanilla_harmful",
+            "k_grid": "4,8",
+            "holm_ks": "8",
+            "surface_family": "char_tfidf",
+            "selected_layer": 28,
+            "rule": "zmean",
+            "n_bootstrap": 10,
+            "seed": 7,
+            "monotone_tolerance": 0.02,
+            "fail_on_error": True,
+        },
+    )()
+    payload = script.run(args)
+    pooled = [row for row in payload["summary_rows"] if row["source"] == "pooled" and row["hidden_k"] == 8][0]
+    assert abs(pooled["delta_auroc_hidden_minus_surface"]) < 0.02
+    assert "combined_source_normalization" in payload["preregistration"]

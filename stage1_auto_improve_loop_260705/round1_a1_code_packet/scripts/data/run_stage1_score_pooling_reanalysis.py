@@ -343,7 +343,7 @@ def load_all_predictions(pred_dir: Path, sources: list[str], k_grid: list[int], 
                 hidden_path = pred_path(pred_dir, source, k, "hidden", split)
                 surface_path = pred_path(pred_dir, source, k, surface_family, split)
                 data[source][k][("hidden", split)] = read_predictions(hidden_path, expected_k=k)
-                data[source][k][("surface", split)] = read_predictions(surface_path, expected_k=None)
+                data[source][k][("surface", split)] = read_predictions(surface_path, expected_k=k)
     return data
 
 
@@ -403,6 +403,20 @@ def pooled_hidden_records(
 
 def surface_records(data: dict[str, Any], *, source: str, surface_k: int, split: str) -> dict[str, dict[str, Any]]:
     return data[source][surface_k][("surface", split)]
+
+
+def val_score_stats(rows: list[dict[str, Any]]) -> dict[str, float]:
+    scores = np.array([float(row["score"]) for row in rows], dtype=np.float64)
+    if scores.size == 0:
+        raise ValueError("no validation rows for combined-source normalization")
+    std = float(scores.std(ddof=0))
+    if std <= 1e-12:
+        std = 1.0
+    return {"mean": float(scores.mean()), "std": std, "n": int(scores.size)}
+
+
+def apply_z(rows: list[dict[str, Any]], zs: dict[str, float]) -> list[dict[str, Any]]:
+    return [{**row, "score": (float(row["score"]) - zs["mean"]) / zs["std"]} for row in rows]
 
 
 def records_for_comparison(
@@ -581,10 +595,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--holm-ks must be a subset of --k-grid")
     data = load_all_predictions(pred_dir, sources, k_grid, args.surface_family)
     stats = z_stats(data, sources, k_grid)
+    hidden_val_pooled_stats = {
+        (source, k): val_score_stats(
+            list(pooled_hidden_records(data, stats, source=source, target_k=k, split="val", k_grid=k_grid)[0].values())
+        )
+        for source in sources
+        for k in k_grid
+    }
+    surface_val_stats = {
+        (source, k): val_score_stats(list(surface_records(data, source=source, surface_k=k, split="val").values()))
+        for source in sources
+        for k in k_grid
+    }
 
     prereg = {
         "rule": "zmean",
         "pooling": "unweighted mean of per-position hidden scores z-normalized with validation split statistics",
+        "combined_source_normalization": "source=pooled rows: each arm z-scored per source with val-split stats before cross-source concatenation",
         "future_positions_forbidden": True,
         "k_grid": k_grid,
         "holm_family": primary_holm_ks,
@@ -593,6 +620,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "primary_sources": sources,
         "n_bootstrap": args.n_bootstrap,
         "seed": args.seed,
+        "monotone_tolerance": args.monotone_tolerance,
+        "success_rule": "max adjacent pooled hidden AUROC drop <= monotone_tolerance and k=8 delta CI low >= 0",
     }
     write_json(output_dir / "stage1_score_pooling_preregistration.json", prereg)
 
@@ -638,8 +667,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     source="pooled",
                     hidden_k=hidden_k,
                     surface_k=hidden_k,
-                    hidden_rows=prefixed(source_hidden),
-                    surface_rows=prefixed(source_surface),
+                    hidden_rows=prefixed({s: apply_z(r, hidden_val_pooled_stats[(s, hidden_k)]) for s, r in source_hidden.items()}),
+                    surface_rows=prefixed({s: apply_z(r, surface_val_stats[(s, hidden_k)]) for s, r in source_surface.items()}),
                     n_bootstrap=args.n_bootstrap,
                     seed=args.seed + hidden_k * 1000,
                     extra={"pool_ks": ",".join(str(k) for k in pool_ks_for(hidden_k, k_grid))},
@@ -685,8 +714,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         source="pooled",
                         hidden_k=hidden_k,
                         surface_k=surface_k,
-                        hidden_rows=prefixed(source_hidden),
-                        surface_rows=prefixed(source_surface),
+                        hidden_rows=prefixed({s: apply_z(r, hidden_val_pooled_stats[(s, hidden_k)]) for s, r in source_hidden.items()}),
+                        surface_rows=prefixed({s: apply_z(r, surface_val_stats[(s, surface_k)]) for s, r in source_surface.items()}),
                         n_bootstrap=args.n_bootstrap,
                         seed=args.seed + hidden_k * 100000 + surface_k * 1000,
                         extra={"pool_ks": ",".join(str(k) for k in pool_ks_for(hidden_k, k_grid))},
