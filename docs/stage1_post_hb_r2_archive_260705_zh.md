@@ -21,8 +21,9 @@ cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n
 - `/workspace/logs`
 - `/workspace/cot-safety` 下的代码、配置、计划、文档和测试目录
 
-不包含 HuggingFace/model cache；只复制了 `/dev/shm/cot-safety-hot/runs`，
-没有复制 `/dev/shm/cot-safety-hot/hf_cache`。
+核心实验恢复不依赖 HuggingFace/model cache。关机前额外把
+`/dev/shm/cot-safety-hot/hf_cache` 的真实 blob 文件作为可选缓存快照上传；
+该缓存可从 HuggingFace 重新下载，R2 中不把它视为唯一实验数据。
 
 ## 顶层结构
 
@@ -55,6 +56,7 @@ tests/
 | `runs/dev_shm/cot-safety-hot/runs/` | `/dev/shm/cot-safety-hot/runs` 的目录式对象备份。 |
 | `runs/dev_shm/cot-safety-hot/runs.tar.gz` | 同一 `/dev/shm` runs 目录的整包 sidecar 归档，用于快速恢复。 |
 | `runs/dev_shm/cot-safety-hot/runs.tar.gz.sha256` | `runs.tar.gz` 的 sha256 校验文件。 |
+| `runs/dev_shm/cot-safety-hot/hf_cache/` | 可选 HuggingFace cache blob 快照。它可省去重下模型，但不是唯一实验产物；HF snapshot symlink 本身未另存 tar sidecar。 |
 | `logs/stage1_post_hb_260705_retune12288_b20/` | Stage1 sequence、R2 backup 和 sidecar 上传日志。 |
 | `manifest/r2_full_backup_260705/` | 备份状态、rclone logs、R2 size、tar sidecar manifest。 |
 | `configs/`, `scripts/`, `pipelines/`, `src/`, `tests/` | RunPod 节点上的代码快照。 |
@@ -98,6 +100,22 @@ runs/hidden_archives/stage1_natural_pairs_8b_a100_1x_loso_strongreject_full/
 ```text
 Total objects: 38.469k (38469)
 Total size: 64.545 GiB (69304583047 Byte)
+```
+
+关机前又额外上传了可选 `/dev/shm/cot-safety-hot/hf_cache` blob 快照：
+
+```text
+/dev/shm/cot-safety-hot/hf_cache
+  -> runs/dev_shm/cot-safety-hot/hf_cache
+  0 differences, 17 matching files
+  Total size: 14.966 GiB (16070067110 Byte)
+```
+
+包含该可选 cache 后的 R2 size：
+
+```text
+Total objects: 38.486k (38486)
+Total size: 79.511 GiB (85374650157 Byte)
 ```
 
 关机前 one-way size checks：

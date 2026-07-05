@@ -457,10 +457,13 @@ runs/stage1-results/stage1_post_hb_260705_retune12288_b20/
 runs/hidden_archives/
 runs/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly/
 runs/dev_shm/cot-safety-hot/runs/
+runs/dev_shm/cot-safety-hot/hf_cache/
 ```
 
-Do not restore model caches from this archive; re-download base models and judge
-models on a fresh pod.
+Model caches are not required for experiment restore; re-download base models
+and judge models on a fresh pod by default. The 2026-07-05 archive also includes
+an optional `runs/dev_shm/cot-safety-hot/hf_cache/` blob snapshot to save download
+time if needed.
 
 ### Stage1/Stage1b A6000 Archive, 2026-07-01
 
