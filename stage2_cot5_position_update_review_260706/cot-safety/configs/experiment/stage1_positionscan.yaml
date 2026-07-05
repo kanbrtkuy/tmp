@@ -1,0 +1,31 @@
+defaults:
+  - ../model/deepseek_r1_distill_qwen_1_5b.yaml
+  - ../data/stage1_positionscan_sources.yaml
+  - ../runtime/a6000_1x.yaml
+
+run:
+  name: stage1_positionscan_deepseek_1p5b
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1_positionscan_deepseek_1p5b
+
+probe:
+  task: positionscan_trajprobe
+  # Stage 1 scans natural base-model CoT positions before pause-token SFT.
+  pause_layout: none
+  n_pause_tokens: 0
+  # Denser than the original pilot grid while preserving the previously
+  # reported key layers for direct comparability.
+  layers: [4, 6, 7, 8, 10, 12, 14, 16, 17, 18, 20, 21, 22, 24, 26, 28]
+  positions: [cot_0, cot_1, cot_2, cot_3, cot_4, cot_5, cot_6, cot_7, cot_8, cot_9, cot_10, cot_12, cot_16, cot_24, cot_32, cot_48, cot_64, cot_96, cot_128]
+  model_kinds: [linear, mlp]
+  single_scan:
+    backend: batched
+    layer_combine: first
+    position_pool: first
+  hidden_extraction:
+    scheduler: dynamic_worker_queue
+  multilayer_concat:
+    positions: [cot_1, cot_2, cot_3, cot_7, cot_8]
+    layer_combine: concat
+    position_pool: first
+    scheduler: dynamic_worker_queue
+  metrics: [auroc, balanced_accuracy, recall, fpr, heldout_generalization]

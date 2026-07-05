@@ -1,0 +1,33 @@
+defaults:
+  - stage4_pause_gprs.yaml
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage4_pause_gprs_deepseek_8b_cot5_4xa100
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_pause_gprs_deepseek_8b_cot5_4xa100
+
+model:
+  sft_checkpoint: ${STAGE2_KL_CHECKPOINT:-/workspace/outputs/deepseek_8b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_save50_max400/checkpoint-400}
+
+liveness:
+  layers: [8, 16, 20, 24, 28]
+  controls:
+    positive_control_model: ${STAGE4_8B_FULL_SFT_CONTROL:-}
+    # Keep this missing status until the env path above is verified to be a
+    # genuine 8B full-SFT pause control; both fields must be changed to unblock
+    # the 8B liveness battery.
+    positive_control_status: missing_required_full_sft_pause_control
+    negative_control_model: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Llama-8B
+
+steering:
+  layer: 20
+  pause_mode: forced
+  insert_pause_after_cot_tokens: 5
+  n_insert_pauses: 3
+  gprs:
+    direction_artifact: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts_8b/mean_diff_direction.pt
+    safe_centroid: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts_8b/safe_centroid.pt
+    probe_checkpoint: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_kl_transparent_deepseek_8b_cot5_4xa100/probe.pt
+    artifact_manifest: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_gprs_artifacts_8b/gprs_artifact_manifest.json
+    stage3_evidence_report: legacy/PauseProbe/runs/probes/stage3_kl_transparent_8b_cot5_single/stage3_evidence_report.json

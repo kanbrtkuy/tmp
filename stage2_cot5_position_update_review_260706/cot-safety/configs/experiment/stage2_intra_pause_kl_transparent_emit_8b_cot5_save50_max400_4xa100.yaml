@@ -1,0 +1,45 @@
+defaults:
+  - stage2_intra_pause_format_only_8b_cot5_4xa100.yaml
+
+run:
+  name: stage2_intra_pause_kl_transparent_emit_deepseek_8b_cot5_save50_max400_4xa100
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_save50_max400
+
+sft:
+  method: kl_transparent_emit
+  tags: [deepseek_8b, intra_pause_cot5, after_cot4_before_cot5, kl_transparent_emit, a100_sxm]
+  learning_rate: 1.0e-3
+  weight_decay: 0.0
+  num_train_epochs: 1.0
+  save_steps: 50
+  eval_steps: 50
+  save_total_limit: 8
+  max_steps: 400
+  save_before_train: true
+  load_best_model_at_end: false
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  early_stopping:
+    enabled: false
+    patience: 2
+    threshold: 0.001
+  format_only:
+    enabled: true
+    trainable_tokens:
+      - "<|pause|>"
+    init_from_text: ""
+  pause_kl:
+    enabled: true
+    pause_token: "<|pause|>"
+    continuation_weight: 1.0
+    pre_weight: 0.0
+    suppression_weight: 1.0
+    emit_weight: 0.3
+    temperature: 1.0
+    max_kl_tokens_per_example: 256
+    suppression_chunk_size: 1024
+    require_pause_before_continuation_kl: true
+    assert_rows_only: true
+    post_step_invariant_check: true
+    invariant_check_interval_steps: 50
+    teacher_eval_mode: true

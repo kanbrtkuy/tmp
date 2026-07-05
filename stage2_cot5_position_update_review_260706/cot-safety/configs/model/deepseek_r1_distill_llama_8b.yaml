@@ -1,0 +1,19 @@
+defaults:
+  - template_deepseek_r1_distill.yaml
+
+model:
+  name: deepseek_r1_distill_llama_8b
+  base_model: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+  local_base_model: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Llama-8B
+  sft_checkpoint: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot5_format_only_trusted_cot_18k_save50_max250/checkpoint-250
+  tokenizer: null
+  trust_remote_code: false
+  max_length: 4096
+  # Combines 1.5B exact scan layers with 8B relative-depth checkpoints.
+  default_layers: [7, 8, 14, 16, 17, 20, 21, 22, 24, 25, 28, 32]
+
+pause:
+  # Stage1 evidence at hidden@cot_4 is best aligned by inserting the three
+  # pause tokens after cot_4 / before cot_5, which is cot_offset=5 in the
+  # formatter's "insert before cot_offset" convention.
+  cot_offset: 5

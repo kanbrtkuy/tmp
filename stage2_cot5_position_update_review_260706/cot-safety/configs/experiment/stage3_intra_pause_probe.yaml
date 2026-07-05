@@ -1,0 +1,61 @@
+defaults:
+  - ../model/deepseek_r1_distill_qwen_1_5b.yaml
+  - ../data/stage3_intra_pause_probe_sources.yaml
+  - ../runtime/a6000_1x.yaml
+
+run:
+  name: stage3_intra_pause_probe_deepseek_1p5b
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_deepseek_1p5b
+
+hidden:
+  layers: [7, 14, 17, 21, 22, 28]
+  positions:
+    prompt_baselines: [last_prompt_token, pre_think]
+    main: [pause_0, pause_1, pause_2]
+    diagnostics: [pre_pause_1, pre_pause_2, pre_pause_3, post_pause_1, post_pause_2, post_pause_3, control_cot_5, control_cot_6, cot_4, cot_5, cot_6, cot_9, cot_10]
+  pre_pause_window: 3
+  post_pause_window: 3
+  cot_offsets: [4, 5, 6, 9, 10]
+  control_cot_offsets: [5, 6]
+  extraction:
+    train_shards: 1
+    scheduler: dynamic_worker_queue
+
+probe:
+  model_kinds: [linear, mlp]
+  sample_weight_mode: source_label
+  threshold_max_fpr: 0.05
+  primary_endpoint: teacher_forced_pause_minus_prompt_screen
+  min_pause_margin_over_baselines: 0.01
+  confirmatory_endpoint:
+    name: within_prompt_auroc
+    status: not_implemented
+    requires: on_policy_generation_and_cot_segment_judge
+  prompt_baseline_positions: [last_prompt_token, pre_think]
+  true_content_controls:
+    required: true
+    source: matched_no_pause_forward
+    current_control_cot_aliases_valid: false
+  on_policy:
+    enabled: false
+    samples_per_prompt: 10
+    label_source: cot_segment_judge
+    layer: 14
+    positions: [pause_0, pause_1, pause_2]
+    true_content_control_positions: [control_cot_5, control_cot_6]
+    require_true_content_control: true
+    position_pool: mean
+    require_all_positions: true
+    min_mixed_prompts: 20
+    min_within_prompt_auroc: 0.55
+    min_pause_margin_over_baselines: 0.01
+    bootstrap_samples: 1000
+    test_prompt_fraction: 0.5
+    seed: 260704
+  scan:
+    single_scan_backend: batched
+    single_position_single_layer: true
+    pause_span_pool: [mean, concat]
+    layer_combine: [first, concat]
+    pooled_scheduler: dynamic_worker_queue
+  metrics: [auroc, balanced_accuracy, recall, fpr, heldout_generalization]

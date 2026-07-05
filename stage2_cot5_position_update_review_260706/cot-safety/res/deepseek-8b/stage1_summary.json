@@ -1,0 +1,54 @@
+{
+  "model": "DeepSeek-R1-Distill-Llama-8B",
+  "stage": "stage1_positionscan",
+  "pause_setting": {
+    "pause_layout": "none",
+    "n_pause_tokens": 0
+  },
+  "runtime": {
+    "gpus": 4,
+    "gpu_type": "A100",
+    "hidden_compression": "uncompressed"
+  },
+  "layers": [7, 8, 14, 16, 17, 20, 21, 22, 24, 25, 28, 32],
+  "single_layer": {
+    "completed_rows": 228,
+    "best_heldout_reasoningshield_auroc": {
+      "position": "cot_4",
+      "layer": 14,
+      "auroc": 0.923912,
+      "auprc": 0.703056
+    },
+    "best_test_auroc": {
+      "position": "cot_4",
+      "layer": 16,
+      "auroc": 0.981922,
+      "auprc": 0.863021
+    },
+    "best_test_auprc": {
+      "position": "cot_4",
+      "layer": 14,
+      "auroc": 0.977474,
+      "auprc": 0.864897
+    },
+    "robust_region": {
+      "positions": ["cot_3", "cot_4"],
+      "layers": [14, 16, 17, 20, 21, 22, 24, 28]
+    }
+  },
+  "multilayer": {
+    "completed_rows": 10,
+    "heldout_eval_present": false,
+    "best_test_auroc": {
+      "position": "cot_3",
+      "layer_combine": "mean",
+      "auroc": 0.9769636178170691,
+      "auprc": 0.8264733990729021
+    }
+  },
+  "smoke_test": {
+    "date": "2026-06-24",
+    "scope": "cot_4 single-layer scan over 12 layers using existing hidden states",
+    "completed": true
+  }
+}

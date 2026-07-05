@@ -1,0 +1,606 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Post-HarmBench Stage 1 orchestrator.
+#
+# This script is safe to start while the HB-only generator is still running.  It
+# waits for that wrapper to exit, freezes the primary N=100 first-budget pairs,
+# runs CPU-only audits/baselines, and only launches GPU Stage1 if the human-QA
+# gate has been completed and passed.
+
+REPO_DIR="${REPO_DIR:-/workspace/cot-safety}"
+VENV_DIR="${VENV_DIR:-/workspace/venvs/cot-natural}"
+PYTHON="${PYTHON:-${VENV_DIR}/bin/python}"
+CONFIG="${CONFIG:-configs/data/source_expansion_r1_8b_k300.yaml}"
+MODEL="${MODEL:-r1-8b}"
+RUN_DIR="${RUN_DIR:-runs/source_expansion_r1_8b_k300_v1}"
+STAGE1_OUT_ROOT="${STAGE1_OUT_ROOT:-runs/stage1_post_hb_$(date +%Y%m%d_%H%M%S)}"
+LOG_DIR="${LOG_DIR:-/workspace/logs/stage1_post_hb}"
+RAW_SNAPSHOT_DIR="${RAW_SNAPSHOT_DIR:-${STAGE1_OUT_ROOT}/hb_raw_snapshot}"
+RAW_SNAPSHOT_LOG_DIRS="${RAW_SNAPSHOT_LOG_DIRS:-/workspace/logs/source_expansion_r1_8b_k300_v1 /workspace/logs/source_expansion_harmbench_only_r1_8b_k300_v1}"
+
+WAIT_FOR_HB="${WAIT_FOR_HB:-1}"
+HB_PROCESS_PATTERN="${HB_PROCESS_PATTERN:-runpod_harmbench_only_gen_gen_k300_r1_8b.sh}"
+WAIT_POLL_SECONDS="${WAIT_POLL_SECONDS:-300}"
+
+FIXED_BUDGET_SAMPLE_START="${FIXED_BUDGET_SAMPLE_START:-0}"
+FIXED_BUDGET_MAX_SAMPLE_IDX="${FIXED_BUDGET_MAX_SAMPLE_IDX:-100}"
+WJB_TRAINVAL_CAP="${WJB_TRAINVAL_CAP:-700}"
+QA_ROWS_PER_SOURCE="${QA_ROWS_PER_SOURCE:-60}"
+QA_UNSAFE_AGREEMENT_BAR="${QA_UNSAFE_AGREEMENT_BAR:-0.90}"
+REQUIRED_LOSO_SOURCES="${REQUIRED_LOSO_SOURCES:-reasoningshield,strongreject_full,wildjailbreak_vanilla_harmful,harmbench_standard}"
+MIN_LOSO_SOURCE_PAIRS="${MIN_LOSO_SOURCE_PAIRS:-150}"
+
+# Extra fixed/frozen pair JSONL files to include in the LOSO freeze, separated
+# by whitespace.  The source-expansion k300 run currently covers SR/HB/WJB; set
+# this to the fixed ReasoningShield gen/gen pair file before claiming 4-source
+# LOSO, e.g. EXTRA_LOSO_PAIR_JSONL="/path/to/reasoningshield_pairs.jsonl".
+EXTRA_LOSO_PAIR_JSONL="${EXTRA_LOSO_PAIR_JSONL:-}"
+
+# Optional whitespace-separated SOURCE=PATH entries.  These are deliberately
+# explicit because safe-prompt diagnostics and external-test quarantine depend
+# on project-specific prompt sources.
+SAFE_PROMPT_INPUTS="${SAFE_PROMPT_INPUTS:-}"
+EXTERNAL_PROMPT_JSONL="${EXTERNAL_PROMPT_JSONL:-}"
+
+RUN_CPU_BASELINES="${RUN_CPU_BASELINES:-1}"
+RUN_GPU_STAGE1="${RUN_GPU_STAGE1:-1}"
+ALLOW_UNREVIEWED_GPU_STAGE1="${ALLOW_UNREVIEWED_GPU_STAGE1:-0}"
+UNREVIEWED_GPU_STAGE1_REASON="${UNREVIEWED_GPU_STAGE1_REASON:-overnight provisional run; human QA gate not yet completed}"
+STAGE1_SEQUENCE_SCRIPT="${STAGE1_SEQUENCE_SCRIPT:-pipelines/run_stage1_sequence.sh}"
+
+export PATH="${VENV_DIR}/bin:${PATH}"
+export PYTHONUNBUFFERED=1
+export HF_HOME="${HF_HOME:-/workspace/hf-cache}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-/workspace/hf-cache}"
+export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-/workspace/vllm-cache}"
+
+mkdir -p "${LOG_DIR}"
+cd "${REPO_DIR}"
+mkdir -p "${STAGE1_OUT_ROOT}"
+
+run_step() {
+  local name="$1"
+  shift
+  echo "===== START ${name} $(date -Is) ====="
+  "$@" 2>&1 | tee "${LOG_DIR}/${name}.log"
+  echo "===== END ${name} $(date -Is) ====="
+}
+
+require_file() {
+  local path="$1"
+  if [[ ! -s "${path}" ]]; then
+    echo "ERROR: missing required file: ${path}" >&2
+    exit 2
+  fi
+}
+
+verify_loso_sources() {
+  local required_sources="$1"
+  local min_pairs="$2"
+  shift 2
+  "${PYTHON}" - "${required_sources}" "${min_pairs}" "$@" <<'PY'
+import json
+import re
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+required = [item.strip() for item in sys.argv[1].split(",") if item.strip()]
+min_pairs = int(sys.argv[2])
+paths = [Path(item) for item in sys.argv[3:]]
+
+def clean(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+def canonical(value):
+    raw = clean(value).lower()
+    if "reasoningshield" in raw:
+        return "reasoningshield"
+    if "strongreject" in raw:
+        return "strongreject_full"
+    if "harmbench" in raw:
+        return "harmbench_standard"
+    if "wildjailbreak" in raw or raw in {"wjb", "wildjailbreak_vanilla"}:
+        return "wildjailbreak_vanilla_harmful"
+    return raw
+
+def source_family(row):
+    metadata = row.get("metadata") or {}
+    prompt_metadata = metadata.get("prompt_metadata") or {}
+    provenance = metadata.get("source_provenance") or {}
+    for value in (
+        row.get("source_family"),
+        metadata.get("source_family"),
+        metadata.get("source_pair_source"),
+        prompt_metadata.get("source_family"),
+        provenance.get("source_family"),
+        row.get("source"),
+        metadata.get("source"),
+    ):
+        source = canonical(value)
+        if source:
+            return source
+    return ""
+
+source_to_pairs = defaultdict(set)
+for path in paths:
+    if not path.exists():
+        raise SystemExit(f"missing LOSO pair input: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            source = source_family(row)
+            pair_id = clean(row.get("pair_id"))
+            if source and pair_id:
+                source_to_pairs[source].add(pair_id)
+
+counts = {source: len(source_to_pairs.get(source, set())) for source in required}
+missing = [source for source, count in counts.items() if count < min_pairs]
+print(json.dumps({"required_sources": required, "min_pairs": min_pairs, "pair_counts": counts}, indent=2))
+if missing:
+    raise SystemExit(
+        "LOSO source gate failed; provide/fix EXTRA_LOSO_PAIR_JSONL or lower MIN_LOSO_SOURCE_PAIRS only for a declared pilot. "
+        + json.dumps({"failing_sources": missing, "pair_counts": counts}, sort_keys=True)
+    )
+PY
+}
+
+verify_frozen_loso_sources() {
+  local summary_json="$1"
+  local required_sources="$2"
+  local min_pairs="$3"
+  "${PYTHON}" - "${summary_json}" "${required_sources}" "${min_pairs}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+summary_path = Path(sys.argv[1])
+required = [item.strip() for item in sys.argv[2].split(",") if item.strip()]
+min_pairs = int(sys.argv[3])
+if not summary_path.exists():
+    raise SystemExit(f"missing LOSO freeze summary: {summary_path}")
+
+summary = json.loads(summary_path.read_text())
+counts = summary.get("keep_pairs_by_source") or {}
+post_freeze_counts = {source: int(counts.get(source, 0)) for source in required}
+failing = [source for source, count in post_freeze_counts.items() if count < min_pairs]
+print(
+    json.dumps(
+        {
+            "stage": "post_freeze_loso_source_gate",
+            "summary_json": str(summary_path),
+            "required_sources": required,
+            "min_pairs": min_pairs,
+            "post_freeze_keep_pairs_by_source": post_freeze_counts,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+)
+if failing:
+    raise SystemExit(
+        "post-freeze LOSO source gate failed; freeze dropped at least one source below floor. "
+        + json.dumps({"failing_sources": failing, "post_freeze_keep_pairs_by_source": post_freeze_counts}, sort_keys=True)
+    )
+PY
+}
+
+check_cpu_deps() {
+  "${PYTHON}" - <<'PY'
+import importlib
+missing = []
+for name in ("numpy", "sklearn", "yaml"):
+    try:
+        importlib.import_module(name)
+    except Exception:
+        missing.append(name)
+if missing:
+    raise SystemExit("missing CPU dependencies: " + ", ".join(missing))
+PY
+}
+
+wait_for_hb() {
+  if [[ "${WAIT_FOR_HB}" != "1" ]]; then
+    return
+  fi
+  while pgrep -f "${HB_PROCESS_PATTERN}" >/dev/null 2>&1; do
+    echo "===== WAIT $(date -Is): HB generation still running (${HB_PROCESS_PATTERN}); sleeping ${WAIT_POLL_SECONDS}s ====="
+    sleep "${WAIT_POLL_SECONDS}"
+  done
+  echo "===== HB generation wrapper no longer running $(date -Is) ====="
+}
+
+snapshot_hb_raw_state() {
+  local snapshot_dir="$1"
+  shift
+  "${PYTHON}" - "${RUN_DIR}" "${snapshot_dir}" "${MODEL}" "${SOURCE_FAMILY:-harmbench_standard}" "$@" <<'PY'
+import hashlib
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+
+run_dir = Path(sys.argv[1])
+snapshot_dir = Path(sys.argv[2])
+model = sys.argv[3]
+source_family = sys.argv[4]
+log_dirs = [Path(item) for item in sys.argv[5:]]
+
+if not run_dir.exists():
+    raise SystemExit(f"missing run dir for raw snapshot: {run_dir}")
+
+snapshot_dir.mkdir(parents=True, exist_ok=True)
+files_dir = snapshot_dir / "run_files"
+logs_dir = snapshot_dir / "logs"
+files_dir.mkdir(exist_ok=True)
+logs_dir.mkdir(exist_ok=True)
+
+def safe_name(path: Path) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", str(path).strip("/"))
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def line_count(path: Path) -> int | None:
+    try:
+        with path.open("rb") as handle:
+            return sum(1 for _ in handle)
+    except UnicodeDecodeError:
+        return None
+
+def copy_file(path: Path) -> dict:
+    dest = files_dir / path.name
+    shutil.copy2(path, dest)
+    return {
+        "source": str(path),
+        "snapshot": str(dest),
+        "size_bytes": dest.stat().st_size,
+        "sha256": sha256(dest),
+        "line_count": line_count(dest),
+    }
+
+copied_files = []
+primary_names = [
+    f"candidates_{model}.jsonl",
+    f"judged_candidates_{model}.jsonl",
+    f"generation_summary_{model}.json",
+    f"judge_summary_{model}.json",
+    "selection_gen_gen_summary.json",
+    "natural_generated_pairs.jsonl",
+    "natural_generated_pairs_normalized.jsonl",
+    "selection_gen_gen_dropped.jsonl",
+    "prompt_manifest.jsonl",
+]
+for name in primary_names:
+    path = run_dir / name
+    if path.exists():
+        copied_files.append(copy_file(path))
+
+active_patterns = [
+    f"prompt_manifest_active_gen_gen_{model}_harmbench_only_*.jsonl",
+    f"prompt_manifest_active_gen_gen_{model}_harmbench_only_*.summary.json",
+    f"prompt_manifest_active_gen_gen_{model}_after_harmbench_only_*.jsonl",
+    f"prompt_manifest_active_gen_gen_{model}_after_harmbench_only_*.summary.json",
+]
+seen = {entry["source"] for entry in copied_files}
+for pattern in active_patterns:
+    for path in sorted(run_dir.glob(pattern)):
+        if str(path) not in seen:
+            copied_files.append(copy_file(path))
+            seen.add(str(path))
+
+copied_logs = []
+for log_dir in log_dirs:
+    if not log_dir.exists():
+        continue
+    dest = logs_dir / safe_name(log_dir)
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(log_dir, dest)
+    log_entries = []
+    for path in sorted(dest.rglob("*")):
+        if path.is_file():
+            log_entries.append(
+                {
+                    "path": str(path),
+                    "size_bytes": path.stat().st_size,
+                    "sha256": sha256(path),
+                    "line_count": line_count(path),
+                }
+            )
+    copied_logs.append({"source": str(log_dir), "snapshot": str(dest), "files": log_entries})
+
+def read_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+round_re = re.compile(r"harmbench_only_[^/]*_round_(\d+)_(\d+)")
+round_summaries = []
+for path in sorted(run_dir.glob(f"prompt_manifest_active_gen_gen_{model}_*harmbench_only_*.summary.json")):
+    match = round_re.search(path.name)
+    if not match:
+        continue
+    data = read_json(path)
+    is_after = "_after_harmbench_only_" in path.name
+    round_summaries.append(
+        {
+            "path": str(path),
+            "round_start": int(match.group(1)),
+            "round_end": int(match.group(2)),
+            "is_after_select": is_after,
+            "n_source_active_prompts": data.get("n_source_active_prompts"),
+            "active_prompts_by_source": data.get("active_prompts_by_source"),
+        }
+    )
+
+latest_after = None
+after_summaries = [row for row in round_summaries if row["is_after_select"]]
+if after_summaries:
+    latest_after = max(after_summaries, key=lambda row: (row["round_end"], row["round_start"]))
+latest_any = max(round_summaries, key=lambda row: (row["round_end"], row["round_start"], row["is_after_select"])) if round_summaries else None
+
+selection_summary = read_json(run_dir / "selection_gen_gen_summary.json")
+raw_summary = {
+    "stage": "hb_raw_snapshot_before_fixed_budget_reselection",
+    "run_dir": str(run_dir),
+    "snapshot_dir": str(snapshot_dir),
+    "model": model,
+    "source_family": source_family,
+    "note": "Snapshot only; no fixed-budget selection or methodological judgment is made here.",
+    "selection_summary_snapshot": str(files_dir / "selection_gen_gen_summary.json")
+    if (files_dir / "selection_gen_gen_summary.json").exists()
+    else None,
+    "selected_pairs_by_source_from_current_selection_summary": selection_summary.get("selected_pairs_by_source"),
+    "n_selected_pairs_from_current_selection_summary": selection_summary.get("n_selected_pairs"),
+    "latest_harmbench_round_summary": latest_any,
+    "latest_harmbench_after_select_summary": latest_after,
+    "copied_files": copied_files,
+    "copied_log_dirs": copied_logs,
+}
+summary_path = snapshot_dir / "hb_raw_snapshot_summary.json"
+summary_path.write_text(json.dumps(raw_summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(json.dumps(raw_summary, indent=2, sort_keys=True))
+PY
+}
+
+json_bool_gate() {
+  local path="$1"
+  local expected_manifest="${2:-}"
+  "${PYTHON}" - "$path" "$expected_manifest" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+expected_manifest = Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None
+data = json.loads(path.read_text())
+if not data.get("passes"):
+    raise SystemExit(f"gate failed: {path}")
+if expected_manifest:
+    if not expected_manifest.exists():
+        raise SystemExit(f"gate failed: expected QA manifest is missing: {expected_manifest}")
+    h = hashlib.sha256()
+    with expected_manifest.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    expected = h.hexdigest()
+    observed = data.get("manifest_jsonl_sha256")
+    if observed != expected:
+        raise SystemExit(
+            f"gate failed: QA summary manifest hash mismatch: observed={observed} expected={expected}"
+        )
+print("gate passed:", path)
+PY
+}
+
+run_text_bootstrap_ci() {
+  local fold_name="$1"
+  local text_dir="$2"
+  local output_dir="$3"
+  local pred_dir="${text_dir}/predictions"
+  if [[ ! -d "${pred_dir}" ]]; then
+    echo "===== SKIP bootstrap ${fold_name}: no predictions dir ${pred_dir} ====="
+    return
+  fi
+
+  local args=(scripts/data/run_stage1_bootstrap_ci.py --output-dir "${output_dir}" --n-bootstrap 2000)
+  local pred count
+  count=0
+  for pred in "${pred_dir}"/*.test.predictions.jsonl; do
+    [[ -e "${pred}" ]] || continue
+    local base name
+    base="$(basename "${pred}")"
+    name="${base%.test.predictions.jsonl}"
+    args+=(--prediction-jsonl "${name}=${pred}")
+    count=$((count + 1))
+  done
+  if [[ "${count}" -eq 0 ]]; then
+    echo "===== SKIP bootstrap ${fold_name}: no test prediction files ====="
+    return
+  fi
+  if [[ -s "${pred_dir}/word_tfidf.test.predictions.jsonl" && -s "${pred_dir}/prompt_only_tfidf.test.predictions.jsonl" ]]; then
+    args+=(--delta word_tfidf:prompt_only_tfidf)
+  fi
+  run_step "bootstrap_ci_${fold_name}" "${PYTHON}" "${args[@]}"
+}
+
+check_cpu_deps
+wait_for_hb
+run_step "snapshot_hb_raw_state" snapshot_hb_raw_state "${RAW_SNAPSHOT_DIR}" ${RAW_SNAPSHOT_LOG_DIRS}
+
+run_step "final_select_gen_gen" "${PYTHON}" scripts/data/manage_source_expansion_gen_gen.py \
+  --config "${CONFIG}" select-gen-gen \
+  --model "${MODEL}"
+
+run_step "final_summarize_gen_gen" "${PYTHON}" scripts/data/manage_source_expansion_gen_gen.py \
+  --config "${CONFIG}" summarize
+
+fixed_tag="$(printf "fixed_budget_samples_%03d_%03d" "${FIXED_BUDGET_SAMPLE_START}" "$((FIXED_BUDGET_MAX_SAMPLE_IDX - 1))")"
+FIXED_DIR="${STAGE1_OUT_ROOT}/${fixed_tag}"
+run_step "select_${fixed_tag}" "${PYTHON}" scripts/data/select_fixed_budget_gen_gen_pairs.py \
+  --config "${CONFIG}" \
+  --model "${MODEL}" \
+  --sample-start "${FIXED_BUDGET_SAMPLE_START}" \
+  --max-sample-idx "${FIXED_BUDGET_MAX_SAMPLE_IDX}" \
+  --output-dir "${FIXED_DIR}" \
+  --write-filtered-judged
+
+PAIR_JSONL="${FIXED_DIR}/natural_generated_pairs.jsonl"
+NORMALIZED_JSONL="${FIXED_DIR}/natural_generated_pairs_normalized.jsonl"
+require_file "${PAIR_JSONL}"
+require_file "${NORMALIZED_JSONL}"
+
+LOSO_PAIR_JSONLS=("${PAIR_JSONL}")
+for item in ${EXTRA_LOSO_PAIR_JSONL}; do
+  require_file "${item}"
+  LOSO_PAIR_JSONLS+=("${item}")
+done
+verify_loso_sources "${REQUIRED_LOSO_SOURCES}" "${MIN_LOSO_SOURCE_PAIRS}" "${LOSO_PAIR_JSONLS[@]}"
+
+LOSO_INPUT_ARGS=()
+for item in "${LOSO_PAIR_JSONLS[@]}"; do
+  LOSO_INPUT_ARGS+=(--input-jsonl "${item}")
+done
+
+run_step "freeze_audit_${fixed_tag}" "${PYTHON}" scripts/data/audit_stage1_pair_freeze.py \
+  "${LOSO_INPUT_ARGS[@]}" \
+  --output-dir "${STAGE1_OUT_ROOT}/freeze_audit_${fixed_tag}" \
+  --tokenizer-local-files-only \
+  --snapshot-inputs
+
+run_step "embedding_dedup_${fixed_tag}" "${PYTHON}" scripts/data/audit_stage1_embedding_dedup.py \
+  "${LOSO_INPUT_ARGS[@]}" \
+  --output-dir "${STAGE1_OUT_ROOT}/embedding_dedup_${fixed_tag}" \
+  --embedding-mode tfidf \
+  --allow-tfidf-fallback \
+  --threshold 0.90 \
+  --near-band-low 0.80 \
+  --near-band-high 0.90 \
+  --top-k 50
+
+FREEZE_DIR="${STAGE1_OUT_ROOT}/loso_freeze_${fixed_tag}"
+run_step "build_loso_freeze_${fixed_tag}" "${PYTHON}" scripts/data/build_stage1_loso_freeze.py \
+  "${LOSO_INPUT_ARGS[@]}" \
+  --output-dir "${FREEZE_DIR}" \
+  --wjb-trainval-cap "${WJB_TRAINVAL_CAP}" \
+  --force
+verify_frozen_loso_sources "${FREEZE_DIR}/stage1_loso_freeze_summary.json" "${REQUIRED_LOSO_SOURCES}" "${MIN_LOSO_SOURCE_PAIRS}"
+
+QA_DIR="${STAGE1_OUT_ROOT}/human_qa_${fixed_tag}"
+run_step "sample_human_qa_${fixed_tag}" "${PYTHON}" scripts/data/sample_stage1_human_qa.py \
+  --normalized-jsonl "${FREEZE_DIR}/frozen_normalized_all.jsonl" \
+  --output-dir "${QA_DIR}" \
+  --rows-per-source "${QA_ROWS_PER_SOURCE}" \
+  --include-text
+
+if [[ -n "${SAFE_PROMPT_INPUTS}" ]]; then
+  safe_args=(scripts/data/build_stage1_safe_prompt_diagnostics.py --output-dir "${STAGE1_OUT_ROOT}/safe_prompt_diagnostics")
+  for item in ${SAFE_PROMPT_INPUTS}; do
+    safe_args+=(--input-jsonl "${item}")
+  done
+  run_step "safe_prompt_diagnostics" "${PYTHON}" "${safe_args[@]}"
+else
+  echo "===== SKIP safe_prompt_diagnostics: set SAFE_PROMPT_INPUTS='source=path ...' to freeze S->S prompts ====="
+fi
+
+if [[ -n "${EXTERNAL_PROMPT_JSONL}" ]]; then
+  quarantine_args=(
+    scripts/data/quarantine_stage1_external_prompts.py
+    --reference-jsonl "${FREEZE_DIR}/frozen_normalized_all.jsonl"
+    --output-dir "${STAGE1_OUT_ROOT}/external_quarantine"
+  )
+  for item in ${EXTERNAL_PROMPT_JSONL}; do
+    quarantine_args+=(--external-jsonl "${item}")
+  done
+  run_step "external_prompt_quarantine" "${PYTHON}" "${quarantine_args[@]}"
+else
+  echo "===== SKIP external_prompt_quarantine: set EXTERNAL_PROMPT_JSONL='source=path ...' before final external tests ====="
+fi
+
+if [[ "${RUN_CPU_BASELINES}" == "1" ]]; then
+  for fold_dir in "${FREEZE_DIR}"/folds/*; do
+    [[ -d "${fold_dir}" ]] || continue
+    fold_name="$(basename "${fold_dir}")"
+    text_dir="${STAGE1_OUT_ROOT}/text_baselines/${fold_name}"
+    surface_dir="${STAGE1_OUT_ROOT}/surface_audit/${fold_name}"
+    run_step "text_baselines_${fold_name}" "${PYTHON}" scripts/data/run_stage1_text_baselines.py \
+      --export-dir "${fold_dir}" \
+      --output-dir "${text_dir}" \
+      --write-predictions \
+      --baselines all
+
+    run_step "surface_audit_${fold_name}" "${PYTHON}" scripts/data/run_stage1_surface_audit.py \
+      --export-dir "${fold_dir}" \
+      --output-dir "${surface_dir}" \
+      --bootstrap-pairs \
+      --bootstrap-samples 1000
+
+    run_text_bootstrap_ci "${fold_name}" "${text_dir}" "${STAGE1_OUT_ROOT}/bootstrap_ci/${fold_name}"
+  done
+fi
+
+QA_SUMMARY_JSON="${HUMAN_QA_SUMMARY_JSON:-${QA_DIR}/stage1_human_qa_summary.json}"
+if [[ ! -s "${QA_SUMMARY_JSON}" ]]; then
+  if [[ "${ALLOW_UNREVIEWED_GPU_STAGE1}" == "1" ]]; then
+    echo "===== BYPASS HUMAN QA GATE FOR PROVISIONAL GPU STAGE1 ====="
+    "${PYTHON}" - "${QA_DIR}" "${UNREVIEWED_GPU_STAGE1_REASON}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+qa_dir = Path(sys.argv[1])
+reason = sys.argv[2]
+qa_dir.mkdir(parents=True, exist_ok=True)
+path = qa_dir / "human_qa_gate_bypassed.json"
+path.write_text(
+    json.dumps(
+        {
+            "passes": False,
+            "gate_status": "bypassed_for_unreviewed_provisional_gpu_run",
+            "reason": reason,
+            "warning": (
+                "GPU Stage1 was allowed to continue without completed human QA. "
+                "Treat outputs as provisional/debug only until a passing human QA summary is supplied."
+            ),
+            "qa_sheet": str(qa_dir / "stage1_human_qa_sheet.tsv"),
+            "qa_manifest": str(qa_dir / "stage1_human_qa_manifest.jsonl"),
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+print(f"wrote {path}")
+PY
+  else
+  echo "===== STOP BEFORE GPU STAGE1 ====="
+  echo "Human QA sheet was written to: ${QA_DIR}/stage1_human_qa_sheet.tsv"
+  echo "After annotation, run scripts/data/summarize_stage1_human_qa.py with --qa-tsv ${QA_DIR}/stage1_human_qa_sheet.tsv and set HUMAN_QA_SUMMARY_JSON to the passing summary."
+  exit 20
+  fi
+else
+  json_bool_gate "${QA_SUMMARY_JSON}" "${QA_DIR}/stage1_human_qa_manifest.jsonl"
+fi
+
+if [[ "${RUN_GPU_STAGE1}" == "1" ]]; then
+  run_step "gpu_stage1_sequence" env \
+    STAGE1_FREEZE_DIR="${FREEZE_DIR}" \
+    STAGE1_PROVISIONAL_GPU_RUN="${ALLOW_UNREVIEWED_GPU_STAGE1}" \
+    STAGE1_PROVISIONAL_REASON="${UNREVIEWED_GPU_STAGE1_REASON}" \
+    bash "${STAGE1_SEQUENCE_SCRIPT}"
+else
+  echo "===== RUN_GPU_STAGE1=0; CPU audits/baselines complete, GPU Stage1 not launched ====="
+fi
+
+echo "===== STAGE1_POST_HB_ORCHESTRATOR_DONE $(date -Is) output=${STAGE1_OUT_ROOT} ====="

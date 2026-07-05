@@ -1,0 +1,73 @@
+defaults:
+  - stage1_positionscan.yaml
+
+run:
+  name: stage1_unified_deepseek_1p5b
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1_unified_deepseek_1p5b
+
+stage1_pipeline:
+  storage:
+    # Stage1 hidden-state caches are hot-path artifacts. Keep them on local
+    # ephemeral storage during a module/fold; persist and release each completed
+    # module/fold before starting the next one.
+    hot_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}
+    sync_to_cold_after_module: true
+    remove_hot_after_sync: true
+
+  position_scan:
+    enabled: true
+    run_name_suffix: position_scan
+    hidden_prefix: external_stage1_position_scan
+    overrides:
+      probe:
+        task: positionscan_trajprobe
+        pause_layout: none
+        n_pause_tokens: 0
+
+  prompt_baseline:
+    enabled: true
+    run_name_suffix: prompt_baseline
+    hidden_prefix: external_stage1_prompt_baseline
+    prompt_only_positions: [last_prompt_token, assistant_start, assistant_last, pre_think, think_last]
+    overrides:
+      probe:
+        task: stage1_prompt_baseline
+        prompt_positions: [last_prompt_token, assistant_start, assistant_last, pre_think]
+        positions:
+          - last_prompt_token
+          - assistant_start
+          - assistant_last
+          - pre_think
+          - think_last
+          - cot_2
+          - cot_3
+          - cot_4
+          - cot_7
+        multilayer_concat:
+          positions: [last_prompt_token, pre_think, think_last, cot_2, cot_3, cot_4, cot_7]
+          layer_combine: concat
+          position_pool: first
+          scheduler: dynamic_worker_queue
+
+  loso:
+    enabled: true
+    aggregate: true
+    modules: [position_scan, prompt_baseline]
+    summary_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1_loso_summary
+    # These are label-balanced heldout folds. Some raw sources are safe-only
+    # or unsafe-only, so a pure single-source heldout can have undefined AUROC.
+    # For those cases, the fold pairs a safe-only source family with the
+    # HarmThoughts unsafe source and reports combined family-level metrics.
+    source_families:
+      - name: reasoningshield_train_sft
+        sources: [reasoningshield_train_sft]
+      - name: reasoningshield_train_dpo
+        sources: [reasoningshield_train_dpo]
+      - name: reasoningshield_test
+        sources: [reasoningshield_test]
+      - name: star_vs_harmthoughts
+        sources: [star41k, star1, harmthoughts]
+      - name: aidsafe_vs_harmthoughts
+        sources: [aidsafe_beavertails, aidsafe_dataadvisor, harmthoughts]
+      - name: unsafechain_vs_harmthoughts
+        sources: [unsafechain_selected, harmthoughts]

@@ -1,0 +1,6 @@
+judge:
+  name: wildguard
+  model: allenai/wildguard
+  max_new_tokens: 32
+  batch_size: 1
+  torch_dtype: bfloat16

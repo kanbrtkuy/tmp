@@ -1,0 +1,295 @@
+import csv
+import json
+from pathlib import Path
+
+from scripts.data import build_stage1_safe_prompt_diagnostics as safe_diag
+from scripts.data import audit_stage1_prediction_rows as row_audit
+from scripts.data import quarantine_stage1_external_prompts as quarantine
+from scripts.data import run_stage1_bootstrap_ci as bootstrap
+from scripts.data import sample_stage1_human_qa as sample_qa
+from scripts.data import summarize_stage1_human_qa as summarize_qa
+
+
+def write_jsonl(path: Path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def normalized_row(source, pair_id, label, idx):
+    return {
+        "id": f"{pair_id}::{label}",
+        "pair_id": pair_id,
+        "match_family": pair_id,
+        "prompt_instance_id": pair_id,
+        "source_family": source,
+        "prompt": f"Prompt {pair_id}",
+        "trajectory_safety_label": label,
+        "reasoning": f"{label} reasoning {idx}",
+        "final_answer": f"{label} final",
+    }
+
+
+def test_human_qa_sample_and_summary(tmp_path):
+    rows = []
+    for source in ("strongreject_full", "harmbench_standard"):
+        for idx in range(4):
+            pair_id = f"{source}-{idx}"
+            rows.append(normalized_row(source, pair_id, "safe", idx))
+            rows.append(normalized_row(source, pair_id, "unsafe", idx))
+    data = tmp_path / "normalized.jsonl"
+    sample_dir = tmp_path / "sample"
+    summary_dir = tmp_path / "summary"
+    write_jsonl(data, rows)
+
+    sample_args = type(
+        "Args",
+        (),
+        {
+            "normalized_jsonl": [data],
+            "output_dir": str(sample_dir),
+            "rows_per_source": 4,
+            "seed": 7,
+            "include_text": False,
+        },
+    )()
+    sample_summary = sample_qa.run(sample_args)
+    assert sample_summary["n_sampled_rows"] == 8
+
+    sheet = sample_dir / "stage1_human_qa_sheet.tsv"
+    manifest_by_id = {
+        row["qa_id"]: row
+        for row in (
+            json.loads(line)
+            for line in (sample_dir / "stage1_human_qa_manifest.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    }
+    qa_rows = []
+    with sheet.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        assert reader.fieldnames == [
+            "qa_id",
+            "prompt_sha256",
+            "reasoning_sha256",
+            "prompt",
+            "reasoning",
+            "final_answer",
+            "human_label",
+            "human_quality",
+            "notes",
+        ]
+        for row in reader:
+            assert "judge_label" not in row
+            assert "pair_id" not in row
+            assert "row_id" not in row
+            assert "source_family" not in row
+            for key in ("qa_id", "prompt_sha256", "reasoning_sha256", "human_label", "human_quality", "notes"):
+                assert "safe" not in row[key].lower()
+                assert "unsafe" not in row[key].lower()
+            row["human_label"] = manifest_by_id[row["qa_id"]]["judge_label"]
+            row["human_quality"] = "ok"
+            qa_rows.append(row)
+    with sheet.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=qa_rows[0].keys(), delimiter="\t")
+        writer.writeheader()
+        writer.writerows(qa_rows)
+
+    summarize_args = type(
+        "Args",
+        (),
+        {
+            "qa_tsv": str(sheet),
+            "manifest_jsonl": str(sample_dir / "stage1_human_qa_manifest.jsonl"),
+            "output_dir": str(summary_dir),
+            "min_labeled_per_source": 4,
+            "safe_agreement_bar": 0.90,
+            "unsafe_agreement_bar": 0.90,
+            "no_fail": False,
+        },
+    )()
+    qa_summary = summarize_qa.run(summarize_args)
+    assert qa_summary["passes"] is True
+    assert qa_summary["sources"]["strongreject_full"]["unsafe_agreement_rate"] == 1.0
+
+
+def test_bootstrap_ci_and_delta(tmp_path):
+    left = tmp_path / "left.jsonl"
+    right = tmp_path / "right.jsonl"
+    rows_left = []
+    rows_right = []
+    for idx in range(10):
+        label = idx % 2
+        rows_left.append({"id": f"l{idx}", "match_family": f"g{idx}", "gold_int": label, "score": 0.9 if label else 0.1})
+        rows_right.append({"id": f"r{idx}", "match_family": f"g{idx}", "gold_int": label, "score": 0.5})
+    write_jsonl(left, rows_left)
+    write_jsonl(right, rows_right)
+    args = type(
+        "Args",
+        (),
+        {
+            "prediction_jsonl": [f"left={left}", f"right={right}"],
+            "delta": ["left:right"],
+            "output_dir": str(tmp_path / "ci"),
+            "group_fields": "match_family,pair_id,id",
+            "n_bootstrap": 30,
+            "seed": 7,
+        },
+    )()
+    summary = bootstrap.run(args)
+    assert summary["models"]["left"]["auroc"] == 1.0
+    assert summary["models"]["right"]["auroc"] == 0.5
+    assert summary["deltas"]["left_minus_right"]["delta_auroc"] == 0.5
+
+
+def test_bootstrap_ci_accepts_probe_prediction_fields(tmp_path):
+    probe = tmp_path / "probe.jsonl"
+    rows = []
+    for idx in range(10):
+        label = idx % 2
+        rows.append(
+            {
+                "example_id": f"e{idx}",
+                "match_family": f"g{idx}",
+                "pair_id": f"p{idx}",
+                "label": label,
+                "unsafe_score": 0.9 if label else 0.1,
+            }
+        )
+    write_jsonl(probe, rows)
+    args = type(
+        "Args",
+        (),
+        {
+            "prediction_jsonl": [f"probe={probe}"],
+            "delta": None,
+            "output_dir": str(tmp_path / "ci_probe"),
+            "group_fields": "match_family,pair_id,id",
+            "n_bootstrap": 30,
+            "seed": 7,
+        },
+    )()
+    summary = bootstrap.run(args)
+    assert summary["models"]["probe"]["auroc"] == 1.0
+
+
+def test_prediction_row_audit_detects_missing_rows(tmp_path):
+    prepared = tmp_path / "prepared" / "holdout_source" / "normalized"
+    archive = tmp_path / "archive"
+    pred_dir = archive / "stage1_natural_pairs_8b_a100_1x_loso_holdout_source" / "runs" / "linear" / "linear_last_prompt_token_l4"
+    val_rows = [
+        normalized_row("holdout_source", "p0", "safe", 0),
+        normalized_row("holdout_source", "p0", "unsafe", 1),
+    ]
+    test_rows = [
+        normalized_row("holdout_source", "p1", "safe", 2),
+        normalized_row("holdout_source", "p1", "unsafe", 3),
+    ]
+    write_jsonl(prepared / "val.jsonl", val_rows)
+    write_jsonl(prepared / "test.jsonl", test_rows)
+    write_jsonl(
+        pred_dir / "predictions_val.jsonl",
+        [
+            {
+                "example_id": val_rows[0]["id"],
+                "match_family": "p0",
+                "pair_id": "p0",
+                "label": 0,
+                "unsafe_score": 0.1,
+            }
+        ],
+    )
+    write_jsonl(
+        pred_dir / "predictions_test.jsonl",
+        [
+            {
+                "example_id": row["id"],
+                "match_family": row["match_family"],
+                "pair_id": row["pair_id"],
+                "label": 1 if row["trajectory_safety_label"] == "unsafe" else 0,
+                "unsafe_score": 0.8,
+            }
+            for row in test_rows
+        ],
+    )
+
+    args = type(
+        "Args",
+        (),
+        {
+            "prepared_dir": str(tmp_path / "prepared"),
+            "archive_root": str(archive),
+            "output_dir": str(tmp_path / "audit"),
+            "max_id_hashes": 10,
+        },
+    )()
+    summary = row_audit.run(args)
+    assert summary["passes"] is False
+    assert summary["n_mismatch_files"] == 1
+    mismatch = [row for row in summary["files"] if row["status"] == "mismatch"][0]
+    assert mismatch["split"] == "val"
+    assert mismatch["n_missing_ids"] == 1
+    assert mismatch["missing_label_counts"] == {"unsafe": 1}
+
+
+def test_safe_prompt_diagnostics_dedups_and_filters(tmp_path):
+    source = tmp_path / "safe.jsonl"
+    write_jsonl(
+        source,
+        [
+            {"id": "a", "prompt": "How do I make tea?", "label": "safe", "source_family": "safe_seed"},
+            {"id": "b", "prompt": "How   do I make tea?", "label": "safe", "source_family": "safe_seed"},
+            {"id": "c", "prompt": "Unsafe prompt", "label": "unsafe", "source_family": "safe_seed"},
+        ],
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "input_jsonl": [f"safe_seed={source}"],
+            "input_csv": None,
+            "output_dir": str(tmp_path / "diag"),
+            "prompt_fields": "prompt",
+            "label_fields": "label",
+            "filter_label": "safe,benign",
+            "max_per_source": 0,
+            "seed": 7,
+        },
+    )()
+    summary = safe_diag.run(args)
+    assert summary["n_loaded_prompts"] == 2
+    assert summary["n_selected_prompts"] == 1
+    assert summary["n_dropped_prompts"] == 1
+
+
+def test_external_quarantine_exact_match(tmp_path):
+    reference = tmp_path / "reference.jsonl"
+    external = tmp_path / "external.jsonl"
+    write_jsonl(reference, [{"id": "ref1", "prompt": "Shared prompt", "source_family": "freeze"}])
+    write_jsonl(
+        external,
+        [
+            {"id": "ext1", "prompt": "Shared   prompt", "source_family": "external"},
+            {"id": "ext2", "prompt": "Fresh prompt", "source_family": "external"},
+        ],
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "reference_jsonl": [str(reference)],
+            "external_jsonl": [str(external)],
+            "output_dir": str(tmp_path / "quarantine"),
+            "prompt_fields": "prompt",
+            "near_threshold": 0.80,
+            "top_k": 50,
+            "skip_near_neighbor": True,
+            "include_text": False,
+        },
+    )()
+    summary = quarantine.run(args)
+    assert summary["n_exact_matches"] == 1
+    assert summary["n_quarantined_external_prompts"] == 1
+    kept = (tmp_path / "quarantine" / "external_kept_prompts.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(kept) == 1

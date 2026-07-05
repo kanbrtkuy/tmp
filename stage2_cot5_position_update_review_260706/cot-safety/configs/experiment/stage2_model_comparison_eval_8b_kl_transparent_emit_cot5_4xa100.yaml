@@ -1,0 +1,50 @@
+defaults:
+  - stage2_model_comparison_eval.yaml
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+  - ../runtime/a100_4x.yaml
+
+run:
+  name: stage2_model_comparison_eval_deepseek_8b_kl_transparent_emit_cot5_4xa100
+  output_dir: ${COT_SAFETY_RUN_ROOT:-/workspace/cot-safety/runs}/eval/stage2_model_comparison_deepseek_8b_kl_transparent_emit_cot5_4xa100
+
+eval:
+  devices: ["0", "1", "2", "3"]
+  model_conditions:
+    - label: base_natural
+      kind: base
+      path: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Llama-8B
+      generation_backend: vllm
+      insert_pause_after_cot_tokens: -1
+      n_insert_pauses: 0
+      batch_size: 32
+    - label: kl_emit_cot5_natural
+      kind: sft
+      path: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_save50_max400/final
+      generation_backend: vllm
+      insert_pause_after_cot_tokens: -1
+      n_insert_pauses: 0
+      batch_size: 32
+    - label: kl_emit_cot5_forced
+      kind: sft
+      path: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_save50_max400/final
+      generation_backend: vllm
+      insert_pause_after_cot_tokens: 5
+      n_insert_pauses: 3
+      batch_size: 32
+  generation:
+    generation_backend: vllm
+    chunk_size: 300
+    vllm:
+      gpu_memory_utilization: 0.90
+      max_num_seqs: 32
+  data:
+    prepared_dir: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/model_comparison_eval/deepseek_8b_stage2
+  judging:
+    judge_backend: vllm
+    chunk_size: 300
+    batch_size:
+      wildguard: 16
+      llamaguard: 16
+      harmbench: 4
+    device_map:
+      llamaguard: auto

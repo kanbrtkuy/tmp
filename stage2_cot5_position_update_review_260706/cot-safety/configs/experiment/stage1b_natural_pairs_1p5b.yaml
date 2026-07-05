@@ -1,0 +1,29 @@
+defaults:
+  - stage1_natural_pairs_1p5b.yaml
+
+run:
+  name: stage1b_natural_pairs_1p5b
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage1b_natural_pairs_1p5b
+
+probe:
+  task: stage1b_prompt_baseline_natural_pairs
+  prompt_positions: [last_prompt_token, assistant_start, assistant_last, pre_think]
+  positions:
+    - last_prompt_token
+    - assistant_start
+    - assistant_last
+    - pre_think
+    - think_last
+    - cot_2
+    - cot_3
+    - cot_4
+    - cot_7
+  multilayer_concat:
+    positions: [last_prompt_token, pre_think, think_last, cot_2, cot_3, cot_4, cot_7]
+
+legacy:
+  hidden_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/hidden/stage1b_natural_pairs_1p5b
+  hidden_prefix: stage1b_natural_pairs_1p5b
+  log_dir: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/logs/stage1b_natural_pairs_1p5b
+  single_scan_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1b_natural_pairs_1p5b/linear
+  multilayer_out_root: ${COT_SAFETY_HOT_ROOT:-/dev/shm/cot-safety-hot}/runs/stage1b_natural_pairs_1p5b/multilayer
