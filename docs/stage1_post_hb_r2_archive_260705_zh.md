@@ -237,6 +237,7 @@ rclone copy \
 ## 相关文档
 
 - `docs/fable_decision_review_stage1_retune12288_b20_260705.md`
+- `docs/stage1_post_hb_retune12288_b20_provenance_260705_zh.md`
 - `res/stage1_experiment_inventory_results_260705_zh.md`
 - `res/stage1_post_hb_retune12288_b20_results_260705_zh.md`
 - `plan/stage1_natural_pair_experiment_plan_260703_zh.md`

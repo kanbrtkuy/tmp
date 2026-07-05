@@ -30,7 +30,8 @@ ALL_STAGE1_SEQUENCE_DONE 2026-07-05T04:21:51+00:00
 cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n100/
 ```
 
-归档说明见 `docs/stage1_post_hb_r2_archive_260705_zh.md`。
+归档说明见 `docs/stage1_post_hb_r2_archive_260705_zh.md`。代码、脚本和配置
+provenance 见 `docs/stage1_post_hb_retune12288_b20_provenance_260705_zh.md`。
 
 ## 当前 Stage1 结论
 
