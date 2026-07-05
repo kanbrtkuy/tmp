@@ -1,10 +1,10 @@
 {
   "round": 1,
-  "status": "in_progress",
+  "status": "reviewed_negative_control",
   "reviewer": "claude-fable-5",
   "tmp_commit": "60b28e3",
   "packet": "/Users/baby/Documents/SafeChain/tmp/stage1_auto_improve_loop_260705/round1_results_packet",
-  "phase": "leadtime_confirmation_cotonly_patch_ok_pending_runpod_extraction",
+  "phase": "leadtime_confirmation_results_reviewed_drop_claim",
   "a1_code_packet_commit": "b0027fb",
   "a1_code_patch_commit": "03854ee",
   "a1_results_packet_commit": "abe8941",
@@ -25,5 +25,21 @@
   "leadtime_cotonly_patch_review_verdict": "OK_TO_RUN",
   "leadtime_cotonly_patch_review_response": "review-stage/stage1_auto_improve_260705/fable5_excluded_leadtime_cotonly_patch_review_260705.md",
   "leadtime_official_hidden_archive_root": "/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly",
+  "leadtime_results_packet_commit": "ae6f759",
+  "leadtime_results_review_verdict": "DROP_LEADTIME_CLAIM_STAGE1_NEGATIVE_CONTROL",
+  "leadtime_results_review_response": "review-stage/stage1_auto_improve_260705/fable5_excluded_leadtime_results_review_260705.md",
+  "leadtime_results_output_dir": "/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500",
+  "leadtime_results_summary": {
+    "confirmed": false,
+    "decision": "drop_leadtime_claim",
+    "a1_primary_delta_auroc": 0.001552554573027498,
+    "a1_primary_ci_low": -0.013827948118245184,
+    "a1_primary_ci_high": 0.017245804231278573,
+    "a2_robustness_delta_auroc": -0.06535013242769871,
+    "a2_robustness_ci_low": -0.08764677848263493,
+    "a2_robustness_ci_high": -0.04657860625186892,
+    "n_errors": 0
+  },
+  "stage1_final_status": "negative_control_no_more_frozen_test_rescue",
   "timestamp": "2026-07-05T00:00:00Z"
 }

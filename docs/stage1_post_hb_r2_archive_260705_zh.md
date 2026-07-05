@@ -49,6 +49,8 @@ tests/
 |---|---|
 | `runs/stage1_post_hb_260705_after_hb_n100_loso/` | post-HB Stage1 LOSO 主 run 根目录。 |
 | `runs/stage1-results/stage1_post_hb_260705_retune12288_b20/` | `/workspace/stage1-results` 下的 GPU archive root。 |
+| `runs/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly/` | excluded-source lead-time confirmation 使用的正式 cot-only hidden archive，只有 `cot_4,cot_8,cot_16,cot_32,cot_64`，不含 `think_last`。 |
+| `runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500/` | excluded-source lead-time confirmation 的聚合结果、gate、diagnostics 和 prediction-score JSONL。 |
 | `runs/dev_shm/cot-safety-hot/runs/` | `/dev/shm/cot-safety-hot/runs` 的目录式对象备份。 |
 | `runs/dev_shm/cot-safety-hot/runs.tar.gz` | 同一 `/dev/shm` runs 目录的整包 sidecar 归档，用于快速恢复。 |
 | `runs/dev_shm/cot-safety-hot/runs.tar.gz.sha256` | `runs.tar.gz` 的 sha256 校验文件。 |
@@ -126,6 +128,24 @@ rclone copy \
   --s3-no-check-bucket --transfers=16 --checkers=32 --fast-list --progress
 ```
 
+恢复 excluded-source lead-time 的 cot-only hidden archive：
+
+```bash
+rclone copy \
+  cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n100/runs/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly \
+  /workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly \
+  --s3-no-check-bucket --transfers=16 --checkers=32 --fast-list --progress
+```
+
+恢复 excluded-source lead-time confirmation 结果：
+
+```bash
+rclone copy \
+  cloudflare_r2_cot_safety:cot-safety/stage1-paired/20260705-a100-stage1-post-hb-n100/runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500 \
+  /workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500 \
+  --s3-no-check-bucket --transfers=16 --checkers=32 --fast-list --progress
+```
+
 目录式恢复 `/dev/shm` runs：
 
 ```bash
@@ -165,5 +185,6 @@ rclone copy \
 ## 相关文档
 
 - `docs/fable_decision_review_stage1_retune12288_b20_260705.md`
+- `res/stage1_experiment_inventory_results_260705_zh.md`
 - `res/stage1_post_hb_retune12288_b20_results_260705_zh.md`
 - `plan/stage1_natural_pair_experiment_plan_260703_zh.md`

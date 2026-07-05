@@ -122,6 +122,85 @@ is a **lead-time claim**: *hidden states at ~4 generated tokens predict the even
 
 </details>
 
+## Round 2 Excluded-Source Lead-Time Result Review
+
+Date: 2026-07-05
+
+Artifacts:
+
+- tmp result packet commit: `ae6f759`
+- packet:
+  `stage1_auto_improve_loop_260705/round2_excluded_leadtime_results_packet/`
+- local result output:
+  `/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/excluded_leadtime_confirmation_260705_b500`
+- official cot-only hidden archive:
+  `/workspace/stage1-results/stage1_post_hb_260705_retune12288_b20/hidden_archives_excluded_leadtime_cotonly`
+- Fable-5 response:
+  `review-stage/stage1_auto_improve_260705/fable5_excluded_leadtime_results_review_260705.md`
+
+### Result Summary
+
+Manifest gate passed:
+
+- 6 manifests
+- `bad = []`
+- every manifest has exactly `cot_4,cot_8,cot_16,cot_32,cot_64`
+- every manifest has `omit_think_last = true`
+- every manifest has `status = complete`
+
+Frozen test population:
+
+- `strongreject_full`: 277 pairs
+- `reasoningshield`: 335 pairs
+- all k pair-complete; 0 drops
+
+Gate outcomes:
+
+- A1 primary hidden@4 minus text@8:
+  - delta AUROC `+0.00155`
+  - CI `[-0.01383, +0.01725]`
+  - gate fail
+- Per-source sanity:
+  - `strongreject_full`: delta `-0.02618`, CI `[-0.05035, -0.00270]`
+  - `reasoningshield`: delta `+0.01450`, CI `[-0.00678, +0.03964]`
+  - gate fail
+- A2 robustness:
+  - delta `-0.06535`
+  - CI `[-0.08765, -0.04658]`
+  - gate fail
+
+Script decision:
+
+```text
+confirmed = false
+decision = drop_leadtime_claim
+n_errors = 0
+```
+
+### Fable-5 Verdict
+
+Fable-5 independently recomputed the sanitized prediction-score outputs and
+returned:
+
+```text
+drop_leadtime_claim is correct.
+Stage1 should now be treated as a negative/control result.
+No statistical or implementation blockers were found.
+```
+
+Important reviewer boundary:
+
+> Further re-analysis of this frozen test set to find a positive cell is
+> multiplicity laundering.
+
+### Final Stage1 Boundary
+
+Stage1 is now closed as a negative/control result for the current dataset and
+probe design. The only admissible future positive path is a fresh,
+preregistered setting, preferably Stage2/on-policy or a fresh-data follow-up
+motivated by the short-prefix k=4 diagnostic. No further equal-horizon or
+lead-time rescue variants should be run on this frozen test set.
+
 ## Excluded-Source Lead-Time Confirmation Plan And Code Prep (2026-07-05)
 
 ### Fable-5 Plan Review

@@ -46,6 +46,14 @@ negative/control result，而不是 hidden-state superiority 证据。
   说明 full-trajectory hindsight 结构本身很强。
 - row audit 未显示 broad extractor-level row drop；剩余 mismatch 主要集中在
   Stage1 linear 的高 CoT offset coverage gap。
+- A1/A2 和 excluded-source lead-time confirmation 已完成；Fable-5 复审确认
+  `drop_leadtime_claim` 是正确决策，Stage1 应作为 negative/control 结果。
+
+小实验清单、关键数字和“符合/不符合预期”总览见：
+
+```text
+res/stage1_experiment_inventory_results_260705_zh.md
+```
 
 这意味着：当前数据不是完全不可解释；更大的问题是 evaluation contrast。
 当前 hidden arm 是 prefix-limited hidden snapshot，而 surface arm 是
