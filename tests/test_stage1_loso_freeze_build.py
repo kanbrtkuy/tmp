@@ -107,3 +107,39 @@ def test_loso_freeze_drops_incomplete_pairs(tmp_path):
     summary = loso.build_freeze(args)
     assert summary["n_keep_pairs"] == 0
     assert summary["n_dropped_pairs"] == 1
+
+
+def test_loso_freeze_drops_pairs_over_word_caps(tmp_path):
+    path = tmp_path / "pairs.jsonl"
+    output = tmp_path / "freeze"
+    row = pair("wjb-long", "wildjailbreak_vanilla_harmful")
+    row["unsafe_reasoning"] = " ".join(["too_long"] * 6)
+    write_jsonl(path, [row])
+
+    args = type(
+        "Args",
+        (),
+        {
+            "input_jsonl": [str(path)],
+            "output_dir": str(output),
+            "registered_sources": "wildjailbreak_vanilla_harmful,harmbench_standard",
+            "holdout_sources": "wildjailbreak_vanilla_harmful",
+            "seed": 123,
+            "val_frac": 0.10,
+            "wjb_trainval_cap": 0,
+            "max_prompt_words": 0,
+            "max_reasoning_words": 5,
+            "max_final_words": 0,
+            "force": False,
+        },
+    )()
+    summary = loso.build_freeze(args)
+    assert summary["n_keep_pairs"] == 0
+    assert summary["n_dropped_pairs"] == 1
+    assert summary["drop_reason_counts"] == {"reasoning_words_gt_cap": 1}
+    dropped = [
+        json.loads(line)
+        for line in (output / "dropped_pairs.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert dropped[0]["drop_reasons"] == ["reasoning_words_gt_cap"]
+    assert dropped[0]["violations"][0]["label"] == "unsafe"

@@ -214,6 +214,58 @@ def group_pairs(rows: list[dict[str, Any]], *, registered_sources: set[str]) -> 
     return keep, drops
 
 
+def word_count(value: Any) -> int:
+    return len(clean_text(value).split())
+
+
+def word_cap_violations(pair_rows: list[dict[str, Any]], *, caps: dict[str, int]) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
+    for row in pair_rows:
+        label = clean_text(row.get("trajectory_safety_label")) or label_value(row)
+        for field, cap in caps.items():
+            if cap <= 0:
+                continue
+            count = word_count(row.get(field))
+            if count > cap:
+                violations.append(
+                    {
+                        "row_id": hashlib.sha256(row_id(row, label).encode("utf-8")).hexdigest()[:16],
+                        "label": label,
+                        "field": field,
+                        "words": count,
+                        "cap": cap,
+                        "reason": f"{field}_words_gt_cap",
+                    }
+                )
+    return violations
+
+
+def apply_word_caps(
+    pairs: dict[str, list[dict[str, Any]]],
+    *,
+    caps: dict[str, int],
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    if all(value <= 0 for value in caps.values()):
+        return pairs, []
+    keep: dict[str, list[dict[str, Any]]] = {}
+    drops: list[dict[str, Any]] = []
+    for pair_id, pair_rows in pairs.items():
+        violations = word_cap_violations(pair_rows, caps=caps)
+        if violations:
+            source = pair_rows[0].get("source_family") if pair_rows else ""
+            drops.append(
+                {
+                    "pair_id": pair_id,
+                    "source_family": source,
+                    "drop_reasons": sorted({item["reason"] for item in violations}),
+                    "violations": violations,
+                }
+            )
+            continue
+        keep[pair_id] = pair_rows
+    return keep, drops
+
+
 def split_source_pairs(pair_ids: list[str], *, fold: str, source: str, seed: int, val_frac: float) -> tuple[set[str], set[str]]:
     ids = sorted(pair_ids)
     rng = random.Random(stable_int(f"{seed}:{fold}:{source}:split"))
@@ -291,6 +343,13 @@ def build_freeze(args: argparse.Namespace) -> dict[str, Any]:
     registered_sources = {canonical_source(item) for item in args.registered_sources.split(",") if item.strip()}
     rows = load_normalized_rows([Path(path) for path in args.input_jsonl])
     pairs, drops = group_pairs(rows, registered_sources=registered_sources)
+    word_caps = {
+        "prompt": int(getattr(args, "max_prompt_words", 0) or 0),
+        "reasoning": int(getattr(args, "max_reasoning_words", 0) or 0),
+        "final_answer": int(getattr(args, "max_final_words", 0) or 0),
+    }
+    pairs, cap_drops = apply_word_caps(pairs, caps=word_caps)
+    drops.extend(cap_drops)
     source_to_pairs: dict[str, list[str]] = defaultdict(list)
     for pair_id, pair_rows in pairs.items():
         source_to_pairs[pair_rows[0]["source_family"]].append(pair_id)
@@ -381,10 +440,12 @@ def build_freeze(args: argparse.Namespace) -> dict[str, Any]:
         "seed": args.seed,
         "val_frac": args.val_frac,
         "wjb_trainval_cap": args.wjb_trainval_cap,
+        "word_caps": word_caps,
         "hb_policy": "test_fold_only_excluded_from_non_hb_trainval",
         "n_input_rows": len(rows),
         "n_keep_pairs": len(pairs),
         "n_dropped_pairs": len(drops),
+        "drop_reason_counts": dict(Counter(reason for drop in drops for reason in drop.get("drop_reasons", []))),
         "keep_pairs_by_source": source_pair_counts,
         "folds": fold_summaries,
         "outputs": {
@@ -423,10 +484,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=260705)
     parser.add_argument("--val-frac", type=float, default=0.10)
     parser.add_argument("--wjb-trainval-cap", type=int, default=700)
+    parser.add_argument("--max-prompt-words", type=int, default=0, help="Drop a pair if any row prompt exceeds this word cap; 0 disables.")
+    parser.add_argument("--max-reasoning-words", type=int, default=0, help="Drop a pair if any row reasoning exceeds this word cap; 0 disables.")
+    parser.add_argument("--max-final-words", type=int, default=0, help="Drop a pair if any row final answer exceeds this word cap; 0 disables.")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     if not (0.0 <= args.val_frac < 0.5):
         parser.error("--val-frac must be in [0, 0.5)")
+    for name in ("max_prompt_words", "max_reasoning_words", "max_final_words"):
+        if getattr(args, name) < 0:
+            parser.error(f"--{name.replace('_', '-')} must be non-negative")
     return args
 
 
