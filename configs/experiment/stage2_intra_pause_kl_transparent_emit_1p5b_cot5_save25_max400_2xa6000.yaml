@@ -1,0 +1,59 @@
+defaults:
+  - stage2_intra_pause_sft.yaml
+  - ../runtime/a6000_2x.yaml
+
+run:
+  name: stage2_intra_pause_kl_transparent_emit_deepseek_1p5b_cot5_save25_max400_2xa6000
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_save25_max400_2xa6000
+
+data:
+  input_jsonl: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/trusted_cot_18k/trusted_cot_raw.jsonl
+
+runtime:
+  sft:
+    per_device_train_batch_size: 2
+    per_device_eval_batch_size: 1
+    gradient_accumulation_steps: 4
+    dataloader_num_workers: 4
+    optim: adamw_torch
+
+sft:
+  method: kl_transparent_emit
+  cot_offset: 5
+  intra_dir_name: intra_pause_cot5
+  tags: [deepseek_1p5b, intra_pause_cot5, after_cot4_before_cot5, kl_transparent_emit, a6000_pcie_2x]
+  learning_rate: 1.0e-3
+  weight_decay: 0.0
+  num_train_epochs: 1.0
+  max_steps: 400
+  save_steps: 25
+  eval_steps: 50
+  save_total_limit: 20
+  save_before_train: true
+  load_best_model_at_end: false
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  early_stopping:
+    enabled: false
+    patience: 4
+    threshold: 0.001
+  format_only:
+    enabled: true
+    trainable_tokens:
+      - "<|pause|>"
+    init_from_text: ""
+  pause_kl:
+    enabled: true
+    pause_token: "<|pause|>"
+    continuation_weight: 1.0
+    pre_weight: 0.0
+    suppression_weight: 1.0
+    emit_weight: 0.3
+    temperature: 1.0
+    max_kl_tokens_per_example: 256
+    suppression_chunk_size: 1024
+    require_pause_before_continuation_kl: true
+    assert_rows_only: true
+    post_step_invariant_check: true
+    invariant_check_interval_steps: 50
+    teacher_eval_mode: true
