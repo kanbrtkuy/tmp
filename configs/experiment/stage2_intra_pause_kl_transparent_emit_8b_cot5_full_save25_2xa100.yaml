@@ -3,8 +3,8 @@ defaults:
   - ../runtime/a100_2x.yaml
 
 run:
-  name: stage2_intra_pause_kl_transparent_emit_deepseek_8b_cot5_full_save25_2xa100
-  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_full_save25_2xa100
+  name: stage2_intra_pause_kl_transparent_emit_deepseek_8b_cot5_full_save25_mb4_ga2_2xa100
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_full_save25_mb4_ga2_2xa100
 
 sft:
   tags:
@@ -38,5 +38,6 @@ sft:
 
 runtime:
   sft:
-    per_device_train_batch_size: 2
-    gradient_accumulation_steps: 4
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 2
+    dataloader_num_workers: 16
