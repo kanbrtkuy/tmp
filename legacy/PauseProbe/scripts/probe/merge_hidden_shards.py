@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 
 
-ROW_KEYS = {
+REQUIRED_ROW_KEYS = {
     "features",
     "valid_mask",
     "labels",
@@ -20,6 +20,12 @@ ROW_KEYS = {
     "prompt_keys",
     "sources",
     "policy_types",
+}
+OPTIONAL_ROW_KEYS = {
+    "source_families",
+    "risk_types",
+    "pair_ids",
+    "match_families",
 }
 STATIC_KEYS = {"position_names", "layer_ids"}
 
@@ -64,6 +70,50 @@ def check_static(shards: list[dict[str, Any]], key: str) -> np.ndarray:
     return first
 
 
+def shard_row_count(shard: dict[str, Any]) -> int:
+    return int(np.asarray(shard["labels"]).shape[0])
+
+
+def infer_row_keys(shards: list[dict[str, Any]]) -> list[str]:
+    row_keys = set(REQUIRED_ROW_KEYS)
+    optional_or_dynamic = set(OPTIONAL_ROW_KEYS)
+    for shard in shards:
+        n_rows = shard_row_count(shard)
+        for key, value in shard.items():
+            if key in STATIC_KEYS or key in REQUIRED_ROW_KEYS:
+                continue
+            arr = np.asarray(value)
+            if arr.shape[:1] == (n_rows,):
+                optional_or_dynamic.add(key)
+
+    for key in sorted(optional_or_dynamic):
+        present = [key in shard for shard in shards]
+        if all(present):
+            row_keys.add(key)
+        elif any(present) and key in OPTIONAL_ROW_KEYS:
+            row_keys.add(key)
+        elif any(present):
+            raise ValueError(f"Dynamic row key {key!r} is present in only some shards")
+    return sorted(row_keys)
+
+
+def row_array(shard: dict[str, Any], key: str) -> np.ndarray:
+    if key in shard:
+        return np.asarray(shard[key])
+    if key in OPTIONAL_ROW_KEYS:
+        return np.asarray([""] * shard_row_count(shard), dtype=object)
+    raise KeyError(key)
+
+
+def row_key_presence(input_paths: list[Path], shards: list[dict[str, Any]], row_keys: list[str]) -> dict[str, Any]:
+    presence = {}
+    for key in row_keys:
+        present = [str(path) for path, shard in zip(input_paths, shards) if key in shard]
+        missing = [str(path) for path, shard in zip(input_paths, shards) if key not in shard]
+        presence[key] = {"present": present, "missing": missing}
+    return presence
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs", nargs="+", required=True)
@@ -81,18 +131,19 @@ def main() -> None:
     if not shards:
         raise ValueError("No input shards provided")
 
-    required = ROW_KEYS | STATIC_KEYS
+    required = REQUIRED_ROW_KEYS | STATIC_KEYS
     for path, shard in zip(input_paths, shards):
         missing = sorted(required - set(shard))
         if missing:
             raise ValueError(f"{path} is missing keys: {missing}")
+    row_keys = infer_row_keys(shards)
 
     merged: dict[str, Any] = {
         "position_names": check_static(shards, "position_names"),
         "layer_ids": check_static(shards, "layer_ids"),
     }
-    for key in sorted(ROW_KEYS):
-        merged[key] = np.concatenate([np.asarray(shard[key]) for shard in shards], axis=0)
+    for key in row_keys:
+        merged[key] = np.concatenate([row_array(shard, key) for shard in shards], axis=0)
 
     output_npz = Path(args.output_npz)
     output_npz.parent.mkdir(parents=True, exist_ok=True)
@@ -110,6 +161,8 @@ def main() -> None:
         "label_counts": dict(Counter(str(x) for x in merged["labels"].tolist())),
         "source_counts": dict(Counter(str(x) for x in merged["sources"].tolist())),
         "metadata_rows": metadata_rows,
+        "row_keys": row_keys,
+        "row_key_presence": row_key_presence(input_paths, shards, row_keys),
         "position_names": [str(x) for x in merged["position_names"].tolist()],
         "layer_ids": [int(x) for x in merged["layer_ids"].tolist()],
     }

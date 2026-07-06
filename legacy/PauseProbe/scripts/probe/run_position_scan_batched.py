@@ -343,11 +343,8 @@ def train_batched(args: argparse.Namespace, specs: list[ProbeSpec], eval_npz: di
     neg = ((train_labels_np[:, None] == 0) & train_valid_np).sum(axis=0).astype(np.float32)
     pos_weight = torch.from_numpy(neg / np.maximum(pos, 1.0)).to(device=device, dtype=torch.float32)
 
-    w = torch.empty((k, hidden_dim), device=device, dtype=torch.float32, requires_grad=True)
-    torch.nn.init.kaiming_uniform_(w.view(k, 1, hidden_dim), a=math.sqrt(5))
-    bound = 1 / math.sqrt(hidden_dim)
-    b = torch.empty((k,), device=device, dtype=torch.float32, requires_grad=True)
-    torch.nn.init.uniform_(b, -bound, bound)
+    w = torch.zeros((k, hidden_dim), device=device, dtype=torch.float32, requires_grad=True)
+    b = torch.zeros((k,), device=device, dtype=torch.float32, requires_grad=True)
     optimizer = torch.optim.AdamW([w, b], lr=args.learning_rate, weight_decay=args.weight_decay)
 
     best_w = w.detach().clone()
@@ -506,6 +503,7 @@ def train_batched(args: argparse.Namespace, specs: list[ProbeSpec], eval_npz: di
                 "pairwise_pair_id_only": False,
                 "num_pairwise_groups": 0,
                 "best_epoch": int(best_epoch[idx]),
+                "hit_epoch_cap": bool(best_epoch[idx] == args.epochs),
                 "history": histories[idx],
             },
             "threshold": threshold,
@@ -716,8 +714,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--layers", default="7,14,17,21,22,28")
     parser.add_argument("--model_kinds", default="linear")
     parser.add_argument("--jobs", type=int, default=4)
-    parser.add_argument("--epochs", type=int, default=25)
-    parser.add_argument("--patience", type=int, default=6)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=2048)
     parser.add_argument("--eval_batch_size", type=int, default=4096)
     parser.add_argument("--learning_rate", type=float, default=3e-4)

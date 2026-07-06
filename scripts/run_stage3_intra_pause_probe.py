@@ -108,6 +108,8 @@ def prompt_positions(hidden: dict[str, Any]) -> list[str]:
 
 
 def recipe_name(data: dict[str, Any]) -> str:
+    if str(data.get("cap_recipe") or data.get("legacy_recipe") or "") == "passthrough":
+        return "passthrough"
     cap_recipe = str(data.get("cap_recipe") or "full_3to1")
     if cap_recipe == "full_1to1":
         return "full_1to1"
@@ -128,6 +130,9 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
     pause = config.get("pause", {})
     data = config.get("data", {})
     paths = stage_paths(config)
+    prepared_data_dir = data.get("prepared_data_dir")
+    if prepared_data_dir:
+        paths["base_data_dir"] = str(resolve_value(prepared_data_dir))
 
     selected_model = model_path(model)
     layers = hidden.get("layers") or model.get("default_layers")
@@ -184,6 +189,8 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
         str(hidden_runtime.get("extract_jobs", 1)),
         "--extract_train_shards",
         str(extraction_cfg.get("train_shards", hidden_runtime.get("extract_train_shards", 1))),
+        "--extract_eval_shards",
+        str(extraction_cfg.get("eval_shards", hidden_runtime.get("extract_eval_shards", 1))),
         "--extract_devices",
         csv(extract_devices),
         "--extract_batch_size",
@@ -192,6 +199,10 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
         str(model.get("max_length", 4096)),
         "--scan_jobs",
         str(probe_runtime.get("jobs", 12)),
+        "--scan_worker_slots_per_gpu",
+        str(probe_runtime.get("worker_slots_per_gpu", 1)),
+        "--scan_dynamic_task_multiplier",
+        str(probe_runtime.get("dynamic_task_multiplier", 4)),
         "--pooled_jobs",
         str(probe_runtime.get("pooled_jobs", probe_runtime.get("multilayer_jobs", 6))),
         "--sample_weight_mode",
@@ -221,13 +232,18 @@ def build_command(args: argparse.Namespace, config: dict[str, Any]) -> list[str]
     ]
     if prompt_baselines:
         cmd.extend(["--prompt_positions", csv(prompt_baselines)])
+    if data.get("preserve_input_splits") or prepared_data_dir:
+        cmd.append("--preserve_input_splits")
 
     sources = source_names(data)
     if sources:
         cmd.extend(["--sources", *sources])
-    for heldout in data.get("heldout_sources", []):
+    heldout_sources = data.get("heldout_sources", [])
+    for heldout in heldout_sources:
         cmd.extend(["--heldout_source", str(heldout)])
-    if args.skip_base_data_prep:
+    if prepared_data_dir and not heldout_sources:
+        cmd.append("--no_heldout_sources")
+    if args.skip_base_data_prep or prepared_data_dir:
         cmd.append("--skip_base_data_prep")
     if args.skip_intra_data_prep:
         cmd.append("--skip_intra_data_prep")
