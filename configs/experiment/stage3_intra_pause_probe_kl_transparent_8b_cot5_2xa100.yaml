@@ -12,7 +12,7 @@ model:
 hidden:
   extraction:
     train_shards: 4
-    eval_shards: 4
+    eval_shards: 2
 
 legacy:
   base_data_dir: data/stage3_kl_transparent_8b_cot5_2xa100_base
