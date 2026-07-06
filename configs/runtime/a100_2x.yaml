@@ -1,0 +1,49 @@
+runtime:
+  name: a100_2x_80g
+  num_gpus: 2
+  cuda_visible_devices: "0,1"
+  devices: [cuda:0, cuda:1]
+  hf_home: ${HF_HOME:-/workspace/hf_cache}
+  hf_env_file: ${COT_SAFETY_HF_ENV_FILE:-/workspace/secrets/hf.env}
+  workdir: ${COT_SAFETY_WORKDIR:-/workspace/cot-safety}
+  data_root: ${COT_SAFETY_DATA_ROOT:-/workspace/data}
+  output_root: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}
+  run_root: ${COT_SAFETY_RUN_ROOT:-/workspace/cot-safety/runs}
+  torch_dtype: bfloat16
+  pytorch_cuda_alloc_conf: expandable_segments:True
+  sft:
+    parallelism: ddp
+    interconnect: pcie
+    per_device_train_batch_size: 1
+    per_device_eval_batch_size: 1
+    gradient_accumulation_steps: 8
+    gradient_checkpointing: true
+    dataloader_num_workers: 12
+    optim: paged_adamw_8bit
+    tf32: true
+  hidden:
+    extract_jobs: 2
+    extract_devices: [cuda:0, cuda:1]
+    extract_train_shards: 4
+    batch_size_per_gpu: 20
+    compression: uncompressed
+  probes:
+    single_scan_backend: batched
+    dynamic_task_multiplier: 4
+    jobs: 24
+    devices: [cuda:0, cuda:1]
+    worker_slots_per_gpu: 4
+    jobs_per_gpu: 12
+    scan_batch_size: 2048
+    scan_eval_batch_size: 4096
+    multilayer_jobs: 8
+    multilayer_fallback_device: cpu
+    cpu_threads_per_job: 2
+    probe_timeout_seconds: 0
+    device: cuda
+  generation:
+    workers: 2
+    batch_size_per_gpu: 16
+  judging:
+    workers: 2
+    batch_size_per_gpu: 1
