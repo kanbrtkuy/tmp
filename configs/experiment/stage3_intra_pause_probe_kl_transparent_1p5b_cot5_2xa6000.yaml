@@ -1,0 +1,28 @@
+defaults:
+  - stage3_intra_pause_probe_kl_transparent_1p5b_cot5.yaml
+  - ../runtime/a6000_2x.yaml
+
+run:
+  name: stage3_intra_pause_probe_kl_transparent_deepseek_1p5b_cot5_2xa6000
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_kl_transparent_deepseek_1p5b_cot5_2xa6000
+
+model:
+  sft_checkpoint: ${STAGE2_KL_CHECKPOINT:-/workspace/outputs/deepseek_1p5b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_save25_max400_2xa6000/final}
+
+hidden:
+  extraction:
+    train_shards: 4
+    eval_shards: 4
+
+runtime:
+  hidden:
+    batch_size_per_gpu: 40
+
+legacy:
+  base_data_dir: data/stage3_kl_transparent_1p5b_cot5_2xa6000_base
+  data_dir: data/stage3_kl_transparent_1p5b_cot5_2xa6000
+  hidden_dir: data/hidden/stage3_kl_transparent_1p5b_cot5_2xa6000
+  hidden_prefix: intra_pause_kl_transparent_1p5b_cot5_2xa6000
+  log_dir: logs/stage3_kl_transparent_1p5b_cot5_2xa6000
+  single_scan_out_root: runs/probes/stage3_kl_transparent_1p5b_cot5_2xa6000_single
+  pooled_out_root: runs/probes/stage3_kl_transparent_1p5b_cot5_2xa6000_pooled

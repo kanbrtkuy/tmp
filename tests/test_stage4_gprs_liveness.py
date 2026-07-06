@@ -227,7 +227,8 @@ def test_gprs_artifact_status_requires_all_artifacts(tmp_path):
     (tmp_path / "gprs_artifact_manifest.json").write_text(
         (
             '{"layer":14,"positions":["pause_0"],'
-            '"stage3_evidence":{"status":"pass","pause_only_status":"pass","confirmatory_status":"pass"}}\n'
+            '"stage3_evidence":{"status":"pass_independent","independent_status":"pass",'
+            '"pause_only_status":"pass","confirmatory_status":"pass"}}\n'
         ),
         encoding="utf-8",
     )
@@ -255,14 +256,15 @@ def test_gprs_artifact_status_requires_on_policy_confirmatory_pass(tmp_path):
     (tmp_path / "gprs_artifact_manifest.json").write_text(
         (
             '{"layer":14,"positions":["pause_0"],'
-            '"stage3_evidence":{"status":"pass","pause_only_status":"pass",'
+            '"stage3_evidence":{"status":"pass_independent","independent_status":"pass",'
+            '"pause_only_status":"pass",'
             '"confirmatory_status":"fail_on_policy_within_prompt_signal"}}\n'
         ),
         encoding="utf-8",
     )
     (tmp_path / "stage3_evidence_report.json").write_text(
         (
-            '{"status":"pass","pause_only_status":"pass",'
+            '{"status":"pass_independent","independent_status":"pass","pause_only_status":"pass",'
             '"confirmatory_endpoint":{"status":"fail_on_policy_within_prompt_signal"}}\n'
         ),
         encoding="utf-8",
@@ -271,6 +273,22 @@ def test_gprs_artifact_status_requires_on_policy_confirmatory_pass(tmp_path):
     assert status["ready"] is False
     assert "stage3_confirmatory_pass" in status["missing"]
     assert "stage3_evidence_live_not_ready" in status["missing"]
+
+
+def test_gprs_gate_fail_closed_on_explicit_top_level_failure():
+    from cot_safety.steering.gprs import stage3_evidence_gate
+
+    status = stage3_evidence_gate(
+        {
+            "status": "fail_no_pause_signal",
+            "independent_status": "pass",
+            "pause_only_status": "pass",
+            "confirmatory_status": "pass",
+        },
+        require_confirmatory=True,
+    )
+    assert status["ready"] is False
+    assert "stage3_evidence_pass" in status["missing"]
 
 
 def test_projection_rejection_update_only_moves_positive_side_and_caps_norm():

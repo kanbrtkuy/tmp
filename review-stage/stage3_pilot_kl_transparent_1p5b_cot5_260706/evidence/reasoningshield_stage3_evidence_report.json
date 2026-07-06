@@ -1,0 +1,337 @@
+{
+  "status": "pass_pause_signal_only_independent_not_established",
+  "independent_status": "fail_no_independent_pause_signal",
+  "metric": "test_auroc",
+  "selection_metric": "val_auroc",
+  "min_pause_margin_over_baselines": 0.01,
+  "insert_cot_offset": 5,
+  "position_groups": {
+    "prompt_baseline": [
+      "last_prompt_token",
+      "pre_think"
+    ],
+    "pause": [
+      "pause_0",
+      "pause_1",
+      "pause_2"
+    ],
+    "post_pause": [
+      "post_pause_1",
+      "post_pause_2",
+      "post_pause_3"
+    ],
+    "true_content_control": [
+      "control_cot_5",
+      "control_cot_6"
+    ]
+  },
+  "best": {
+    "pause_or_post_pause": {
+      "model": "linear",
+      "position": "post_pause_3",
+      "layer": 28,
+      "test_auroc": 0.7077389173535309,
+      "val_auroc": 0.8278455712181779
+    },
+    "pause": {
+      "model": "linear",
+      "position": "pause_2",
+      "layer": 21,
+      "test_auroc": 0.7195544664736022,
+      "val_auroc": 0.8096465390279823
+    },
+    "post_pause": {
+      "model": "linear",
+      "position": "post_pause_3",
+      "layer": 28,
+      "test_auroc": 0.7077389173535309,
+      "val_auroc": 0.8278455712181779
+    },
+    "prompt_baseline": {
+      "model": "linear",
+      "position": "last_prompt_token",
+      "layer": 28,
+      "test_auroc": 0.49999999999999994,
+      "val_auroc": 0.5051020408163265
+    },
+    "true_content_control": {
+      "model": "linear",
+      "position": "control_cot_6",
+      "layer": 22,
+      "test_auroc": 0.7262597460458899,
+      "val_auroc": 0.818167473174837
+    }
+  },
+  "pause_minus_best_baseline": -0.018520828692359048,
+  "pause_only_margin": -0.006705279572287726,
+  "pause_only_status": "fail_no_independent_pause_signal",
+  "pause_signal": {
+    "status": "pass",
+    "pause_test_auroc": 0.7195544664736022,
+    "prompt_baseline_test_auroc": 0.49999999999999994,
+    "pause_minus_prompt_baseline": 0.21955446647360227,
+    "min_pause_signal_over_prompt": 0.01,
+    "min_pause_signal_auroc": 0.55,
+    "confidence_interval": {
+      "status": "available",
+      "split": "test",
+      "main_run": "linear_pause_2_l21",
+      "baseline_run": "linear_last_prompt_token_l28",
+      "main_predictions": "/workspace/cot-safety/legacy/PauseProbe/runs/probes/stage3_stage1_paired_reasoningshield_kl_transparent_1p5b_cot5_2xa6000_single/linear_pause_2_l21/predictions_test.jsonl",
+      "baseline_predictions": "/workspace/cot-safety/legacy/PauseProbe/runs/probes/stage3_stage1_paired_reasoningshield_kl_transparent_1p5b_cot5_2xa6000_single/linear_last_prompt_token_l28/predictions_test.jsonl",
+      "n_joined": 670,
+      "n_clusters": 335,
+      "samples_requested": 1000,
+      "samples_used": 1000,
+      "observed_main_auroc": 0.7195544664736021,
+      "observed_baseline_auroc": 0.5,
+      "observed_margin": 0.2195544664736021,
+      "ci_low": 0.18333002895967923,
+      "ci_high": 0.2557450434395188,
+      "p_two_sided_bootstrap": 0.0,
+      "note": "Cluster bootstrap over pair_id when available, then prompt_key; p-value is bootstrap sign mass, not DeLong."
+    },
+    "interpretation": "Primary Stage3 screen: whether pause hidden states carry any trajectory safety signal beyond prompt-only baselines."
+  },
+  "independent_pause_signal": {
+    "status": "fail_no_independent_pause_signal",
+    "pause_or_post_pause_minus_best_baseline": -0.018520828692359048,
+    "pause_only_margin": -0.006705279572287726,
+    "interpretation": "Stronger claim: whether pause/post-pause beats both prompt-only and true no-pause content controls."
+  },
+  "confidence_interval": {
+    "status": "available",
+    "split": "test",
+    "main_run": "linear_post_pause_3_l28",
+    "baseline_run": "linear_control_cot_6_l22",
+    "main_predictions": "/workspace/cot-safety/legacy/PauseProbe/runs/probes/stage3_stage1_paired_reasoningshield_kl_transparent_1p5b_cot5_2xa6000_single/linear_post_pause_3_l28/predictions_test.jsonl",
+    "baseline_predictions": "/workspace/cot-safety/legacy/PauseProbe/runs/probes/stage3_stage1_paired_reasoningshield_kl_transparent_1p5b_cot5_2xa6000_single/linear_control_cot_6_l22/predictions_test.jsonl",
+    "n_joined": 670,
+    "n_clusters": 335,
+    "samples_requested": 1000,
+    "samples_used": 1000,
+    "observed_main_auroc": 0.7077389173535309,
+    "observed_baseline_auroc": 0.7262597460458899,
+    "observed_margin": -0.018520828692359048,
+    "ci_low": -0.03766573847182003,
+    "ci_high": 0.0009405212742258623,
+    "p_two_sided_bootstrap": 0.066,
+    "note": "Cluster bootstrap over pair_id when available, then prompt_key; p-value is bootstrap sign mass, not DeLong."
+  },
+  "pause_only_confidence_interval": {
+    "status": "available",
+    "split": "test",
+    "main_run": "linear_pause_2_l21",
+    "baseline_run": "linear_control_cot_6_l22",
+    "main_predictions": "/workspace/cot-safety/legacy/PauseProbe/runs/probes/stage3_stage1_paired_reasoningshield_kl_transparent_1p5b_cot5_2xa6000_single/linear_pause_2_l21/predictions_test.jsonl",
+    "baseline_predictions": "/workspace/cot-safety/legacy/PauseProbe/runs/probes/stage3_stage1_paired_reasoningshield_kl_transparent_1p5b_cot5_2xa6000_single/linear_control_cot_6_l22/predictions_test.jsonl",
+    "n_joined": 670,
+    "n_clusters": 335,
+    "samples_requested": 1000,
+    "samples_used": 1000,
+    "observed_main_auroc": 0.7195544664736021,
+    "observed_baseline_auroc": 0.7262597460458899,
+    "observed_margin": -0.006705279572287837,
+    "ci_low": -0.027166406772109648,
+    "ci_high": 0.013529293829360639,
+    "p_two_sided_bootstrap": 0.54,
+    "note": "Cluster bootstrap over pair_id when available, then prompt_key; p-value is bootstrap sign mass, not DeLong."
+  },
+  "probe_noise_floor": {
+    "metric": "test_auroc",
+    "insert_cot_offset": 5,
+    "duplicate_pairs": [
+      [
+        "cot_5",
+        "post_pause_1"
+      ],
+      [
+        "cot_6",
+        "post_pause_2"
+      ],
+      [
+        "cot_4",
+        "pre_pause_1"
+      ]
+    ],
+    "count": 18,
+    "median_abs_delta": 0.0,
+    "max_abs_delta": 0.000285141456894622,
+    "comparisons": [
+      {
+        "model": "linear",
+        "layer": 7,
+        "left": "cot_5",
+        "right": "post_pause_1",
+        "test_auroc_left": 0.7177456003564268,
+        "test_auroc_right": 0.7177456003564268,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 14,
+        "left": "cot_5",
+        "right": "post_pause_1",
+        "test_auroc_left": 0.7067587435954555,
+        "test_auroc_right": 0.7067587435954555,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 17,
+        "left": "cot_5",
+        "right": "post_pause_1",
+        "test_auroc_left": 0.6976609489864112,
+        "test_auroc_right": 0.6976609489864112,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 21,
+        "left": "cot_5",
+        "right": "post_pause_1",
+        "test_auroc_left": 0.7121229672532858,
+        "test_auroc_right": 0.7121229672532858,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 22,
+        "left": "cot_5",
+        "right": "post_pause_1",
+        "test_auroc_left": 0.7127912675428826,
+        "test_auroc_right": 0.7130764089997772,
+        "abs_delta": 0.000285141456894622
+      },
+      {
+        "model": "linear",
+        "layer": 28,
+        "left": "cot_5",
+        "right": "post_pause_1",
+        "test_auroc_left": 0.7077389173535309,
+        "test_auroc_right": 0.7077389173535309,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 7,
+        "left": "cot_6",
+        "right": "post_pause_2",
+        "test_auroc_left": 0.7141946981510359,
+        "test_auroc_right": 0.7141946981510359,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 14,
+        "left": "cot_6",
+        "right": "post_pause_2",
+        "test_auroc_left": 0.7295210514591223,
+        "test_auroc_right": 0.7295210514591223,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 17,
+        "left": "cot_6",
+        "right": "post_pause_2",
+        "test_auroc_left": 0.7139451993762531,
+        "test_auroc_right": 0.7139451993762531,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 21,
+        "left": "cot_6",
+        "right": "post_pause_2",
+        "test_auroc_left": 0.7261795500111383,
+        "test_auroc_right": 0.7261795500111383,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 22,
+        "left": "cot_6",
+        "right": "post_pause_2",
+        "test_auroc_left": 0.7257696591668523,
+        "test_auroc_right": 0.7257696591668523,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 28,
+        "left": "cot_6",
+        "right": "post_pause_2",
+        "test_auroc_left": 0.7289775005569169,
+        "test_auroc_right": 0.7289775005569169,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 7,
+        "left": "cot_4",
+        "right": "pre_pause_1",
+        "test_auroc_left": 0.7240677210960125,
+        "test_auroc_right": 0.7240677210960125,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 14,
+        "left": "cot_4",
+        "right": "pre_pause_1",
+        "test_auroc_left": 0.7278681220761861,
+        "test_auroc_right": 0.7278681220761861,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 17,
+        "left": "cot_4",
+        "right": "pre_pause_1",
+        "test_auroc_left": 0.7257117398084206,
+        "test_auroc_right": 0.7257117398084206,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 21,
+        "left": "cot_4",
+        "right": "pre_pause_1",
+        "test_auroc_left": 0.7219781688572066,
+        "test_auroc_right": 0.7219781688572066,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 22,
+        "left": "cot_4",
+        "right": "pre_pause_1",
+        "test_auroc_left": 0.7146535976832257,
+        "test_auroc_right": 0.7146535976832257,
+        "abs_delta": 0.0
+      },
+      {
+        "model": "linear",
+        "layer": 28,
+        "left": "cot_4",
+        "right": "pre_pause_1",
+        "test_auroc_left": 0.7106437959456448,
+        "test_auroc_right": 0.7106437959456448,
+        "abs_delta": 0.0
+      }
+    ]
+  },
+  "confirmatory_endpoint": {
+    "name": "within_prompt_auroc",
+    "status": "not_implemented",
+    "on_policy_enabled": false,
+    "report_path": null,
+    "report_mtime": null,
+    "report": null,
+    "note": "Teacher-forced evidence is only a screen. Confirmatory evidence still requires on-policy generation and CoT-segment judge labels."
+  },
+  "config": "configs/experiment/stage3_intra_pause_probe_stage1_paired_reasoningshield_1p5b_cot5_2xa6000.yaml",
+  "summary": "/workspace/cot-safety/legacy/PauseProbe/runs/probes/stage3_stage1_paired_reasoningshield_kl_transparent_1p5b_cot5_2xa6000_single/summary_grid.json",
+  "prediction_root": "/workspace/cot-safety/legacy/PauseProbe/runs/probes/stage3_stage1_paired_reasoningshield_kl_transparent_1p5b_cot5_2xa6000_single"
+}

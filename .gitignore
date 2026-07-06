@@ -4,6 +4,7 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .venv/
+.venv-*/
 venv/
 
 # Local secrets
@@ -34,6 +35,7 @@ analysis_reports/
 hidden_states/
 checkpoints/
 models/
+review-stage/**/results/
 *.pt
 *.pth
 *.safetensors

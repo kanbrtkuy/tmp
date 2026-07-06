@@ -59,6 +59,12 @@ def stage3_evidence_gate(
 ) -> dict[str, Any]:
     status = str(evidence.get("status") or "")
     pause_only_status = str(evidence.get("pause_only_status") or "")
+    independent = evidence.get("independent_pause_signal") or {}
+    independent_status = str(
+        evidence.get("independent_status")
+        or (independent.get("status") if isinstance(independent, dict) else "")
+        or ""
+    )
     confirmatory = evidence.get("confirmatory_endpoint") or {}
     confirmatory_status = str(
         evidence.get("confirmatory_status")
@@ -66,7 +72,9 @@ def stage3_evidence_gate(
         or ""
     )
     missing = []
-    if status != "pass" or pause_only_status != "pass":
+    explicit_failure = status.startswith("fail")
+    stage3_pass = not explicit_failure and (status in {"pass", "pass_independent"} or independent_status == "pass")
+    if not stage3_pass or pause_only_status != "pass":
         missing.append("stage3_evidence_pass")
     if require_confirmatory and confirmatory_status != "pass":
         missing.append("stage3_confirmatory_pass")
@@ -74,6 +82,7 @@ def stage3_evidence_gate(
         "ready": not missing,
         "missing": missing,
         "status": status,
+        "independent_status": independent_status,
         "pause_only_status": pause_only_status,
         "confirmatory_status": confirmatory_status,
         "require_confirmatory": require_confirmatory,
