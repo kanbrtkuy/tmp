@@ -88,8 +88,8 @@ materialized them as ordinary files so the restored path is directly usable.
 Final R2 size after completion:
 
 ```text
-Total objects: 6.347k (6347)
-Total size: 191.456 GiB (205574724820 Byte)
+Total objects: 6.351k (6351)
+Total size: 191.456 GiB (205574725474 Byte)
 ```
 
 WildGuard vLLM compatibility directory after the `--copy-links` correction:

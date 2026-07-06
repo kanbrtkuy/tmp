@@ -106,8 +106,8 @@ cloudflare_r2_cot_safety:cot-safety/stage2-stage3/20260706-a6000-2x-stage2-stage
 最终归档大小：
 
 ```text
-Total objects: 6.347k (6347)
-Total size: 191.456 GiB (205574724820 Byte)
+Total objects: 6.351k (6351)
+Total size: 191.456 GiB (205574725474 Byte)
 ```
 
 其中 `workspace/models/judges/wildguard_vllm_head_dim128/` 经过额外
