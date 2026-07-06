@@ -1,7 +1,8 @@
 # Stage2 8B Full 结果记录 - 2026-07-07
 
 本文记录 2xA100 节点上完成的 8B Stage2 full run 和 Stage2
-model-comparison eval。Stage3 尚未启动；当前 gate 是 Fable review。
+model-comparison eval。Stage3 teacher-forced supporting run 已完成；当前
+gate 是 on-policy Stage3 / liveness，而不是 Stage2 重跑。
 
 ## 运行设置
 
@@ -134,7 +135,32 @@ natural pause emission：
 - 8B Stage2 的主要 behavior-preservation 指标基本过关。
 - GSM8K over-emission 是需要 Fable 判断的 gate：它可能只是短 arithmetic
   trace 的 emission-format 问题，也可能意味着 Stage2 还不够 clean。
-- 在 Fable review 前，不应直接启动 Stage3。
+- Fable 已判断该问题是 non-blocking limitation，可以进入 Stage3
+  safety-source probing，但不能 claim 全局 clean emission。
+
+## Stage3 Teacher-Forced Follow-Up
+
+Stage3 teacher-forced supporting run 已在同一 2xA100 节点完成，使用新版
+Stage1 paired freeze 和四个 source-specific configs：
+
+- HarmBench
+- ReasoningShield
+- StrongReject
+- WildJailbreak
+
+核心结论见：
+
+```text
+res/stage3_8b_teacher_forced_results_260707_zh.md
+```
+
+Stage3 teacher-forced 结果显示：
+
+- 四个 source 的 pause AUROC 都明显高于 prompt-only baseline；
+- 但 pause 未超过 preregistered exact-horizon content control
+  `control_cot_4`；
+- 因此只能 claim pause 是 readable anchor，不能 claim pause-specific
+  monitoring advantage。
 
 ## R2 备份
 
@@ -151,9 +177,8 @@ rclone check: 0 differences found, 376 matching files
 
 ## 当前下一步
 
-1. 等 Fable review 当前 Stage2 结果。
-2. 如果 Fable 认为 GSM8K over-emission 非 blocker，则进入 Stage3。
-3. Stage3 使用新版 Stage1 paired data，并保留 Stage1 splits。
-4. Stage3 应同时报告 prompt baseline、pause positions、matched no-pause
-   true content control，以及 natural/forced pause 口径差异。
-5. 如果 Fable 认为 over-emission 是 blocker，则先修 Stage2 emission，再重跑相关 eval。
+1. 将 Stage2 + Stage3 teacher-forced 结果发给 Fable 做外部 review。
+2. 按 Fable 建议设计 on-policy Stage3 slice。
+3. 只有 on-policy Stage3 和 liveness 通过后，才进入 Stage4 steering。
+4. 当前不应基于 teacher-forced run 做 steering-port / clean intervention
+   claim。
