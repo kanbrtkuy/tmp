@@ -1,0 +1,24 @@
+defaults:
+  - stage3_intra_pause_probe_kl_transparent_8b_cot5_4xa100.yaml
+  - ../runtime/a100_2x.yaml
+
+run:
+  name: stage3_intra_pause_probe_kl_transparent_deepseek_8b_cot5_2xa100
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_kl_transparent_deepseek_8b_cot5_2xa100
+
+model:
+  sft_checkpoint: ${STAGE2_KL_CHECKPOINT:-/workspace/outputs/deepseek_8b_intra_pause_cot5_kl_transparent_emit_trusted_cot_18k_full_save25_mb4_ga2_2xa100/final}
+
+hidden:
+  extraction:
+    train_shards: 4
+    eval_shards: 4
+
+legacy:
+  base_data_dir: data/stage3_kl_transparent_8b_cot5_2xa100_base
+  data_dir: data/stage3_kl_transparent_8b_cot5_2xa100
+  hidden_dir: data/hidden/stage3_kl_transparent_8b_cot5_2xa100
+  hidden_prefix: intra_pause_kl_transparent_8b_cot5_2xa100
+  log_dir: logs/stage3_kl_transparent_8b_cot5_2xa100
+  single_scan_out_root: runs/probes/stage3_kl_transparent_8b_cot5_2xa100_single
+  pooled_out_root: runs/probes/stage3_kl_transparent_8b_cot5_2xa100_pooled

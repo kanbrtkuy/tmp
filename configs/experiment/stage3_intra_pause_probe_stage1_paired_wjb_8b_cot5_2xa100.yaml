@@ -1,0 +1,23 @@
+defaults:
+  - stage3_intra_pause_probe_kl_transparent_8b_cot5_2xa100.yaml
+
+run:
+  name: stage3_intra_pause_probe_stage1_paired_wjb_deepseek_8b_cot5_2xa100
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage3_intra_pause_probe_stage1_paired_wjb_deepseek_8b_cot5_2xa100
+
+data:
+  recipe_name: stage3_from_stage1_paired_freeze
+  cap_recipe: passthrough
+  preserve_input_splits: true
+  prepared_data_dir: ${STAGE1_PAIRED_WJB_PREPARED_DIR:-/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/loso_freeze_fixed_budget_samples_000_099/stage1_prepared/wildjailbreak_vanilla_harmful}
+  sources: []
+  heldout_sources: []
+
+legacy:
+  base_data_dir: ${STAGE1_PAIRED_WJB_PREPARED_DIR:-/workspace/cot-safety/runs/stage1_post_hb_260705_after_hb_n100_loso/loso_freeze_fixed_budget_samples_000_099/stage1_prepared/wildjailbreak_vanilla_harmful}
+  data_dir: data/stage3_stage1_paired_wjb_kl_transparent_8b_cot5_2xa100
+  hidden_dir: data/hidden/stage3_stage1_paired_wjb_kl_transparent_8b_cot5_2xa100
+  hidden_prefix: intra_pause_stage1_paired_wjb_kl_transparent_8b_cot5_2xa100
+  log_dir: logs/stage3_stage1_paired_wjb_kl_transparent_8b_cot5_2xa100
+  single_scan_out_root: runs/probes/stage3_stage1_paired_wjb_kl_transparent_8b_cot5_2xa100_single
+  pooled_out_root: runs/probes/stage3_stage1_paired_wjb_kl_transparent_8b_cot5_2xa100_pooled
