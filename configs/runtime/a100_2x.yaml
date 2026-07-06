@@ -36,6 +36,7 @@ runtime:
     jobs_per_gpu: 12
     scan_batch_size: 2048
     scan_eval_batch_size: 4096
+    pooled_jobs: 16
     multilayer_jobs: 8
     multilayer_fallback_device: cpu
     cpu_threads_per_job: 2
