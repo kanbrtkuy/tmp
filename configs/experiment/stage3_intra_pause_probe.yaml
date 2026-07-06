@@ -12,17 +12,17 @@ hidden:
   positions:
     prompt_baselines: [last_prompt_token, pre_think]
     main: [pause_0, pause_1, pause_2]
-    diagnostics: [pre_pause_1, pre_pause_2, pre_pause_3, post_pause_1, post_pause_2, post_pause_3, control_cot_5, control_cot_6, cot_4, cot_5, cot_6, cot_9, cot_10]
+    diagnostics: [pre_pause_1, pre_pause_2, pre_pause_3, post_pause_1, post_pause_2, post_pause_3, control_cot_4, control_cot_5, control_cot_6, cot_4, cot_5, cot_6, cot_9, cot_10]
   pre_pause_window: 3
   post_pause_window: 3
   cot_offsets: [4, 5, 6, 9, 10]
-  control_cot_offsets: [5, 6]
+  control_cot_offsets: [4, 5, 6]
   extraction:
     train_shards: 1
     scheduler: dynamic_worker_queue
 
 probe:
-  model_kinds: [linear, mlp]
+  model_kinds: [linear]
   sample_weight_mode: source_label
   threshold_max_fpr: 0.05
   primary_endpoint: teacher_forced_pause_minus_prompt_screen
@@ -35,14 +35,14 @@ probe:
   true_content_controls:
     required: true
     source: matched_no_pause_forward
-    current_control_cot_aliases_valid: false
+    current_control_cot_aliases_valid: true
   on_policy:
     enabled: false
     samples_per_prompt: 10
     label_source: cot_segment_judge
     layer: 14
     positions: [pause_0, pause_1, pause_2]
-    true_content_control_positions: [control_cot_5, control_cot_6]
+    true_content_control_positions: [control_cot_4, control_cot_5, control_cot_6]
     require_true_content_control: true
     position_pool: mean
     require_all_positions: true

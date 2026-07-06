@@ -21,14 +21,24 @@
 
 Stage3 尚未启动。
 
-原因：
+最新状态：
 
-- Stage2 整体 behavior-preservation 看起来基本过关。
-- 但 GSM8K natural pause emission 有明显 over-emission：
-  - exact single run of 3 pauses: 0.196
-  - off-target pause rate: 0.802
-  - avg pause count: 8.288
-- 需要 Fable 判断这是否是 Stage2 blocker。
+- Stage2 整体 behavior-preservation 基本过关。
+- GSM8K natural pause emission 有明显 over-emission，但 Fable 判断这是
+  non-blocking limitation，不是 Stage2 重跑触发条件。
+- Stage3-source paired generation sanity 已补：
+  - natural exact-3 约 `0.48-0.59`；
+  - forced/full exact-3 约 `0.625-0.797`；
+  - stripped pause bleed 为 `0.0`；
+  - GSM8K over-emission 子集 accuracy 没有低于 exact-3 子集。
+- Fable 对启动正式 Stage3 给出 conditional NO-GO：不是 Stage2 数字失败，
+  而是要求先提交 Stage3 prereg、horizon/content-control audit，并确认
+  Stage1 freeze gate。
+- 已新增 Stage3 prereg/horizon audit：
+  `review-stage/stage3_8b_cot5_prereg_260707/stage3_8b_cot5_prereg_and_horizon_audit_260707.md`
+- 已将 Stage3 8B configs 的 true content controls 从 `control_cot_5/6`
+  扩展为 `control_cot_4/5/6`，其中 `control_cot_4` 是 exact-horizon
+  primary content control。
 
 ## Fable Review 问题
 
@@ -40,7 +50,7 @@ Stage3 尚未启动。
 4. Stage3 前还需要哪些最小 sanity check？
 5. 当前 Stage2 允许/不允许 claim 什么？
 
-## 若 Fable 通过
+## 若 Fable 通过前置条件
 
 启动 Stage3，使用新版 Stage1 paired data：
 
@@ -61,7 +71,8 @@ Stage3 必须报告：
 
 - prompt baseline: `last_prompt_token`, `pre_think`
 - pause positions: `pause_0`, `pause_1`, `pause_2`
-- matched no-pause true content controls: `control_cot_5`, `control_cot_6`
+- matched no-pause exact-horizon true content control: `control_cot_4`
+- lead/ordinary content diagnostics: `control_cot_5`, `control_cot_6`
 - pre/post pause diagnostics
 - source-wise AUROC and margins
 - evidence report

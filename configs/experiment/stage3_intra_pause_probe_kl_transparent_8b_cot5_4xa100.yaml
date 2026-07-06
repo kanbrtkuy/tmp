@@ -15,9 +15,9 @@ hidden:
   positions:
     prompt_baselines: [last_prompt_token, pre_think]
     main: [pause_0, pause_1, pause_2]
-    diagnostics: [pre_pause_1, pre_pause_2, pre_pause_3, post_pause_1, post_pause_2, post_pause_3, control_cot_5, control_cot_6, cot_4, cot_5, cot_6, cot_9, cot_10]
+    diagnostics: [pre_pause_1, pre_pause_2, pre_pause_3, post_pause_1, post_pause_2, post_pause_3, control_cot_4, control_cot_5, control_cot_6, cot_4, cot_5, cot_6, cot_9, cot_10]
   cot_offsets: [4, 5, 6, 9, 10]
-  control_cot_offsets: [5, 6]
+  control_cot_offsets: [4, 5, 6]
 
 legacy:
   base_data_dir: data/stage3_kl_transparent_8b_cot5_base
@@ -36,4 +36,4 @@ probe:
     primary_endpoint: within_prompt_auroc
     status: not_implemented
     layer: 20
-    true_content_control_positions: [control_cot_5, control_cot_6]
+    true_content_control_positions: [control_cot_4, control_cot_5, control_cot_6]
