@@ -42,6 +42,10 @@ eval:
   judging:
     judge_backend: vllm
     chunk_size: 300
+    model_map:
+      wildguard: ${COT_SAFETY_WILDGUARD_MODEL:-/workspace/models/judges/wildguard_vllm_head_dim128}
+      llamaguard: ${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/Llama-Guard-3-8B
+      harmbench: ${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/HarmBench-Llama-2-13b-cls
     batch_size:
       wildguard: 16
       llamaguard: 16
