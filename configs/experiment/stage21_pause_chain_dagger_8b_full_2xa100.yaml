@@ -1,0 +1,26 @@
+defaults:
+  - stage21_pause_chain_dagger_8b_short400.yaml
+
+run:
+  name: stage21_pause_chain_dagger_deepseek_8b_cot5_full_2xa100
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_stage21_pause_chain_cot5_full_2xa100
+
+sft:
+  max_steps: null
+  num_train_epochs: 1.0
+  save_steps: 25
+  eval_steps: 50
+  save_total_limit: 24
+  tags:
+    - deepseek_8b
+    - stage21_pause_chain
+    - after_cot4_before_cot5
+    - margin_stop_suppress
+    - rows_only
+    - full
+    - a100_2x
+
+stage21_selection:
+  min_exact_chain: 0.99
+  max_off_target: 0.005
+  max_malformed: 0.005

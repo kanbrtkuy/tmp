@@ -33,6 +33,7 @@ class ChatTemplate:
 class PauseSpec:
     pause_token: str = "<|pause|>"
     n_pause_tokens: int = 3
+    pause_tokens: tuple[str, ...] = ()
     separator: str = ""
     placement: str = "intra_think_before_cot"
     cot_offset: int = 3

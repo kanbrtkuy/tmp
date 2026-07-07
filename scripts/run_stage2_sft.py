@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 from cot_safety.config import dump_config, load_config
 
 
@@ -78,10 +80,19 @@ def run_logged(
         "WEIGHT_DECAY",
         "FORMAT_ONLY",
         "PAUSE_KL_ENABLED",
+        "PAUSE_KL_PAUSE_TOKENS",
         "PAUSE_KL_CONTINUATION_WEIGHT",
         "PAUSE_KL_PRE_WEIGHT",
         "PAUSE_KL_SUPPRESSION_WEIGHT",
         "PAUSE_KL_EMIT_WEIGHT",
+        "PAUSE_KL_EMIT_MARGIN_WEIGHT",
+        "PAUSE_KL_STOP_WEIGHT",
+        "PAUSE_KL_SUPPRESSION_LOSS_TYPE",
+        "PAUSE_KL_EMIT_MARGIN",
+        "PAUSE_KL_SUPPRESSION_MARGIN",
+        "PAUSE_KL_PAUSE_HEAD_ENABLED",
+        "PAUSE_KL_PAUSE_HEAD_HIDDEN_SIZE",
+        "PAUSE_KL_PAUSE_HEAD_DROPOUT",
         "PAUSE_KL_TEMPERATURE",
         "PAUSE_KL_MAX_KL_TOKENS_PER_EXAMPLE",
         "PAUSE_KL_SUPPRESSION_CHUNK_SIZE",
@@ -195,6 +206,17 @@ def data_prep_commands(
     cot_offset = int(sft.get("cot_offset", pause.get("cot_offset", 3)))
     n_pause_tokens = int(sft.get("n_pause_tokens", pause.get("n_pause_tokens", 3)))
     pause_token = str(sft.get("pause_token", pause.get("pause_token", "<|pause|>")))
+    pause_kl = sft.get("pause_kl", {}) or {}
+    raw_pause_tokens = (
+        sft.get("pause_tokens")
+        or pause.get("pause_tokens")
+        or pause_kl.get("pause_tokens")
+    )
+    if raw_pause_tokens:
+        pause_tokens = [str(token) for token in raw_pause_tokens]
+        n_pause_tokens = len(pause_tokens)
+    else:
+        pause_tokens = [pause_token] * n_pause_tokens
     separator = str(sft.get("separator", pause.get("separator", "")))
     train_size = int(data.get("train_rows", data.get("train_size", 17000)))
     val_size = int(data.get("val_rows", data.get("val_size", 500)))
@@ -223,6 +245,8 @@ def data_prep_commands(
             str(seed),
             "--pause_token",
             pause_token,
+            "--pause_tokens",
+            json.dumps(pause_tokens),
             "--n_pause_tokens",
             str(n_pause_tokens),
             "--cot_offset",
@@ -245,6 +269,8 @@ def data_prep_commands(
             str(cot_offset),
             "--pause_token",
             pause_token,
+            "--pause_tokens",
+            json.dumps(pause_tokens),
             "--separator",
             separator,
             "--tokenizer_path",
@@ -261,6 +287,8 @@ def data_prep_commands(
             "no_pause",
             "--pause_token",
             pause_token,
+            "--pause_tokens",
+            json.dumps(pause_tokens),
             "--tokenizer_path",
             tokenizer,
             "--output_json",
@@ -277,6 +305,8 @@ def data_prep_commands(
             str(n_pause_tokens),
             "--pause_token",
             pause_token,
+            "--pause_tokens",
+            json.dumps(pause_tokens),
             "--separator",
             separator,
             "--tokenizer_path",
@@ -345,25 +375,44 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
         format_only.get("enabled", False)
     )
     pause_kl = sft.get("pause_kl", {}) or {}
-    pause_kl_token = str(
-        pause_kl.get("pause_token", sft.get("pause_token", config.get("pause", {}).get("pause_token", "<|pause|>")))
+    pause_kl_tokens = (
+        pause_kl.get("pause_tokens")
+        or sft.get("pause_tokens")
+        or config.get("pause", {}).get("pause_tokens")
     )
-    if pause_kl_enabled and pause_kl_token != "<|pause|>":
-        raise ValueError(
-            "Stage2 KL-transparent training currently supports only the hard-wired "
-            f"<|pause|> token in the legacy launcher; got pause_kl.pause_token={pause_kl_token!r}."
-        )
+    if pause_kl_tokens:
+        pause_kl_tokens = [str(token) for token in pause_kl_tokens]
+    else:
+        pause_kl_tokens = [
+            str(
+                pause_kl.get(
+                    "pause_token",
+                    sft.get("pause_token", config.get("pause", {}).get("pause_token", "<|pause|>")),
+                )
+            )
+        ]
+    pause_kl_token = pause_kl_tokens[0]
     env["FORMAT_ONLY"] = str(format_only_enabled).lower()
     env["FORMAT_ONLY_TRAINABLE_TOKENS"] = json.dumps(
-        format_only.get("trainable_tokens", pause_kl.get("trainable_tokens", ["<|pause|>"]))
+        format_only.get("trainable_tokens", pause_kl.get("trainable_tokens", pause_kl_tokens))
     )
     env["FORMAT_ONLY_INIT_TEXT"] = str(format_only.get("init_from_text", ""))
     env["PAUSE_KL_ENABLED"] = str(pause_kl_enabled).lower()
     env["PAUSE_KL_PAUSE_TOKEN"] = pause_kl_token
+    env["PAUSE_KL_PAUSE_TOKENS"] = json.dumps(pause_kl_tokens)
     env["PAUSE_KL_CONTINUATION_WEIGHT"] = str(pause_kl.get("continuation_weight", 1.0))
     env["PAUSE_KL_PRE_WEIGHT"] = str(pause_kl.get("pre_weight", 0.1))
     env["PAUSE_KL_SUPPRESSION_WEIGHT"] = str(pause_kl.get("suppression_weight", 1.0))
     env["PAUSE_KL_EMIT_WEIGHT"] = str(pause_kl.get("emit_weight", 0.3))
+    env["PAUSE_KL_EMIT_MARGIN_WEIGHT"] = str(pause_kl.get("emit_margin_weight", 0.0))
+    env["PAUSE_KL_STOP_WEIGHT"] = str(pause_kl.get("stop_weight", 0.0))
+    env["PAUSE_KL_SUPPRESSION_LOSS_TYPE"] = str(pause_kl.get("suppression_loss_type", "unlikelihood"))
+    env["PAUSE_KL_EMIT_MARGIN"] = str(pause_kl.get("emit_margin", 3.0))
+    env["PAUSE_KL_SUPPRESSION_MARGIN"] = str(pause_kl.get("suppression_margin", 5.0))
+    pause_head = pause_kl.get("pause_head", {}) or {}
+    env["PAUSE_KL_PAUSE_HEAD_ENABLED"] = str(pause_head.get("enabled", False)).lower()
+    env["PAUSE_KL_PAUSE_HEAD_HIDDEN_SIZE"] = str(pause_head.get("hidden_size", 64))
+    env["PAUSE_KL_PAUSE_HEAD_DROPOUT"] = str(pause_head.get("dropout", 0.0))
     env["PAUSE_KL_TEMPERATURE"] = str(pause_kl.get("temperature", 1.0))
     env["PAUSE_KL_MAX_KL_TOKENS_PER_EXAMPLE"] = str(
         pause_kl.get("max_kl_tokens_per_example", 256)

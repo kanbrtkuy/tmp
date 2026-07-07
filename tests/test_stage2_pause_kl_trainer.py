@@ -67,14 +67,20 @@ class TinyLM(torch.nn.Module):
     def get_output_embeddings(self):
         return self.lm_head
 
-    def forward(self, input_ids, attention_mask=None, use_cache=False):
+    def forward(self, input_ids, attention_mask=None, use_cache=False, output_hidden_states=False):
         del attention_mask, use_cache
-        return SimpleNamespace(logits=self.lm_head(self.body(self.embed(input_ids))))
+        hidden = self.body(self.embed(input_ids))
+        payload = {"logits": self.lm_head(hidden)}
+        if output_hidden_states:
+            payload["hidden_states"] = (hidden,)
+        return SimpleNamespace(**payload)
 
 
 def bare_trainer(pause_token_id: int = 6):
     trainer = PauseKLSFTTrainer.__new__(PauseKLSFTTrainer)
     trainer.pause_token_id = pause_token_id
+    trainer.pause_token_ids = (pause_token_id,)
+    trainer.pause_token_id_set = {pause_token_id}
     trainer.pad_token_id = 0
     trainer.max_kl_tokens_per_example = 256
     trainer.require_pause_before_continuation_kl = True
@@ -84,6 +90,13 @@ def bare_trainer(pause_token_id: int = 6):
     trainer.continuation_weight = 1.0
     trainer.pre_weight = 0.0
     trainer.suppression_weight = 1.0
+    trainer.emit_margin_weight = 0.0
+    trainer.stop_weight = 0.0
+    trainer.emit_margin = 3.0
+    trainer.suppression_margin = 5.0
+    trainer.suppression_loss_type = "unlikelihood"
+    trainer.pause_head_enabled = False
+    trainer.pause_head = None
     trainer.enabled = True
     trainer.teacher_eval_mode = True
     trainer.state = SimpleNamespace(global_step=1)
@@ -152,7 +165,8 @@ def test_kl_loss_masks_pause_slot_and_stays_finite():
     torch.manual_seed(0)
     student_logits = torch.randn(1, 2, 8)
     teacher_logits = student_logits.clone()
-    teacher_logits[:, :, trainer.pause_token_id] += 1000.0
+    for pause_id in trainer.pause_token_ids:
+        teacher_logits[:, :, pause_id] += 1000.0
 
     loss = trainer._kl_loss(student_logits, teacher_logits, [(0, 0, 0), (0, 1, 1)])
 
@@ -177,7 +191,7 @@ def test_pause_losses_match_manual_shifted_ce_and_suppression():
     input_ids = torch.tensor([[1, 4, 2, 3]])
     labels = torch.tensor([[-100, 4, 2, 3]])
 
-    emit, suppression = trainer._pause_losses(logits, input_ids, labels)
+    emit, suppression, emit_margin, stop_loss = trainer._pause_losses(logits, input_ids, labels)
 
     expected_emit = F.cross_entropy(logits[:, 0, :], torch.tensor([4]))
     non_pause_logits = torch.stack([logits[0, 1], logits[0, 2]])
@@ -185,6 +199,27 @@ def test_pause_losses_match_manual_shifted_ce_and_suppression():
     expected_suppression = -torch.log1p(-pause_log_probs.exp()).mean()
     assert emit.item() == pytest.approx(expected_emit.item(), abs=1e-6)
     assert suppression.item() == pytest.approx(expected_suppression.item(), abs=1e-6)
+    assert torch.isfinite(emit_margin)
+    assert stop_loss.item() == pytest.approx(0.0, abs=1e-6)
+
+
+def test_distinct_pause_chain_masks_stop_after_pause3():
+    trainer = bare_trainer(pause_token_id=4)
+    trainer.pause_token_ids = (4, 5, 6)
+    trainer.pause_token_id_set = {4, 5, 6}
+    trainer.suppression_loss_type = "margin"
+    logits = torch.zeros(1, 5, 8)
+    input_ids = torch.tensor([[1, 4, 5, 6, 2]])
+    labels = torch.tensor([[-100, 4, 5, 6, 2]])
+
+    emit, suppression, emit_margin, stop_loss = trainer._pause_losses(logits, input_ids, labels)
+    stop_mask = trainer._stop_after_pause_chain_mask(input_ids[:, :-1], labels[:, 1:].ne(-100))
+
+    assert stop_mask.tolist() == [[False, False, False, True]]
+    assert torch.isfinite(emit)
+    assert torch.isfinite(suppression)
+    assert torch.isfinite(emit_margin)
+    assert torch.isfinite(stop_loss)
 
 
 def test_rows_only_guard_rejects_weight_decay_and_body_params():

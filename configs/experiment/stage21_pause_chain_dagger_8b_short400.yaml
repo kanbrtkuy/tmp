@@ -1,0 +1,81 @@
+defaults:
+  - stage2_intra_pause_kl_transparent_emit_8b_cot5_full_save25_2xa100.yaml
+
+run:
+  name: stage21_pause_chain_dagger_deepseek_8b_cot5_short400_2xa100
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_stage21_pause_chain_cot5_short400_2xa100
+
+data:
+  recipe_name: stage21_trusted_cot_18k_pause_chain
+  prepared_root: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/stage21_trusted_cot_18k_pause_chain
+
+sft:
+  method: kl_transparent_emit
+  cot_offset: 5
+  n_pause_tokens: 3
+  pause_tokens:
+    - "<|pause_1|>"
+    - "<|pause_2|>"
+    - "<|pause_3|>"
+  intra_dir_name: intra_pause_chain_cot5
+  tags:
+    - deepseek_8b
+    - stage21_pause_chain
+    - after_cot4_before_cot5
+    - margin_stop_suppress
+    - rows_only
+    - short400
+    - a100_2x
+  learning_rate: 1.0e-3
+  num_train_epochs: 1.0
+  max_steps: 400
+  save_steps: 25
+  eval_steps: 50
+  save_total_limit: 16
+  load_best_model_at_end: false
+  early_stopping:
+    enabled: false
+  format_only:
+    enabled: true
+    trainable_tokens:
+      - "<|pause_1|>"
+      - "<|pause_2|>"
+      - "<|pause_3|>"
+    init_from_text: ""
+  pause_kl:
+    enabled: true
+    pause_tokens:
+      - "<|pause_1|>"
+      - "<|pause_2|>"
+      - "<|pause_3|>"
+    continuation_weight: 1.0
+    pre_weight: 0.0
+    suppression_weight: 1.0
+    emit_weight: 0.3
+    emit_margin_weight: 0.3
+    stop_weight: 2.0
+    suppression_loss_type: margin
+    emit_margin: 3.0
+    suppression_margin: 5.0
+    pause_head:
+      enabled: false
+      hidden_size: 64
+      dropout: 0.0
+    temperature: 1.0
+    max_kl_tokens_per_example: 256
+    suppression_chunk_size: 1024
+    require_pause_before_continuation_kl: true
+    assert_rows_only: true
+    post_step_invariant_check: true
+    invariant_check_interval_steps: 25
+    teacher_eval_mode: true
+
+stage21_selection:
+  metric: natural_generation_min_exact_chain
+  dev_sets:
+    - gsm8k_dev
+    - math500_dev
+    - safety_dev
+  min_exact_chain: 0.97
+  max_off_target: 0.005
+  max_malformed: 0.005

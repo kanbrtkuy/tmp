@@ -7,7 +7,21 @@ from cot_safety.schemas import ChatTemplate, PauseSpec
 
 
 def pause_text(spec: PauseSpec) -> str:
-    return spec.separator.join([spec.pause_token] * spec.n_pause_tokens)
+    tokens = list(spec.pause_tokens) if spec.pause_tokens else [spec.pause_token] * spec.n_pause_tokens
+    return spec.separator.join(tokens)
+
+
+def configured_pause_tokens(spec: PauseSpec) -> tuple[str, ...]:
+    if spec.pause_tokens:
+        return tuple(spec.pause_tokens)
+    return tuple(spec.pause_token for _ in range(spec.n_pause_tokens))
+
+
+def strip_pause_tokens(text: str, spec: PauseSpec) -> str:
+    stripped = text
+    for token in set(configured_pause_tokens(spec)):
+        stripped = stripped.replace(token, "")
+    return stripped
 
 
 def split_think_output(output: str, template: ChatTemplate) -> tuple[str, str, str]:
@@ -65,3 +79,15 @@ def insert_pause_before_cot_offset(
         "reasoning_token_count_after_leading_space_skip": len(token_ids) - first_idx,
     }
     return prefix + new_reasoning + suffix, info
+
+
+def expert_relabel_pause_output(
+    output: str,
+    tokenizer: Any,
+    template: ChatTemplate,
+    spec: PauseSpec,
+) -> tuple[str, dict[str, Any]]:
+    """Strip any pause tokens, then reinsert the configured expert pause block."""
+
+    stripped = strip_pause_tokens(output, spec)
+    return insert_pause_before_cot_offset(stripped, tokenizer, template, spec)

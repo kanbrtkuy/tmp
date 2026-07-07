@@ -27,11 +27,16 @@ class _RowsOnlyInvariantCallback(TrainerCallback):
 
     def __init__(
         self,
-        pause_token_id: int,
+        pause_token_id: int | None = None,
+        pause_token_ids: list[int] | tuple[int, ...] | None = None,
         chunk_rows: int = 2048,
         check_interval_steps: int = 50,
     ) -> None:
-        self.pause_token_id = int(pause_token_id)
+        if pause_token_ids is None:
+            if pause_token_id is None:
+                raise ValueError("pause_token_id or pause_token_ids is required")
+            pause_token_ids = [int(pause_token_id)]
+        self.pause_token_ids = {int(token_id) for token_id in pause_token_ids}
         self.chunk_rows = max(1, int(chunk_rows))
         self.check_interval_steps = max(1, int(check_interval_steps))
         self.snapshots: list[tuple[str, torch.Tensor]] | None = None
@@ -62,8 +67,9 @@ class _RowsOnlyInvariantCallback(TrainerCallback):
                 end = min(start + self.chunk_rows, before.shape[0])
                 now = current.detach()[start:end].cpu()
                 changed = now.ne(before[start:end])
-                if start <= self.pause_token_id < end:
-                    changed[self.pause_token_id - start] = False
+                for pause_token_id in self.pause_token_ids:
+                    if start <= pause_token_id < end:
+                        changed[pause_token_id - start] = False
                 if changed.any():
                     bad_rows = (
                         changed.reshape(changed.shape[0], -1)
@@ -116,13 +122,26 @@ class PauseKLSFTTrainer(SFTTrainer):
         if tokenizer is None:
             raise ValueError("PauseKLSFTTrainer requires a tokenizer/processing_class")
 
-        self.pause_token = str(self.pause_kl_cfg.get("pause_token", "<|pause|>"))
-        pause_token_id = tokenizer.convert_tokens_to_ids(self.pause_token)
-        if pause_token_id is None:
-            raise ValueError(f"Unknown pause token for PauseKLSFTTrainer: {self.pause_token!r}")
-        self.pause_token_id = int(pause_token_id)
-        if self.pause_token_id < 0 or self.pause_token_id == getattr(tokenizer, "unk_token_id", None):
-            raise ValueError(f"Unknown pause token for PauseKLSFTTrainer: {self.pause_token!r}")
+        raw_pause_tokens = self.pause_kl_cfg.get("pause_tokens")
+        if raw_pause_tokens:
+            self.pause_tokens = [str(token) for token in raw_pause_tokens]
+        else:
+            self.pause_tokens = [str(self.pause_kl_cfg.get("pause_token", "<|pause|>"))]
+        if not self.pause_tokens:
+            raise ValueError("PauseKLSFTTrainer requires at least one pause token")
+        self.pause_token = self.pause_tokens[0]
+        pause_token_ids: list[int] = []
+        for pause_token in self.pause_tokens:
+            pause_token_id = tokenizer.convert_tokens_to_ids(pause_token)
+            if pause_token_id is None:
+                raise ValueError(f"Unknown pause token for PauseKLSFTTrainer: {pause_token!r}")
+            pause_token_id = int(pause_token_id)
+            if pause_token_id < 0 or pause_token_id == getattr(tokenizer, "unk_token_id", None):
+                raise ValueError(f"Unknown pause token for PauseKLSFTTrainer: {pause_token!r}")
+            pause_token_ids.append(pause_token_id)
+        self.pause_token_ids = tuple(pause_token_ids)
+        self.pause_token_id = self.pause_token_ids[0]
+        self.pause_token_id_set = set(self.pause_token_ids)
 
         self.pad_token_id = int(
             tokenizer.pad_token_id
@@ -134,6 +153,16 @@ class PauseKLSFTTrainer(SFTTrainer):
         self.pre_weight = float(self.pause_kl_cfg.get("pre_weight", 0.1))
         self.suppression_weight = float(self.pause_kl_cfg.get("suppression_weight", 1.0))
         self.emit_weight = float(self.pause_kl_cfg.get("emit_weight", 0.3))
+        self.emit_margin_weight = float(self.pause_kl_cfg.get("emit_margin_weight", 0.0))
+        self.stop_weight = float(self.pause_kl_cfg.get("stop_weight", 0.0))
+        self.suppression_loss_type = str(self.pause_kl_cfg.get("suppression_loss_type", "unlikelihood"))
+        self.emit_margin = float(self.pause_kl_cfg.get("emit_margin", 3.0))
+        self.suppression_margin = float(self.pause_kl_cfg.get("suppression_margin", 5.0))
+        self.pause_head_cfg = dict(self.pause_kl_cfg.get("pause_head") or {})
+        self.pause_head_enabled = bool(self.pause_head_cfg.get("enabled", False))
+        self.pause_head: torch.nn.Module | None = None
+        if self.pause_head_enabled:
+            self._attach_pause_head()
         self.temperature = float(self.pause_kl_cfg.get("temperature", 1.0))
         self.max_kl_tokens_per_example = int(self.pause_kl_cfg.get("max_kl_tokens_per_example", 256))
         self.suppression_chunk_size = int(self.pause_kl_cfg.get("suppression_chunk_size", 1024))
@@ -155,10 +184,48 @@ class PauseKLSFTTrainer(SFTTrainer):
             if self.post_step_invariant_check:
                 self.add_callback(
                     _RowsOnlyInvariantCallback(
-                        self.pause_token_id,
+                        pause_token_ids=list(self.pause_token_ids),
                         check_interval_steps=self.invariant_check_interval_steps,
                     )
                 )
+
+    def _hidden_size(self) -> int:
+        config = getattr(_unwrap_model(self.model), "config", None)
+        for name in ("hidden_size", "n_embd", "d_model"):
+            value = getattr(config, name, None)
+            if value:
+                return int(value)
+        embedding = _unwrap_model(self.model).get_input_embeddings()
+        return int(embedding.weight.shape[1])
+
+    def _attach_pause_head(self) -> None:
+        hidden_size = self._hidden_size()
+        bottleneck = int(self.pause_head_cfg.get("hidden_size", 64))
+        dropout = float(self.pause_head_cfg.get("dropout", 0.0))
+        layers: list[torch.nn.Module] = [
+            torch.nn.Linear(hidden_size, bottleneck),
+            torch.nn.SiLU(),
+        ]
+        if dropout > 0:
+            layers.append(torch.nn.Dropout(dropout))
+        layers.append(torch.nn.Linear(bottleneck, len(self.pause_token_ids)))
+        head = torch.nn.Sequential(*layers)
+        device = next(_unwrap_model(self.model).parameters()).device
+        head.to(device=device)
+        _unwrap_model(self.model).add_module("_stage21_pause_head", head)
+        self.pause_head = head
+
+    def _apply_pause_head(self, outputs: Any, logits: torch.Tensor) -> torch.Tensor:
+        if not self.pause_head_enabled:
+            return logits
+        hidden_states = getattr(outputs, "hidden_states", None)
+        if not hidden_states:
+            raise ValueError("pause_head.enabled=true requires model outputs with hidden_states")
+        pause_delta = self.pause_head(hidden_states[-1]).to(dtype=logits.dtype)
+        out = logits.clone()
+        pause_ids = self._pause_ids_tensor(logits.device)
+        out[:, :, pause_ids] = out[:, :, pause_ids] + pause_delta
+        return out
 
     def _model_kwargs(self, inputs: dict[str, Any]) -> dict[str, Any]:
         allowed = {"input_ids", "attention_mask", "position_ids"}
@@ -173,6 +240,8 @@ class PauseKLSFTTrainer(SFTTrainer):
             )
 
         allowed = {id(weight) for _, weight in _embedding_weights(self.model)}
+        if self.pause_head_enabled and self.pause_head is not None:
+            allowed.update(id(parameter) for parameter in self.pause_head.parameters())
         bad = [
             name
             for name, parameter in self.model.named_parameters()
@@ -190,20 +259,20 @@ class PauseKLSFTTrainer(SFTTrainer):
     def _snapshot_pause_rows(self) -> dict[str, torch.Tensor]:
         rows: dict[str, torch.Tensor] = {}
         for name, weight in _embedding_weights(self.model):
-            rows[name] = weight.detach()[self.pause_token_id].float().cpu().clone()
+            rows[name] = weight.detach()[list(self.pause_token_ids)].float().cpu().clone()
         return rows
 
     def _pause_row_diagnostics(self, model: torch.nn.Module) -> dict[str, float]:
         diagnostics: dict[str, float] = {}
         for name, weight in _embedding_weights(model):
             safe_name = name.replace(".weight", "").replace(".", "_")
-            row = weight.detach()[self.pause_token_id].float()
-            diagnostics[f"pause_row/{safe_name}_norm"] = float(row.norm().cpu())
+            row = weight.detach()[list(self.pause_token_ids)].float()
+            diagnostics[f"pause_row/{safe_name}_norm_mean"] = float(row.norm(dim=-1).mean().cpu())
             initial = self._pause_row_initial.get(name)
             if initial is not None:
                 initial = initial.to(device=row.device, dtype=row.dtype)
-                cosine = F.cosine_similarity(row.view(1, -1), initial.view(1, -1), dim=-1)
-                diagnostics[f"pause_row/{safe_name}_cosine_to_init"] = float(cosine[0].cpu())
+                cosine = F.cosine_similarity(row, initial, dim=-1)
+                diagnostics[f"pause_row/{safe_name}_cosine_to_init_mean"] = float(cosine.mean().cpu())
         return diagnostics
 
     def _pause_logit_diagnostics(
@@ -216,17 +285,20 @@ class PauseKLSFTTrainer(SFTTrainer):
         shift_targets = input_ids[:, 1:]
         shift_labels = labels[:, 1:]
         valid_mask = shift_labels.ne(-100)
-        pause_mask = valid_mask & shift_targets.eq(self.pause_token_id)
-        non_pause_mask = valid_mask & ~shift_targets.eq(self.pause_token_id)
+        pause_ids = self._pause_ids_tensor(logits.device)
+        pause_target_mask = torch.isin(shift_targets, pause_ids)
+        pause_mask = valid_mask & pause_target_mask
+        non_pause_mask = valid_mask & ~pause_target_mask
         diagnostics: dict[str, float] = {}
         if pause_mask.any():
             pause_logits = shift_logits[pause_mask].float()
-            pause_log_probs = pause_logits[:, self.pause_token_id] - torch.logsumexp(
+            pause_targets = shift_targets[pause_mask]
+            target_log_probs = pause_logits.gather(1, pause_targets.view(-1, 1)).squeeze(1) - torch.logsumexp(
                 pause_logits,
                 dim=-1,
             )
-            pause_argmax = pause_logits.argmax(dim=-1).eq(self.pause_token_id).float()
-            diagnostics["pause_emit/target_prob_mean"] = float(pause_log_probs.exp().mean().cpu())
+            pause_argmax = pause_logits.argmax(dim=-1).eq(pause_targets).float()
+            diagnostics["pause_emit/target_prob_mean"] = float(target_log_probs.exp().mean().cpu())
             diagnostics["pause_emit/target_argmax_rate"] = float(pause_argmax.mean().cpu())
         if non_pause_mask.any():
             flat_logits = shift_logits.reshape(-1, shift_logits.shape[-1])
@@ -236,16 +308,17 @@ class PauseKLSFTTrainer(SFTTrainer):
             count = 0
             for chunk_indices in flat_indices.split(max(1, self.suppression_chunk_size)):
                 chunk_logits = flat_logits.index_select(0, chunk_indices).float()
-                chunk_log_probs = chunk_logits[:, self.pause_token_id] - torch.logsumexp(
-                    chunk_logits,
-                    dim=-1,
-                )
-                prob_sum = prob_sum + chunk_log_probs.exp().sum()
-                argmax_sum = argmax_sum + chunk_logits.argmax(dim=-1).eq(self.pause_token_id).float().sum()
+                pause_logits = chunk_logits.index_select(1, pause_ids)
+                pause_mass = pause_logits.logsumexp(dim=-1) - torch.logsumexp(chunk_logits, dim=-1)
+                prob_sum = prob_sum + pause_mass.exp().sum()
+                argmax_sum = argmax_sum + torch.isin(chunk_logits.argmax(dim=-1), pause_ids).float().sum()
                 count += int(chunk_logits.shape[0])
             diagnostics["pause_emit/non_pause_prob_mean"] = float((prob_sum / max(count, 1)).cpu())
             diagnostics["pause_emit/non_pause_argmax_rate"] = float((argmax_sum / max(count, 1)).cpu())
         return diagnostics
+
+    def _pause_ids_tensor(self, device: torch.device) -> torch.Tensor:
+        return torch.tensor(list(self.pause_token_ids), device=device, dtype=torch.long)
 
     def _should_log_loss_parts(self) -> bool:
         step = int(getattr(self.state, "global_step", 0))
@@ -269,7 +342,7 @@ class PauseKLSFTTrainer(SFTTrainer):
             teacher_idx = 0
             for src_idx in range(valid_len):
                 token_id = int(row_ids[src_idx])
-                if token_id == self.pause_token_id:
+                if token_id in self.pause_token_id_set:
                     continue
                 kept.append(token_id)
                 row_mapping[src_idx] = teacher_idx
@@ -312,7 +385,7 @@ class PauseKLSFTTrainer(SFTTrainer):
                 if int(label_row[target_pos]) == -100:
                     continue
                 token_id = int(input_row[target_pos])
-                if token_id == self.pause_token_id:
+                if token_id in self.pause_token_id_set:
                     pause_seen += 1
                     continue
                 teacher_target_pos = mappings[batch_idx].get(target_pos)
@@ -368,8 +441,9 @@ class PauseKLSFTTrainer(SFTTrainer):
 
         student_sel = student_sel.clone()
         teacher_sel = teacher_sel.clone()
-        student_sel[:, self.pause_token_id] = torch.finfo(student_sel.dtype).min
-        teacher_sel[:, self.pause_token_id] = torch.finfo(teacher_sel.dtype).min
+        pause_ids = self._pause_ids_tensor(student_sel.device)
+        student_sel[:, pause_ids] = torch.finfo(student_sel.dtype).min
+        teacher_sel[:, pause_ids] = torch.finfo(teacher_sel.dtype).min
 
         student_log_probs = F.log_softmax(student_sel, dim=-1)
         teacher_probs = F.softmax(teacher_sel, dim=-1)
@@ -382,13 +456,15 @@ class PauseKLSFTTrainer(SFTTrainer):
         logits: torch.Tensor,
         input_ids: torch.Tensor,
         labels: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         shift_logits = logits[:, :-1, :]
         shift_targets = input_ids[:, 1:]
         shift_labels = labels[:, 1:]
         valid_mask = shift_labels.ne(-100)
-        pause_mask = valid_mask & shift_targets.eq(self.pause_token_id)
-        non_pause_mask = valid_mask & ~shift_targets.eq(self.pause_token_id)
+        pause_ids = self._pause_ids_tensor(logits.device)
+        pause_target_mask = torch.isin(shift_targets, pause_ids)
+        pause_mask = valid_mask & pause_target_mask
+        non_pause_mask = valid_mask & ~pause_target_mask
 
         if pause_mask.any():
             emit = F.cross_entropy(
@@ -396,27 +472,85 @@ class PauseKLSFTTrainer(SFTTrainer):
                 shift_targets[pause_mask],
                 reduction="mean",
             )
+            emit_margin = self._emit_margin_loss(shift_logits[pause_mask], shift_targets[pause_mask], pause_ids)
         else:
             emit = self._zero(logits)
+            emit_margin = self._zero(logits)
 
         if non_pause_mask.any():
             flat_logits = shift_logits.reshape(-1, shift_logits.shape[-1])
             flat_indices = non_pause_mask.reshape(-1).nonzero(as_tuple=False).flatten()
-            loss_sum = self._zero(logits)
-            count = 0
-            for chunk_indices in flat_indices.split(max(1, self.suppression_chunk_size)):
-                chunk_logits = flat_logits.index_select(0, chunk_indices).float()
-                pause_log_probs = chunk_logits[:, self.pause_token_id] - torch.logsumexp(
+            suppression = self._suppression_loss(flat_logits, flat_indices, pause_ids)
+        else:
+            suppression = self._zero(logits)
+
+        stop_mask = self._stop_after_pause_chain_mask(input_ids[:, :-1], valid_mask)
+        if stop_mask.any():
+            stop_loss = self._pause_margin_suppression(shift_logits[stop_mask], pause_ids)
+        else:
+            stop_loss = self._zero(logits)
+        return emit, suppression, emit_margin, stop_loss
+
+    def _non_pause_max(self, logits: torch.Tensor, pause_ids: torch.Tensor) -> torch.Tensor:
+        masked = logits.float().clone()
+        masked[:, pause_ids] = torch.finfo(masked.dtype).min
+        return masked.max(dim=-1).values
+
+    def _emit_margin_loss(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        pause_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        target_logits = logits.float().gather(1, targets.view(-1, 1)).squeeze(1)
+        non_pause_max = self._non_pause_max(logits, pause_ids)
+        return F.softplus(non_pause_max - target_logits + self.emit_margin).mean()
+
+    def _pause_margin_suppression(self, logits: torch.Tensor, pause_ids: torch.Tensor) -> torch.Tensor:
+        pause_logits = logits.float().index_select(1, pause_ids)
+        non_pause_max = self._non_pause_max(logits, pause_ids).unsqueeze(1)
+        return F.softplus(pause_logits - non_pause_max + self.suppression_margin).mean()
+
+    def _suppression_loss(
+        self,
+        flat_logits: torch.Tensor,
+        flat_indices: torch.Tensor,
+        pause_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        loss_sum = self._zero(flat_logits)
+        count = 0
+        for chunk_indices in flat_indices.split(max(1, self.suppression_chunk_size)):
+            chunk_logits = flat_logits.index_select(0, chunk_indices).float()
+            if self.suppression_loss_type == "margin":
+                chunk_loss = self._pause_margin_suppression(chunk_logits, pause_ids)
+                loss_sum = loss_sum + chunk_loss * int(chunk_indices.numel())
+            else:
+                pause_logits = chunk_logits.index_select(1, pause_ids)
+                pause_log_mass = pause_logits.logsumexp(dim=-1) - torch.logsumexp(
                     chunk_logits,
                     dim=-1,
                 )
-                pause_probs = pause_log_probs.exp().clamp(max=1.0 - 1e-6)
+                pause_probs = pause_log_mass.exp().clamp(max=1.0 - 1e-6)
                 loss_sum = loss_sum + (-torch.log1p(-pause_probs)).sum()
-                count += int(chunk_indices.numel())
-            suppression = loss_sum / max(count, 1)
-        else:
-            suppression = self._zero(logits)
-        return emit, suppression
+            count += int(chunk_indices.numel())
+        return loss_sum / max(count, 1)
+
+    def _stop_after_pause_chain_mask(
+        self,
+        contexts: torch.Tensor,
+        valid_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        if len(self.pause_token_ids) <= 1:
+            return valid_mask & contexts.eq(self.pause_token_id)
+        mask = torch.zeros_like(valid_mask, dtype=torch.bool)
+        width = len(self.pause_token_ids)
+        if contexts.shape[1] < width:
+            return mask
+        expected = torch.tensor(self.pause_token_ids, device=contexts.device, dtype=contexts.dtype)
+        for end_pos in range(width - 1, contexts.shape[1]):
+            window = contexts[:, end_pos - width + 1 : end_pos + 1]
+            mask[:, end_pos] = window.eq(expected.view(1, -1)).all(dim=1)
+        return mask & valid_mask
 
     def compute_loss(
         self,
@@ -440,10 +574,13 @@ class PauseKLSFTTrainer(SFTTrainer):
         attention_mask = inputs.get("attention_mask", torch.ones_like(input_ids))
         labels = inputs["labels"]
 
-        outputs = model(**self._model_kwargs(inputs), use_cache=False)
-        student_logits = outputs.logits
+        model_kwargs = self._model_kwargs(inputs)
+        if self.pause_head_enabled:
+            model_kwargs["output_hidden_states"] = True
+        outputs = model(**model_kwargs, use_cache=False)
+        student_logits = self._apply_pause_head(outputs, outputs.logits)
 
-        emit_loss, suppression_loss = self._pause_losses(student_logits, input_ids, labels)
+        emit_loss, suppression_loss, emit_margin_loss, stop_loss = self._pause_losses(student_logits, input_ids, labels)
 
         teacher_ids, teacher_mask, mappings = self._pause_stripped_batch(input_ids, attention_mask)
         was_training = model.training
@@ -469,9 +606,11 @@ class PauseKLSFTTrainer(SFTTrainer):
 
         loss = (
             self.emit_weight * emit_loss
+            + self.emit_margin_weight * emit_margin_loss
             + self.continuation_weight * continuation_kl
             + self.pre_weight * pre_kl
             + self.suppression_weight * suppression_loss
+            + self.stop_weight * stop_loss
         )
         diagnostics = None
         if self._should_log_loss_parts():
@@ -488,6 +627,8 @@ class PauseKLSFTTrainer(SFTTrainer):
             continuation_kl,
             pre_kl,
             suppression_loss,
+            emit_margin_loss,
+            stop_loss,
             diagnostics,
         )
 
@@ -502,6 +643,8 @@ class PauseKLSFTTrainer(SFTTrainer):
         continuation_kl: torch.Tensor,
         pre_kl: torch.Tensor,
         suppression_loss: torch.Tensor,
+        emit_margin_loss: torch.Tensor,
+        stop_loss: torch.Tensor,
         diagnostics: dict[str, float] | None = None,
     ) -> None:
         step = int(getattr(self.state, "global_step", 0))
@@ -514,6 +657,8 @@ class PauseKLSFTTrainer(SFTTrainer):
             f"{prefix}/continuation": float(continuation_kl.detach().float().cpu()),
             f"{prefix}/pre": float(pre_kl.detach().float().cpu()),
             f"{prefix}/suppression": float(suppression_loss.detach().float().cpu()),
+            f"{prefix}/emit_margin": float(emit_margin_loss.detach().float().cpu()),
+            f"{prefix}/stop_after_chain": float(stop_loss.detach().float().cpu()),
         }
         if diagnostics:
             payload.update({f"{prefix}/{key}": value for key, value in diagnostics.items()})

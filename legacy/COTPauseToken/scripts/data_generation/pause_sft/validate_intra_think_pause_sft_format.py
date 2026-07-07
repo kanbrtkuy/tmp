@@ -37,8 +37,35 @@ def split_think(output: str) -> tuple[str, str, str] | None:
     return output[:think_start], output[inner_start:think_close], output[think_close + len(THINK_CLOSE) :]
 
 
-def pause_sequence(pause_token: str, n_pause_tokens: int, separator: str) -> str:
-    return separator.join([pause_token] * n_pause_tokens)
+def parse_pause_tokens(raw: str | None, pause_token: str, n_pause_tokens: int) -> list[str]:
+    if not raw:
+        return [pause_token] * n_pause_tokens
+    value = raw.strip()
+    if not value:
+        return [pause_token] * n_pause_tokens
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = [piece.strip() for piece in value.split(",") if piece.strip()]
+    if isinstance(parsed, str):
+        parsed = [parsed]
+    if not isinstance(parsed, list) or not all(isinstance(item, str) and item for item in parsed):
+        raise ValueError("--pause_tokens must be a JSON string list or comma-separated token list")
+    return [str(item) for item in parsed]
+
+
+def pause_sequence(
+    pause_token: str,
+    n_pause_tokens: int,
+    separator: str,
+    pause_tokens: list[str] | None = None,
+) -> str:
+    tokens = pause_tokens if pause_tokens is not None else [pause_token] * n_pause_tokens
+    return separator.join(tokens)
+
+
+def count_any_pause_token(text: str, pause_tokens: list[str]) -> int:
+    return sum(text.count(token) for token in set(pause_tokens))
 
 
 def first_nonspace_token_index(tokenizer: Any, token_ids: list[int]) -> int | None:
@@ -76,12 +103,13 @@ def validate_intra_row(
     expected_pause_tokens: int,
     cot_offset: int,
     pause_token: str,
+    pause_tokens: list[str],
     separator: str,
 ) -> list[str]:
     errors = []
     output = row.get("output") or ""
-    seq = pause_sequence(pause_token, expected_pause_tokens, separator)
-    if output.startswith(pause_token):
+    seq = pause_sequence(pause_token, expected_pause_tokens, separator, pause_tokens=pause_tokens)
+    if any(output.startswith(token) for token in pause_tokens):
         errors.append("unexpected_pre_think_pause")
     if not output.startswith(THINK_OPEN):
         errors.append("missing_initial_think")
@@ -90,11 +118,11 @@ def validate_intra_row(
         errors.append("missing_think_block")
         return errors
     pre_think, think_inner, after_think = parts
-    if pause_token in pre_think:
+    if any(token in pre_think for token in pause_tokens):
         errors.append("pause_before_think")
     if not after_think.strip():
         errors.append("empty_final")
-    if think_inner.count(pause_token) != expected_pause_tokens:
+    if count_any_pause_token(think_inner, pause_tokens) != expected_pause_tokens:
         errors.append("wrong_intra_pause_count")
     if seq not in think_inner:
         errors.append("missing_contiguous_intra_pause_run")
@@ -117,10 +145,10 @@ def validate_intra_row(
     return errors
 
 
-def validate_no_pause_row(row: dict[str, Any], pause_token: str) -> list[str]:
+def validate_no_pause_row(row: dict[str, Any], pause_tokens: list[str]) -> list[str]:
     errors = []
     output = row.get("output") or ""
-    if pause_token in output:
+    if any(token in output for token in pause_tokens):
         errors.append("unexpected_pause_token")
     if not output.startswith(THINK_OPEN):
         errors.append("missing_initial_think")
@@ -136,11 +164,12 @@ def validate_pre_think_row(
     row: dict[str, Any],
     expected_pause_tokens: int,
     pause_token: str,
+    pause_tokens: list[str],
     separator: str,
 ) -> list[str]:
     errors = []
     output = row.get("output") or ""
-    seq = pause_sequence(pause_token, expected_pause_tokens, separator)
+    seq = pause_sequence(pause_token, expected_pause_tokens, separator, pause_tokens=pause_tokens)
     if not output.startswith(seq + THINK_OPEN):
         errors.append("missing_pre_think_pause_prefix")
     after_prefix = output[len(seq) :]
@@ -167,23 +196,26 @@ def validate_common(row: dict[str, Any]) -> list[str]:
     return errors
 
 
-def load_tokenizer(tokenizer_path: str | None, pause_token: str) -> Any | None:
+def load_tokenizer(tokenizer_path: str | None, pause_tokens: list[str]) -> Any | None:
     if not tokenizer_path:
         return None
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=False, use_fast=True)
-    tokenizer.add_tokens([pause_token], special_tokens=True)
+    tokenizer.add_tokens(list(dict.fromkeys(pause_tokens)), special_tokens=True)
     return tokenizer
 
 
-def tokenizer_checks(tokenizer: Any | None, pause_token: str) -> dict[str, Any]:
+def tokenizer_checks(tokenizer: Any | None, pause_tokens: list[str]) -> dict[str, Any]:
     if tokenizer is None:
         return {}
-    pause_ids = tokenizer.encode(pause_token, add_special_tokens=False)
+    pause_ids = {
+        token: tokenizer.encode(token, add_special_tokens=False)
+        for token in pause_tokens
+    }
     return {
         "pause_token_ids": pause_ids,
-        "pause_is_single_token": len(pause_ids) == 1,
+        "all_pause_tokens_are_single_token": all(len(ids) == 1 for ids in pause_ids.values()),
     }
 
 
@@ -194,8 +226,10 @@ def validate_row(
     expected_pause_tokens: int = 3,
     cot_offset: int = 3,
     pause_token: str = PAUSE_TOKEN,
+    pause_tokens: list[str] | None = None,
     separator: str = "",
 ) -> list[str]:
+    pause_tokens = pause_tokens if pause_tokens is not None else [pause_token] * expected_pause_tokens
     errors = validate_common(row)
     if "missing_output" in errors:
         return errors
@@ -207,17 +241,19 @@ def validate_row(
                 expected_pause_tokens=expected_pause_tokens,
                 cot_offset=cot_offset,
                 pause_token=pause_token,
+                pause_tokens=pause_tokens,
                 separator=separator,
             )
         )
     elif mode == "no_pause":
-        errors.extend(validate_no_pause_row(row, pause_token=pause_token))
+        errors.extend(validate_no_pause_row(row, pause_tokens=pause_tokens))
     elif mode == "pre_think_pause":
         errors.extend(
             validate_pre_think_row(
                 row,
                 expected_pause_tokens=expected_pause_tokens,
                 pause_token=pause_token,
+                pause_tokens=pause_tokens,
                 separator=separator,
             )
         )
@@ -237,6 +273,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected_pause_tokens", type=int, default=3)
     parser.add_argument("--cot_offset", type=int, default=3)
     parser.add_argument("--pause_token", default=PAUSE_TOKEN)
+    parser.add_argument(
+        "--pause_tokens",
+        default=None,
+        help="Optional JSON string list or comma-separated distinct pause chain. Overrides --pause_token/--expected_pause_tokens.",
+    )
     parser.add_argument("--separator", default="")
     parser.add_argument("--tokenizer_path", default=None)
     parser.add_argument("--output_json", default=None)
@@ -245,14 +286,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    tokenizer = load_tokenizer(args.tokenizer_path, args.pause_token)
+    args.pause_tokens = parse_pause_tokens(args.pause_tokens, args.pause_token, args.expected_pause_tokens)
+    args.expected_pause_tokens = len(args.pause_tokens)
+    tokenizer = load_tokenizer(args.tokenizer_path, args.pause_tokens)
     dataset_dir = Path(args.dataset_dir)
     summary: dict[str, Any] = {
         "dataset_dir": str(dataset_dir),
         "mode": args.mode,
         "expected_pause_tokens": args.expected_pause_tokens,
+        "pause_tokens": args.pause_tokens,
         "cot_offset": args.cot_offset,
-        "tokenizer_checks": tokenizer_checks(tokenizer, args.pause_token),
+        "tokenizer_checks": tokenizer_checks(tokenizer, args.pause_tokens),
         "splits": {},
         "errors": {},
     }
@@ -271,6 +315,7 @@ def main() -> None:
                 expected_pause_tokens=args.expected_pause_tokens,
                 cot_offset=args.cot_offset,
                 pause_token=args.pause_token,
+                pause_tokens=args.pause_tokens,
                 separator=args.separator,
             )
             if errors:

@@ -17,10 +17,17 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 STEERING_DIR = REPO_ROOT / "scripts" / "steering"
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(STEERING_DIR))
 
 import run_intra_pause_steered_generation as steer  # noqa: E402
+from cot_safety.eval.natural_pause_metrics import (  # noqa: E402
+    natural_pause_metrics,
+    pause_chain_text,
+    strip_pause_tokens as strip_configured_pause_tokens,
+)
 
 
 DEEPSEEK_BOS_TOKEN = "<｜begin▁of▁sentence｜>"
@@ -56,23 +63,21 @@ def build_prompt(
     return f"{bos_token}{user_template}{prompt}{suffix}{assistant_template}{forced_prefix}"
 
 
-def pause_spans(text: str) -> list[tuple[int, int, int]]:
-    spans = []
-    token = steer.PAUSE_TOKEN
-    token_len = len(token)
-    idx = 0
-    while idx < len(text):
-        start = text.find(token, idx)
-        if start < 0:
-            break
-        run_len = 0
-        cursor = start
-        while text.startswith(token, cursor):
-            run_len += 1
-            cursor += token_len
-        spans.append((start, cursor, run_len))
-        idx = cursor
-    return spans
+def parse_pause_tokens(raw: str, pause_token: str, n_pause_tokens: int) -> list[str]:
+    if not raw:
+        return [pause_token] * n_pause_tokens
+    value = raw.strip()
+    if not value:
+        return [pause_token] * n_pause_tokens
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = [piece.strip() for piece in value.split(",") if piece.strip()]
+    if isinstance(parsed, str):
+        parsed = [parsed]
+    if not isinstance(parsed, list) or not all(isinstance(item, str) and item for item in parsed):
+        raise SystemExit("--pause_tokens must be a JSON string list or comma-separated token list")
+    return [str(item) for item in parsed]
 
 
 def count_tokens(text: str, tokenizer: Any | None) -> int | None:
@@ -87,43 +92,27 @@ def count_tokens(text: str, tokenizer: Any | None) -> int | None:
     return len(pieces) if pieces else 0
 
 
-def extended_pause_metrics(text: str, tokenizer: Any | None = None) -> dict[str, Any]:
+def extended_pause_metrics(
+    text: str,
+    tokenizer: Any | None = None,
+    *,
+    pause_tokens: list[str] | None = None,
+    pause_token: str = steer.PAUSE_TOKEN,
+    n_pause_tokens: int = 3,
+    separator: str = "",
+    expected_cot_offset: int | None = None,
+) -> dict[str, Any]:
     metrics = dict(steer.response_metrics(text))
-    spans = pause_spans(text)
-    think_start = text.find("<think>")
-    think_end = text.find("</think>")
-    run_lengths = [run_len for _, _, run_len in spans]
-    first_pause = spans[0][0] if spans else -1
-    inside_count = 0
-    before_count = 0
-    after_count = 0
-    for start, _, run_len in spans:
-        if think_start >= 0 and start < think_start:
-            before_count += run_len
-        elif think_end >= 0 and start > think_end:
-            after_count += run_len
-        elif think_start < 0:
-            before_count += run_len
-        else:
-            inside_count += run_len
-
-    first_pause_token_index = None
-    if first_pause >= 0 and think_start >= 0 and first_pause > think_start:
-        prefix_inside_think = text[think_start + len("<think>") : first_pause]
-        first_pause_token_index = count_tokens(prefix_inside_think, tokenizer)
-
     metrics.update(
-        {
-            "pause_run_lengths": run_lengths,
-            "pause_run_count": len(run_lengths),
-            "first_pause_run_length": run_lengths[0] if run_lengths else 0,
-            "has_single_pause_run_of_3": len(run_lengths) == 1 and run_lengths[0] == 3,
-            "pause_count_inside_think": inside_count,
-            "pause_count_before_think": before_count,
-            "pause_count_after_think_end": after_count,
-            "off_target_pause_count": before_count + after_count,
-            "first_pause_token_index_inside_think": first_pause_token_index,
-        }
+        natural_pause_metrics(
+            text,
+            tokenizer=tokenizer,
+            pause_token=pause_token,
+            n_pause_tokens=n_pause_tokens,
+            pause_tokens=pause_tokens,
+            separator=separator,
+            expected_cot_offset=expected_cot_offset,
+        )
     )
     return metrics
 
@@ -306,7 +295,7 @@ def load_model_and_tokenizer(args: argparse.Namespace) -> tuple[Any, Any, Any, A
     if args.model_kind == "steer":
         checkpoint = torch.load(args.delta_checkpoint, map_location="cpu", weights_only=False)
         delta = checkpoint["delta"].detach().float().to(next(model.parameters()).device)
-    if args.model_kind in {"sft", "steer"}:
+    if args.model_kind == "steer":
         pause_ids = tokenizer(steer.PAUSE_TOKEN, add_special_tokens=False).input_ids
         if len(pause_ids) != 1:
             raise SystemExit(f"Expected one-token pause id, got {pause_ids}")
@@ -336,6 +325,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--assistant_template", default=DEEPSEEK_ASSISTANT_TEMPLATE)
     parser.add_argument("--insert_pause_after_cot_tokens", type=int, default=3)
     parser.add_argument("--n_insert_pauses", type=int, default=3)
+    parser.add_argument("--pause_token", default=steer.PAUSE_TOKEN)
+    parser.add_argument(
+        "--pause_tokens",
+        default="",
+        help="Optional JSON string list or comma-separated distinct pause chain for Stage2.1 eval.",
+    )
+    parser.add_argument("--pause_separator", default="")
     parser.add_argument("--torch_dtype", choices=("auto", "float32", "float16", "bfloat16"), default="bfloat16")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--trust_remote_code", action="store_true")
@@ -351,6 +347,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    args.pause_tokens = parse_pause_tokens(args.pause_tokens, args.pause_token, args.n_insert_pauses)
+    args.n_insert_pauses = len(args.pause_tokens)
+    if args.model_kind == "steer" and args.pause_tokens != [steer.PAUSE_TOKEN] * args.n_insert_pauses:
+        raise SystemExit("Stage4 steer mode currently supports only the legacy repeated <|pause|> token")
     if args.model_kind == "steer" and args.generation_backend == "vllm":
         raise SystemExit("--generation_backend vllm is not supported for --model_kind steer")
     if args.model_kind == "steer" and not args.delta_checkpoint:
@@ -383,6 +383,12 @@ def main() -> None:
             metric_tokenizer = None
     gen_mode = generation_mode(args)
     eos_token_text = getattr(metric_tokenizer, "eos_token", None)
+    pause_insert_text = pause_chain_text(
+        pause_token=args.pause_token,
+        n_pause_tokens=args.n_insert_pauses,
+        separator=args.pause_separator,
+        pause_tokens=args.pause_tokens,
+    )
 
     with out.open("w", encoding="utf-8") as f:
         for start in range(0, len(rows), args.batch_size):
@@ -413,7 +419,7 @@ def main() -> None:
                 else:
                     prefixes = ["" for _ in batch]
                 inserted_prefixes = [
-                    steer.strip_pause_tokens(prefix) + (steer.PAUSE_TOKEN * args.n_insert_pauses)
+                    strip_configured_pause_tokens(prefix, args.pause_tokens) + pause_insert_text
                     for prefix in prefixes
                 ]
             prompts = [prompt + inserted for prompt, inserted in zip(base_prompts, inserted_prefixes)]
@@ -453,13 +459,26 @@ def main() -> None:
                         "alpha": args.alpha,
                         "layer": args.layer,
                         "generated": generated,
-                        "generated_for_judge": steer.strip_pause_tokens(generated),
+                        "generated_for_judge": strip_configured_pause_tokens(generated, args.pause_tokens),
                         "inserted_prefix": inserted,
-                        "inserted_pause_count": inserted.count(steer.PAUSE_TOKEN),
-                        "pause_metrics": extended_pause_metrics(generated, metric_tokenizer),
+                        "inserted_pause_count": sum(inserted.count(token) for token in set(args.pause_tokens)),
+                        "pause_metrics": extended_pause_metrics(
+                            generated,
+                            metric_tokenizer,
+                            pause_tokens=args.pause_tokens,
+                            pause_token=args.pause_token,
+                            n_pause_tokens=args.n_insert_pauses,
+                            separator=args.pause_separator,
+                            expected_cot_offset=args.insert_pause_after_cot_tokens if args.model_kind in {"sft", "steer"} else None,
+                        ),
                         "natural_pause_metrics": extended_pause_metrics(
                             natural_generated,
                             metric_tokenizer,
+                            pause_tokens=args.pause_tokens,
+                            pause_token=args.pause_token,
+                            n_pause_tokens=args.n_insert_pauses,
+                            separator=args.pause_separator,
+                            expected_cot_offset=args.insert_pause_after_cot_tokens if args.model_kind in {"sft", "steer"} else None,
                         ),
                         "hook_stats": hook_stat,
                         "predicted_answer": pred,
@@ -475,6 +494,8 @@ def main() -> None:
                             "assistant_template": args.assistant_template,
                             "insert_pause_after_cot_tokens": args.insert_pause_after_cot_tokens if args.model_kind in {"sft", "steer"} else -1,
                             "n_insert_pauses": args.n_insert_pauses if args.model_kind in {"sft", "steer"} else 0,
+                            "pause_tokens": args.pause_tokens if args.model_kind in {"sft", "steer"} else [],
+                            "pause_separator": args.pause_separator if args.model_kind in {"sft", "steer"} else "",
                         },
                     }
                 )
@@ -495,6 +516,8 @@ def main() -> None:
         "start_index": args.start_index,
         "end_index": args.end_index,
         "generation_backend": args.generation_backend,
+        "pause_tokens": args.pause_tokens,
+        "pause_separator": args.pause_separator,
     }
     out.with_suffix(".manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, ensure_ascii=False, indent=2))

@@ -59,8 +59,26 @@ def first_nonspace_token_index(tokenizer: Any, token_ids: list[int]) -> int | No
     return None
 
 
-def pause_text(pause_token: str, n_pause_tokens: int, separator: str) -> str:
-    return separator.join([pause_token] * n_pause_tokens)
+def parse_pause_tokens(raw: str | None, pause_token: str, n_pause_tokens: int) -> list[str]:
+    if not raw:
+        return [pause_token] * n_pause_tokens
+    value = raw.strip()
+    if not value:
+        return [pause_token] * n_pause_tokens
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = [piece.strip() for piece in value.split(",") if piece.strip()]
+    if isinstance(parsed, str):
+        parsed = [parsed]
+    if not isinstance(parsed, list) or not all(isinstance(item, str) and item for item in parsed):
+        raise ValueError("--pause_tokens must be a JSON string list or comma-separated token list")
+    return [str(item) for item in parsed]
+
+
+def pause_text(pause_token: str, n_pause_tokens: int, separator: str, pause_tokens: list[str] | None = None) -> str:
+    tokens = pause_tokens if pause_tokens is not None else [pause_token] * n_pause_tokens
+    return separator.join(tokens)
 
 
 def insert_pause_before_cot_offset(
@@ -68,6 +86,7 @@ def insert_pause_before_cot_offset(
     tokenizer: Any,
     pause_token: str = PAUSE_TOKEN,
     n_pause_tokens: int = 3,
+    pause_tokens: list[str] | None = None,
     cot_offset: int = 3,
     separator: str = "",
 ) -> tuple[str, dict[str, Any]]:
@@ -101,12 +120,14 @@ def insert_pause_before_cot_offset(
     if char_offset < 0 or char_offset > len(reasoning):
         raise ValueError("invalid_offset_mapping")
 
-    inserted = pause_text(pause_token, n_pause_tokens, separator)
+    inserted = pause_text(pause_token, n_pause_tokens, separator, pause_tokens=pause_tokens)
     new_reasoning = reasoning[:char_offset] + inserted + reasoning[char_offset:]
+    configured_tokens = pause_tokens if pause_tokens is not None else [pause_token] * n_pause_tokens
     info = {
         "pause_style": "intra_think_before_cot",
         "pause_cot_offset": cot_offset,
-        "n_pause_tokens": n_pause_tokens,
+        "n_pause_tokens": len(configured_tokens),
+        "pause_tokens": configured_tokens,
         "pause_char_offset_in_reasoning": char_offset,
         "reasoning_token_count_after_leading_space_skip": len(token_ids) - first_idx,
     }
@@ -117,9 +138,10 @@ def add_pre_think_pause_prefix(
     output: str,
     pause_token: str = PAUSE_TOKEN,
     n_pause_tokens: int = 3,
+    pause_tokens: list[str] | None = None,
     separator: str = "",
 ) -> str:
-    return f"{pause_text(pause_token, n_pause_tokens, separator)}{separator}{output.strip()}"
+    return f"{pause_text(pause_token, n_pause_tokens, separator, pause_tokens=pause_tokens)}{separator}{output.strip()}"
 
 
 def base_metadata(row: dict[str, Any]) -> dict[str, Any]:
@@ -154,6 +176,7 @@ def build_triplet(
         tokenizer=tokenizer,
         pause_token=args.pause_token,
         n_pause_tokens=args.n_pause_tokens,
+        pause_tokens=args.pause_tokens,
         cot_offset=args.cot_offset,
         separator=args.separator,
     )
@@ -175,9 +198,11 @@ def build_triplet(
                 output,
                 pause_token=args.pause_token,
                 n_pause_tokens=args.n_pause_tokens,
+                pause_tokens=args.pause_tokens,
                 separator=args.separator,
             ),
-            "n_pause_tokens": args.n_pause_tokens,
+            "n_pause_tokens": len(args.pause_tokens),
+            "pause_tokens": args.pause_tokens,
             "pause_style": "pre_think_prefix",
             "pause_cot_offset": None,
         }
@@ -247,7 +272,8 @@ def write_variant(
         "source_path": args.input_jsonl,
         "seed": args.seed,
         "pause_token": args.pause_token,
-        "n_pause_tokens": args.n_pause_tokens,
+        "n_pause_tokens": len(args.pause_tokens),
+        "pause_tokens": args.pause_tokens,
         "separator": args.separator,
         "cot_offset": args.cot_offset,
         "summary": {split: summarize_rows(rows) for split, rows in split_rows.items()},
@@ -256,11 +282,11 @@ def write_variant(
     return manifest
 
 
-def load_tokenizer(tokenizer_path: str, pause_token: str) -> Any:
+def load_tokenizer(tokenizer_path: str, pause_tokens: list[str]) -> Any:
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=False, use_fast=True)
-    tokenizer.add_tokens([pause_token], special_tokens=True)
+    tokenizer.add_tokens(list(dict.fromkeys(pause_tokens)), special_tokens=True)
     return tokenizer
 
 
@@ -274,6 +300,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--test_size", type=int, default=500)
     parser.add_argument("--seed", type=int, default=260615)
     parser.add_argument("--pause_token", default=PAUSE_TOKEN)
+    parser.add_argument(
+        "--pause_tokens",
+        default=None,
+        help="Optional JSON string list or comma-separated distinct pause chain. Overrides --pause_token/--n_pause_tokens.",
+    )
     parser.add_argument("--n_pause_tokens", type=int, default=3)
     parser.add_argument("--cot_offset", type=int, default=3)
     parser.add_argument("--separator", default="")
@@ -286,7 +317,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    tokenizer = load_tokenizer(args.tokenizer_path, args.pause_token)
+    args.pause_tokens = parse_pause_tokens(args.pause_tokens, args.pause_token, args.n_pause_tokens)
+    args.n_pause_tokens = len(args.pause_tokens)
+    tokenizer = load_tokenizer(args.tokenizer_path, args.pause_tokens)
     raw_rows = read_jsonl(args.input_jsonl)
     triplets = []
     rejected = []
@@ -327,6 +360,8 @@ def main() -> None:
         "input_jsonl": args.input_jsonl,
         "output_root": str(output_root),
         "tokenizer_path": args.tokenizer_path,
+        "pause_token": args.pause_token,
+        "pause_tokens": args.pause_tokens,
         "raw_rows": len(raw_rows),
         "accepted_rows": len(triplets),
         "rejected_rows": len(rejected),
@@ -344,4 +379,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
