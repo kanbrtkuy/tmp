@@ -19,14 +19,14 @@ eval:
       batch_size: 32
     - label: stage21_pure_cot5_natural
       kind: sft
-      path: ${STAGE21_PURE_1P5B_CHECKPOINT:-/workspace/outputs/deepseek_1p5b_stage21_pause_pure_cot5_save25_max400_2xa6000/final}
+      path: ${STAGE21_PURE_1P5B_CHECKPOINT:-/workspace/outputs/deepseek_1p5b_stage21_pause_pure_cot5_full_2xa6000/final}
       generation_backend: vllm
       insert_pause_after_cot_tokens: -1
       n_insert_pauses: 0
       batch_size: 32
     - label: stage21_pure_cot5_forced
       kind: sft
-      path: ${STAGE21_PURE_1P5B_CHECKPOINT:-/workspace/outputs/deepseek_1p5b_stage21_pause_pure_cot5_save25_max400_2xa6000/final}
+      path: ${STAGE21_PURE_1P5B_CHECKPOINT:-/workspace/outputs/deepseek_1p5b_stage21_pause_pure_cot5_full_2xa6000/final}
       generation_backend: vllm
       insert_pause_after_cot_tokens: 5
       n_insert_pauses: 3

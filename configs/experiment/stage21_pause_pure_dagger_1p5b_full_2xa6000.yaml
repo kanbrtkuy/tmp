@@ -1,0 +1,30 @@
+defaults:
+  - stage21_pause_pure_dagger_1p5b.yaml
+
+run:
+  name: stage21_pause_pure_dagger_deepseek_1p5b_cot5_full_2xa6000
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_stage21_pause_pure_cot5_full_2xa6000
+
+sft:
+  max_steps: null
+  num_train_epochs: 1.0
+  save_steps: 25
+  eval_steps: 50
+  save_total_limit: 64
+  load_best_model_at_end: false
+  early_stopping:
+    enabled: false
+  tags:
+    - deepseek_1p5b
+    - stage21_pause_pure
+    - after_cot4_before_cot5
+    - margin_stop_suppress
+    - rows_only
+    - full
+    - a6000_2x
+
+stage21_selection:
+  min_exact_chain: 0.99
+  min_location_match: 0.99
+  max_off_target: 0.005
+  max_malformed: 0.005

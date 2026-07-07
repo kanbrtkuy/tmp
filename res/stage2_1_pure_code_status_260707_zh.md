@@ -34,6 +34,10 @@ Trainer：
 配置：
 
 - 新增 1.5B / 8B Stage2.1-pure 训练配置；
+- 新增 1.5B full 2xA6000 配置
+  `configs/experiment/stage21_pause_pure_dagger_1p5b_full_2xa6000.yaml`：
+  `max_steps: null`、`num_train_epochs: 1.0`、无早停、`save_steps: 25`、
+  `save_total_limit: 64`、strict gate 阈值 0.99；
 - 新增 pure DAgger pool；
 - 新增 1.5B / 8B model-comparison eval 配置。
 - 新增 1.5B smoke eval 配置，用于 25-step smoke 后快速检查
@@ -44,6 +48,14 @@ Pipeline：
 - 新增 `pipelines/run_stage21_pure_1p5b_smoke.sh`，把 pytest、
   data-prep validation、25-step SFT、小样本 natural/forced generation 和
   natural exact-3/location gate 串成一个入口。
+- 新增 `pipelines/run_stage21_pure_1p5b_full.sh`，把 1.5B full 2xA6000 的
+  pytest、data prep、完整 1 epoch SFT、model-comparison generation、
+  strict natural gate 和 summary 串成一个入口。默认不跑 judge；默认使用
+  cold `/workspace` 存储，避免小 `/dev/shm` 节点被 checkpoint 挤满。
+- `scripts/run_stage2_sft.py` 支持命令行覆盖
+  `per_device_train_batch_size`、`per_device_eval_batch_size`、
+  `gradient_accumulation_steps`、`dataloader_num_workers` 和 `optim`，用于
+  远端 batch probe，不需要手改 YAML。
 - 新增 `pipelines/run_stage21_pure_8b_full.sh`，把 8B formal 的 pytest、
   data prep、full SFT、model-comparison generation、strict natural gate、
   judge 和 summary 串成一个入口。
@@ -120,6 +132,8 @@ review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_code_followu
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_review_260707.md
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_followup_260707.md
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_8b_formal_pipeline_review_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_1p5b_full_pipeline_review_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_1p5b_full_pipeline_followup_260707.md
 ```
 
 Fable 结论：
@@ -129,6 +143,12 @@ Fable 结论：
 - stop loss 不会在第 1/2 个 pause 后误触发；
 - 仍符合 Goyal et al. 的 pure repeated pause-token 精神；
 - 可以跑 1.5B data-prep validation 和 25-step smoke。
+- 1.5B full 2xA6000 pipeline 的 Fable 结论是 `OK_TO_RUN`：无代码 blocker；
+  `max_steps: null` 会清除 parent 的 400-step cap；1 epoch、无早停、
+  batch override、cot_offset=5、pure repeated pause、cold checkpoint path
+  和 strict natural gate 均符合当前目标。
+- 将 `save_total_limit` 提到 64 后，Fable follow-up 再次确认
+  `OK_TO_RUN`；唯一 advisory 是监控 cold `/workspace` 容量。
 
 ## 当前剩余风险
 
@@ -146,8 +166,9 @@ Fable 结论：
 
 优先顺序：
 
-1. GPU 环境跑 `bash pipelines/run_stage21_pure_1p5b_smoke.sh`；
-2. 检查 smoke checkpoint 的 natural exact-3/location gate；
+1. 当前 2xA6000 节点优先跑
+   `bash pipelines/run_stage21_pure_1p5b_full.sh`，完整 1 epoch、无早停；
+2. 检查 full run final/checkpoints 的 natural exact-3/location gate；
 3. 如果 gate 明显失败，先修 Stage2.1-pure 目标或 DAgger 负例；
 4. 如果 gate 可行，再跑 1.5B short400 / DAgger iter1；
 5. capability sanity；

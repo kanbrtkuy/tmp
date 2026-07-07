@@ -45,6 +45,7 @@ Stage2.1-pure 仍然只使用纯净 pause：
 
 ```text
 configs/experiment/stage21_pause_pure_dagger_1p5b.yaml
+configs/experiment/stage21_pause_pure_dagger_1p5b_full_2xa6000.yaml
 configs/experiment/stage21_pause_pure_dagger_1p5b_iter1.yaml
 configs/experiment/stage21_pause_pure_dagger_8b_short400.yaml
 configs/experiment/stage21_pause_pure_dagger_8b_short400_iter1.yaml
@@ -72,6 +73,7 @@ legacy/COTPauseToken/src/utils/pause_kl_trainer.py
 scripts/run_stage2_sft.py
 legacy/COTPauseToken/scripts/training/run_4gpu_intra_pause_sft.sh
 pipelines/run_stage21_pure_1p5b_smoke.sh
+pipelines/run_stage21_pure_1p5b_full.sh
 pipelines/run_stage21_pure_8b_full.sh
 ```
 
@@ -85,6 +87,8 @@ review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_code_followu
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_review_260707.md
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_followup_260707.md
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_8b_formal_pipeline_review_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_1p5b_full_pipeline_review_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_1p5b_full_pipeline_followup_260707.md
 ```
 
 结论：
@@ -98,8 +102,28 @@ review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_8b_formal_pi
   确认为 no blocker；
 - 8B formal pipeline 的 cold checkpoint path、strict gate、failure-path
   sync 已经 Fable follow-up 确认为 no blocker。
+- 1.5B full 2xA6000 pipeline 已由 Fable review，结论 `OK_TO_RUN`；
+  `max_steps: null`、1 epoch、无早停、batch override、cold checkpoint path、
+  cot_offset=5 和 strict natural gate 均确认无 blocker。
+- 将 `save_total_limit` 提到 64 后，Fable follow-up 再次确认
+  `OK_TO_RUN`；唯一 advisory 是监控 cold `/workspace` 容量。
 
 ## 执行顺序
+
+当前 2xA6000 节点用于 1.5B full Stage2.1-pure。正式入口：
+
+```bash
+bash pipelines/run_stage21_pure_1p5b_full.sh
+```
+
+这个 1.5B full wrapper 会依次执行 pytest、data prep、完整 1 epoch SFT、
+model-comparison generation、strict natural exact-3/location gate 和 summary。
+默认不跑 judge；如需 judge 可设置 `RUN_JUDGE=1`。训练无早停，
+`max_steps: null`，`save_steps: 25`，`save_total_limit: 64`，以保留完整
+1 epoch 过程中足够多 checkpoint 用于后续选择最好 natural pause 良率。
+batch 探测通过 `PER_DEVICE_TRAIN_BATCH_SIZE_OVERRIDE` /
+`GRADIENT_ACCUMULATION_STEPS_OVERRIDE` 完成；formal run 需要记录最终 effective
+batch。
 
 1. 在 GPU 节点跑 1.5B smoke pipeline：
 

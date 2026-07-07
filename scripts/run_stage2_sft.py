@@ -576,12 +576,19 @@ def main() -> None:
     parser.add_argument("--disable_save_before_train", action="store_true")
     parser.add_argument("--disable_gradient_checkpointing", action="store_true")
     parser.add_argument("--disable_hot_checkpoint_sync", action="store_true")
+    parser.add_argument("--per_device_train_batch_size", type=int, default=None)
+    parser.add_argument("--per_device_eval_batch_size", type=int, default=None)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=None)
+    parser.add_argument("--dataloader_num_workers", type=int, default=None)
+    parser.add_argument("--optim", default=None)
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
     legacy_root = Path(args.legacy_root) if args.legacy_root else repo_root / "legacy/COTPauseToken"
     config = resolve_value(load_config(repo_root / args.config))
     sft_config = config.setdefault("sft", {})
+    runtime_config = config.setdefault("runtime", {})
+    runtime_sft_config = runtime_config.setdefault("sft", {})
     if args.max_steps is not None:
         sft_config["max_steps"] = int(args.max_steps)
     if args.resume_from_checkpoint:
@@ -590,12 +597,20 @@ def main() -> None:
         sft_config["save_before_train"] = False
     if args.disable_gradient_checkpointing:
         sft_config["gradient_checkpointing"] = False
-        runtime_config = config.setdefault("runtime", {})
-        runtime_sft_config = runtime_config.setdefault("sft", {})
         runtime_sft_config["gradient_checkpointing"] = False
     if args.disable_hot_checkpoint_sync:
         sync_config = sft_config.setdefault("hot_checkpoint_sync", {})
         sync_config["enabled"] = False
+    if args.per_device_train_batch_size is not None:
+        runtime_sft_config["per_device_train_batch_size"] = int(args.per_device_train_batch_size)
+    if args.per_device_eval_batch_size is not None:
+        runtime_sft_config["per_device_eval_batch_size"] = int(args.per_device_eval_batch_size)
+    if args.gradient_accumulation_steps is not None:
+        runtime_sft_config["gradient_accumulation_steps"] = int(args.gradient_accumulation_steps)
+    if args.dataloader_num_workers is not None:
+        runtime_sft_config["dataloader_num_workers"] = int(args.dataloader_num_workers)
+    if args.optim:
+        runtime_sft_config["optim"] = args.optim
     selected_model = model_path(config.get("model", {}))
     paths = stage2_paths(config)
 
