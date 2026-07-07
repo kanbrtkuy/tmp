@@ -72,6 +72,7 @@ legacy/COTPauseToken/src/utils/pause_kl_trainer.py
 scripts/run_stage2_sft.py
 legacy/COTPauseToken/scripts/training/run_4gpu_intra_pause_sft.sh
 pipelines/run_stage21_pure_1p5b_smoke.sh
+pipelines/run_stage21_pure_8b_full.sh
 ```
 
 ## Fable Review
@@ -83,6 +84,7 @@ review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_code_review_
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_code_followup_260707.md
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_review_260707.md
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_followup_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_8b_formal_pipeline_review_260707.md
 ```
 
 结论：
@@ -93,7 +95,9 @@ review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_f
 - 仍符合 Goyal et al. pause-token 的 pure repeated-token 精神；
 - 可以进入 1.5B data-prep validation 和 25-step smoke；
 - smoke/gate 入口的 strict gate blocker 已修复，Fable follow-up
-  确认为 no blocker。
+  确认为 no blocker；
+- 8B formal pipeline 的 cold checkpoint path、strict gate、failure-path
+  sync 已经 Fable follow-up 确认为 no blocker。
 
 ## 执行顺序
 
@@ -160,11 +164,18 @@ DAgger iter。
 7. 如果 1.5B 通过，再跑 8B formal：
 
 ```bash
-python scripts/run_stage2_sft.py \
-  --config configs/experiment/stage21_pause_pure_dagger_8b_full_2xa100.yaml
+bash pipelines/run_stage21_pure_8b_full.sh
 ```
 
-8. 8B checkpoint 必须跑 model-comparison eval：
+这个 8B wrapper 会依次执行 pytest、data prep、full SFT、model-comparison
+generation、strict natural exact-3/location gate、judge 和 summary。strict
+gate 在 judge 前执行；如果 natural exact-3/location 不过，pipeline 会直接
+失败，不继续烧 judge GPU。训练 checkpoint 默认从 cold path
+`/workspace/outputs/deepseek_8b_stage21_pause_pure_cot5_full_2xa100/final`
+读取，因为 Stage2 hot-checkpoint watcher 会在训练结束后把完整 output
+同步到 cold 并删除 hot copy。
+
+如果需要手动拆开 8B checkpoint 的 model-comparison eval：
 
 ```bash
 python scripts/run_model_comparison_eval.py \

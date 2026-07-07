@@ -34,6 +34,11 @@ eval:
   generation:
     generation_backend: vllm
     chunk_size: 300
+    expected_cot_offset: 5
+    pause_tokens:
+      - "<|pause|>"
+      - "<|pause|>"
+      - "<|pause|>"
     vllm:
       gpu_memory_utilization: 0.90
       max_num_seqs: 32
