@@ -72,6 +72,7 @@ def metric_for_row(
         and existing
         and existing.get("location_match") is not None
         and existing.get("pause_tokens") == pause_tokens
+        and existing.get("expected_cot_offset") == expected_cot_offset
     ):
         return existing
     return natural_pause_metrics(
@@ -143,6 +144,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min_location_match", type=float, default=None)
     parser.add_argument("--max_off_target", type=float, default=None)
     parser.add_argument("--max_malformed", type=float, default=None)
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero when the natural pause gate fails.",
+    )
     return parser.parse_args()
 
 
@@ -224,6 +230,8 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
+    if args.strict and not gate_pass:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

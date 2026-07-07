@@ -1,0 +1,104 @@
+defaults:
+  - stage2_model_comparison_eval_1p5b_stage21_pure_cot5_2xa6000.yaml
+
+run:
+  name: stage2_model_comparison_eval_deepseek_1p5b_stage21_pure_cot5_smoke_2xa6000
+  output_dir: ${COT_SAFETY_RUN_ROOT:-/workspace/cot-safety/runs}/eval/stage2_model_comparison_deepseek_1p5b_stage21_pure_cot5_smoke_2xa6000
+
+eval:
+  model_conditions:
+    - label: base_natural
+      kind: base
+      path: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Qwen-1.5B
+      generation_backend: vllm
+      insert_pause_after_cot_tokens: -1
+      expected_cot_offset: 5
+      n_insert_pauses: 0
+      batch_size: 32
+    - label: stage21_pure_cot5_natural
+      kind: sft
+      path: ${STAGE21_PURE_1P5B_SMOKE_CHECKPOINT:-/workspace/outputs/deepseek_1p5b_stage21_pause_pure_cot5_save25_max400_2xa6000/checkpoint-25}
+      generation_backend: vllm
+      insert_pause_after_cot_tokens: -1
+      expected_cot_offset: 5
+      n_insert_pauses: 0
+      pause_tokens:
+        - "<|pause|>"
+        - "<|pause|>"
+        - "<|pause|>"
+      batch_size: 32
+    - label: stage21_pure_cot5_forced
+      kind: sft
+      path: ${STAGE21_PURE_1P5B_SMOKE_CHECKPOINT:-/workspace/outputs/deepseek_1p5b_stage21_pause_pure_cot5_save25_max400_2xa6000/checkpoint-25}
+      generation_backend: vllm
+      insert_pause_after_cot_tokens: 5
+      expected_cot_offset: 5
+      n_insert_pauses: 3
+      pause_tokens:
+        - "<|pause|>"
+        - "<|pause|>"
+        - "<|pause|>"
+      batch_size: 32
+  generation:
+    generation_backend: vllm
+    chunk_size: 0
+    capability_max_new_tokens: 1024
+    safety_max_new_tokens: 1024
+    expected_cot_offset: 5
+    pause_tokens:
+      - "<|pause|>"
+      - "<|pause|>"
+      - "<|pause|>"
+  data:
+    prepared_dir: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/model_comparison_eval/deepseek_1p5b_stage21_pure_smoke
+    capability_sources:
+      - name: gsm8k
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/gsm8k/test.jsonl
+        prompt_fields: [question]
+        answer_fields: [answer]
+        answer_extractor: gsm8k
+        eval_hint: numeric
+        limit: 32
+      - name: math500
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/math500/test.jsonl
+        prompt_fields: [problem, question]
+        answer_fields: [answer, solution]
+        answer_extractor: math500
+        eval_hint: math_exact
+        limit: 32
+    safety_sources:
+      - name: strongreject
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/strongreject/validation.jsonl
+        prompt_fields: [prompt, instructions]
+        reference_label_name: unsafe
+        risk_type: strongreject_forbidden_prompt
+        limit: 32
+      - name: harmbench_standard
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/harmbench_standard/train.jsonl
+        prompt_fields: [prompt, Behavior, behavior, goal]
+        context_fields: [ContextString, context]
+        category_fields: [SemanticCategory, category]
+        reference_label_name: unsafe
+        risk_type: harmbench_behavior
+        limit: 32
+      - name: jailbreakbench
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/jailbreakbench_behaviors/harmful.jsonl
+        prompt_fields: [Goal, goal, prompt]
+        category_fields: [Category, category]
+        reference_label_name: unsafe
+        risk_type: jailbreakbench_harmful_behavior
+        limit: 32
+      - name: xstest
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/xstest/test.jsonl
+        prompt_fields: [prompt]
+        category_fields: [type, focus]
+        reference_label_name: safe
+        risk_type: exaggerated_safety_safe_prompt
+        limit: 32
+      - name: or_bench_hard
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/or_bench_hard_1k/train.jsonl
+        prompt_fields: [prompt, question, instruction]
+        category_fields: [category, type]
+        reference_label_name: safe
+        risk_type: overrefusal_hard_safe_prompt
+        limit: 32

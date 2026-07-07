@@ -61,6 +61,7 @@ Stage2 model-comparison eval：
 
 ```text
 configs/experiment/stage2_model_comparison_eval_1p5b_stage21_pure_cot5_2xa6000.yaml
+configs/experiment/stage2_model_comparison_eval_1p5b_stage21_pure_cot5_smoke_2xa6000.yaml
 configs/experiment/stage2_model_comparison_eval_8b_stage21_pure_cot5_2xa100.yaml
 ```
 
@@ -70,6 +71,7 @@ configs/experiment/stage2_model_comparison_eval_8b_stage21_pure_cot5_2xa100.yaml
 legacy/COTPauseToken/src/utils/pause_kl_trainer.py
 scripts/run_stage2_sft.py
 legacy/COTPauseToken/scripts/training/run_4gpu_intra_pause_sft.sh
+pipelines/run_stage21_pure_1p5b_smoke.sh
 ```
 
 ## Fable Review
@@ -79,6 +81,8 @@ Fable 已 review Stage2.1-pure 代码：
 ```text
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_code_review_260707.md
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_code_followup_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_review_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_followup_260707.md
 ```
 
 结论：
@@ -87,11 +91,37 @@ review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_code_followu
 - pure repeated 不会被当成 indexed；
 - stop loss 不会在第 1/2 个 pause 后误触发；
 - 仍符合 Goyal et al. pause-token 的 pure repeated-token 精神；
-- 可以进入 1.5B data-prep validation 和 25-step smoke。
+- 可以进入 1.5B data-prep validation 和 25-step smoke；
+- smoke/gate 入口的 strict gate blocker 已修复，Fable follow-up
+  确认为 no blocker。
 
 ## 执行顺序
 
-1. 在 GPU 节点跑完整测试：
+1. 在 GPU 节点跑 1.5B smoke pipeline：
+
+```bash
+bash pipelines/run_stage21_pure_1p5b_smoke.sh
+```
+
+这个 pipeline 会依次执行：
+
+- Stage2.1-pure 相关 pytest；
+- 1.5B data-prep validation；
+- 25-step rows-only smoke SFT；
+- base / natural-pause / forced-pause 三组小样本生成；
+- natural exact-3/location gate。
+
+这个 gate 是 strict gate：如果 `stage21_pure_cot5_natural` 的
+natural exact-3/location 没过阈值，pipeline 会非零退出，避免误把失败
+checkpoint 当成可继续 8B 的 checkpoint。
+
+默认不跑 judge。需要同时跑 judge / summary 时：
+
+```bash
+RUN_JUDGE=1 RUN_SUMMARY=1 bash pipelines/run_stage21_pure_1p5b_smoke.sh
+```
+
+2. 如需手动拆开执行，先跑完整测试：
 
 ```bash
 python -m pytest tests/test_stage2_pause_kl_trainer.py \
@@ -100,7 +130,7 @@ python -m pytest tests/test_stage2_pause_kl_trainer.py \
   tests/test_stage2_dagger_mix.py -q
 ```
 
-2. 1.5B data prep validation：
+3. 1.5B data prep validation：
 
 ```bash
 python scripts/run_stage2_sft.py \
@@ -108,7 +138,7 @@ python scripts/run_stage2_sft.py \
   --skip_train
 ```
 
-3. 1.5B 25-step smoke：
+4. 1.5B 25-step smoke：
 
 ```bash
 python scripts/run_stage2_sft.py \
@@ -117,19 +147,24 @@ python scripts/run_stage2_sft.py \
   --max_steps 25
 ```
 
-4. 对 smoke checkpoint 做 natural exact-3/location gate 和 capability
+5. 对 smoke checkpoint 做 natural exact-3/location gate 和 capability
    sanity。
 
-5. 如果 1.5B smoke 可行，再跑 1.5B short400 / DAgger iter1。
+注意：smoke eval 每个 dataset 默认只取 32 条，但 gate 仍继承正式阈值。
+因此 1 条 bad row 就可能让 source-wise rate 低于 `0.97`，这是有意的
+严格筛查。25-step smoke fail 不等于方法失败，只表示不能跳过后续修正或
+DAgger iter。
 
-6. 如果 1.5B 通过，再跑 8B formal：
+6. 如果 1.5B smoke 可行，再跑 1.5B short400 / DAgger iter1。
+
+7. 如果 1.5B 通过，再跑 8B formal：
 
 ```bash
 python scripts/run_stage2_sft.py \
   --config configs/experiment/stage21_pause_pure_dagger_8b_full_2xa100.yaml
 ```
 
-7. 8B checkpoint 必须跑 model-comparison eval：
+8. 8B checkpoint 必须跑 model-comparison eval：
 
 ```bash
 python scripts/run_model_comparison_eval.py \

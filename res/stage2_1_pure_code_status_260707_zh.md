@@ -36,6 +36,18 @@ Trainer：
 - 新增 1.5B / 8B Stage2.1-pure 训练配置；
 - 新增 pure DAgger pool；
 - 新增 1.5B / 8B model-comparison eval 配置。
+- 新增 1.5B smoke eval 配置，用于 25-step smoke 后快速检查
+  natural exact-3/location。
+
+Pipeline：
+
+- 新增 `pipelines/run_stage21_pure_1p5b_smoke.sh`，把 pytest、
+  data-prep validation、25-step SFT、小样本 natural/forced generation 和
+  natural exact-3/location gate 串成一个入口。
+- gate 使用 `diag_stage2_checkpoint.py --strict`，失败时 pipeline 会
+  非零退出。
+- 默认不跑 judge，避免 smoke 阶段被 judge 模型资源阻塞；可用
+  `RUN_JUDGE=1 RUN_SUMMARY=1` 打开。
 
 测试：
 
@@ -53,6 +65,19 @@ Trainer：
 - 用临时 pytest stub runner 执行相关测试函数：`26 tests OK`；
 - pure 1.5B / 8B training configs dry-run 通过；
 - pure 1.5B / 8B model-comparison eval configs dry-run 通过。
+- 1.5B smoke model-comparison eval config dry-run 通过：
+  - `generation_jobs=6`；
+  - 三个 condition：`base_natural`、`stage21_pure_cot5_natural`、
+    `stage21_pure_cot5_forced`；
+  - natural condition 不强制插入 pause；
+  - forced condition 在 `cot_4` 后 / `cot_5` 前强制插入 3 个 pure pause；
+  - `judge_jobs=9`，WildGuard 使用
+    `/workspace/models/judges/wildguard_vllm_head_dim128`。
+- Fable 对 smoke/gate 入口的补充 review 指出 strict gate 是 blocker；
+  已修复为 gate fail 时退出非零，并补充 expected-cot-offset metrics
+  reuse 校验。
+- Fable follow-up 确认 strict gate blocker 已解决，当前 smoke/gate 入口
+  无 blocker，可以 commit/push。
 
 dry-run 确认：
 
@@ -71,6 +96,8 @@ Review 文件：
 ```text
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_code_review_260707.md
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_code_followup_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_review_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_followup_260707.md
 ```
 
 Fable 结论：
@@ -97,9 +124,9 @@ Fable 结论：
 
 优先顺序：
 
-1. GPU 环境跑正式 pytest；
-2. 1.5B data-prep validation；
-3. 1.5B 25-step smoke；
-4. smoke checkpoint 的 natural exact-3/location gate；
+1. GPU 环境跑 `bash pipelines/run_stage21_pure_1p5b_smoke.sh`；
+2. 检查 smoke checkpoint 的 natural exact-3/location gate；
+3. 如果 gate 明显失败，先修 Stage2.1-pure 目标或 DAgger 负例；
+4. 如果 gate 可行，再跑 1.5B short400 / DAgger iter1；
 5. capability sanity；
-6. 再决定是否跑 1.5B short400 / DAgger iter1 / 8B full。
+6. 最后再决定是否跑 8B full。
