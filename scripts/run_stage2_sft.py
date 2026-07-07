@@ -18,6 +18,10 @@ from cot_safety.config import dump_config, load_config
 ENV_DEFAULT_RE = re.compile(r"\$\{([^}:]+):-([^}]*)\}")
 
 
+def json_compact(value: Any) -> str:
+    return json.dumps(value, separators=(",", ":"))
+
+
 def resolve_value(value: Any) -> Any:
     if isinstance(value, str):
         value = ENV_DEFAULT_RE.sub(lambda m: os.environ.get(m.group(1), m.group(2)), value)
@@ -79,6 +83,7 @@ def run_logged(
         "TF32",
         "WEIGHT_DECAY",
         "FORMAT_ONLY",
+        "FORMAT_ONLY_TRAINABLE_TOKENS",
         "PAUSE_KL_ENABLED",
         "PAUSE_KL_PAUSE_TOKENS",
         "PAUSE_KL_CONTINUATION_WEIGHT",
@@ -246,7 +251,7 @@ def data_prep_commands(
             "--pause_token",
             pause_token,
             "--pause_tokens",
-            json.dumps(pause_tokens),
+            json_compact(pause_tokens),
             "--n_pause_tokens",
             str(n_pause_tokens),
             "--cot_offset",
@@ -270,7 +275,7 @@ def data_prep_commands(
             "--pause_token",
             pause_token,
             "--pause_tokens",
-            json.dumps(pause_tokens),
+            json_compact(pause_tokens),
             "--separator",
             separator,
             "--tokenizer_path",
@@ -288,7 +293,7 @@ def data_prep_commands(
             "--pause_token",
             pause_token,
             "--pause_tokens",
-            json.dumps(pause_tokens),
+            json_compact(pause_tokens),
             "--tokenizer_path",
             tokenizer,
             "--output_json",
@@ -306,7 +311,7 @@ def data_prep_commands(
             "--pause_token",
             pause_token,
             "--pause_tokens",
-            json.dumps(pause_tokens),
+            json_compact(pause_tokens),
             "--separator",
             separator,
             "--tokenizer_path",
@@ -393,13 +398,13 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
         ]
     pause_kl_token = pause_kl_tokens[0]
     env["FORMAT_ONLY"] = str(format_only_enabled).lower()
-    env["FORMAT_ONLY_TRAINABLE_TOKENS"] = json.dumps(
+    env["FORMAT_ONLY_TRAINABLE_TOKENS"] = json_compact(
         format_only.get("trainable_tokens", pause_kl.get("trainable_tokens", pause_kl_tokens))
     )
     env["FORMAT_ONLY_INIT_TEXT"] = str(format_only.get("init_from_text", ""))
     env["PAUSE_KL_ENABLED"] = str(pause_kl_enabled).lower()
     env["PAUSE_KL_PAUSE_TOKEN"] = pause_kl_token
-    env["PAUSE_KL_PAUSE_TOKENS"] = json.dumps(pause_kl_tokens)
+    env["PAUSE_KL_PAUSE_TOKENS"] = json_compact(pause_kl_tokens)
     env["PAUSE_KL_CONTINUATION_WEIGHT"] = str(pause_kl.get("continuation_weight", 1.0))
     env["PAUSE_KL_PRE_WEIGHT"] = str(pause_kl.get("pre_weight", 0.1))
     env["PAUSE_KL_SUPPRESSION_WEIGHT"] = str(pause_kl.get("suppression_weight", 1.0))

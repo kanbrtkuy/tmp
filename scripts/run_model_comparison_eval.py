@@ -187,6 +187,9 @@ def build_generation_jobs(
         if skip_missing_models and not dry_run and not Path(path).exists():
             print(f"[skip missing model] {label}: {path}")
             continue
+        pause_tokens = condition.get("pause_tokens", gen_cfg.get("pause_tokens", []))
+        if pause_tokens:
+            pause_tokens = [str(token) for token in pause_tokens]
         common = {
             "condition": condition,
             "label": label,
@@ -200,7 +203,11 @@ def build_generation_jobs(
             "insert_pause_after_cot_tokens": int(
                 condition.get("insert_pause_after_cot_tokens", gen_cfg.get("insert_pause_after_cot_tokens", 3))
             ),
+            "expected_cot_offset": condition.get("expected_cot_offset", gen_cfg.get("expected_cot_offset")),
             "n_insert_pauses": int(condition.get("n_insert_pauses", gen_cfg.get("n_insert_pauses", 3))),
+            "pause_tokens": pause_tokens,
+            "pause_separator": str(condition.get("pause_separator", gen_cfg.get("pause_separator", ""))),
+            "generation_mode": str(condition.get("generation_mode", gen_cfg.get("generation_mode", "auto"))),
             "backend": "transformers"
             if kind == "steer"
             else str(condition.get("generation_backend", gen_cfg.get("generation_backend", "transformers"))),
@@ -293,6 +300,8 @@ def generation_cmd(job: dict[str, Any], config: dict[str, Any]) -> list[str]:
         str(job["forced_prefix"]),
         "--insert_pause_after_cot_tokens",
         str(job["insert_pause_after_cot_tokens"]),
+        "--generation_mode",
+        str(job["generation_mode"]),
         "--n_insert_pauses",
         str(job["n_insert_pauses"]),
         "--torch_dtype",
@@ -300,6 +309,12 @@ def generation_cmd(job: dict[str, Any], config: dict[str, Any]) -> list[str]:
         "--generation_backend",
         str(job.get("backend", "transformers")),
     ]
+    if job.get("expected_cot_offset") is not None:
+        cmd.extend(["--expected_cot_offset", str(job["expected_cot_offset"])])
+    if job.get("pause_tokens"):
+        cmd.extend(["--pause_tokens", json.dumps(job["pause_tokens"], separators=(",", ":"))])
+    if job.get("pause_separator"):
+        cmd.extend(["--pause_separator", str(job["pause_separator"])])
     if job.get("start_index") is not None:
         cmd.extend(["--start_index", str(job["start_index"])])
     if job.get("end_index") is not None:

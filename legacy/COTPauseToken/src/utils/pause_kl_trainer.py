@@ -162,7 +162,10 @@ class PauseKLSFTTrainer(SFTTrainer):
         self.pause_head_enabled = bool(self.pause_head_cfg.get("enabled", False))
         self.pause_head: torch.nn.Module | None = None
         if self.pause_head_enabled:
-            self._attach_pause_head()
+            raise NotImplementedError(
+                "pause_head.enabled=true is disabled until generation-time application "
+                "and checkpoint loading are implemented. Use rows-only Stage2.1 first."
+            )
         self.temperature = float(self.pause_kl_cfg.get("temperature", 1.0))
         self.max_kl_tokens_per_example = int(self.pause_kl_cfg.get("max_kl_tokens_per_example", 256))
         self.suppression_chunk_size = int(self.pause_kl_cfg.get("suppression_chunk_size", 1024))
@@ -496,6 +499,11 @@ class PauseKLSFTTrainer(SFTTrainer):
         masked[:, pause_ids] = torch.finfo(masked.dtype).min
         return masked.max(dim=-1).values
 
+    def _competitor_max_except_target(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        masked = logits.float().clone()
+        masked.scatter_(1, targets.view(-1, 1), torch.finfo(masked.dtype).min)
+        return masked.max(dim=-1).values
+
     def _emit_margin_loss(
         self,
         logits: torch.Tensor,
@@ -503,8 +511,9 @@ class PauseKLSFTTrainer(SFTTrainer):
         pause_ids: torch.Tensor,
     ) -> torch.Tensor:
         target_logits = logits.float().gather(1, targets.view(-1, 1)).squeeze(1)
-        non_pause_max = self._non_pause_max(logits, pause_ids)
-        return F.softplus(non_pause_max - target_logits + self.emit_margin).mean()
+        del pause_ids
+        competitor_max = self._competitor_max_except_target(logits, targets)
+        return F.softplus(competitor_max - target_logits + self.emit_margin).mean()
 
     def _pause_margin_suppression(self, logits: torch.Tensor, pause_ids: torch.Tensor) -> torch.Tensor:
         pause_logits = logits.float().index_select(1, pause_ids)

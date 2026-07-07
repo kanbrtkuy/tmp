@@ -118,6 +118,8 @@ def extended_pause_metrics(
 
 
 def generation_mode(args: argparse.Namespace) -> str:
+    if args.generation_mode != "auto":
+        return args.generation_mode
     if args.model_kind in {"sft", "steer"} and args.insert_pause_after_cot_tokens >= 0:
         return "forced_pause"
     return "natural"
@@ -323,7 +325,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bos_token", default=DEEPSEEK_BOS_TOKEN)
     parser.add_argument("--user_template", default=DEEPSEEK_USER_TEMPLATE)
     parser.add_argument("--assistant_template", default=DEEPSEEK_ASSISTANT_TEMPLATE)
+    parser.add_argument(
+        "--generation_mode",
+        choices=("auto", "natural", "forced_pause"),
+        default="auto",
+        help="Use natural for unconstrained Stage2 checks; forced_pause is the explicit control.",
+    )
     parser.add_argument("--insert_pause_after_cot_tokens", type=int, default=3)
+    parser.add_argument("--expected_cot_offset", type=int, default=None)
     parser.add_argument("--n_insert_pauses", type=int, default=3)
     parser.add_argument("--pause_token", default=steer.PAUSE_TOKEN)
     parser.add_argument(
@@ -355,6 +364,8 @@ def main() -> None:
         raise SystemExit("--generation_backend vllm is not supported for --model_kind steer")
     if args.model_kind == "steer" and not args.delta_checkpoint:
         raise SystemExit("--delta_checkpoint is required for --model_kind steer")
+    if args.generation_mode == "forced_pause" and args.insert_pause_after_cot_tokens < 0:
+        raise SystemExit("--generation_mode forced_pause requires --insert_pause_after_cot_tokens >= 0")
     import torch
     from transformers import set_seed
 
@@ -382,6 +393,9 @@ def main() -> None:
         except Exception:
             metric_tokenizer = None
     gen_mode = generation_mode(args)
+    expected_cot_offset = args.expected_cot_offset
+    if expected_cot_offset is None and gen_mode == "forced_pause":
+        expected_cot_offset = args.insert_pause_after_cot_tokens
     eos_token_text = getattr(metric_tokenizer, "eos_token", None)
     pause_insert_text = pause_chain_text(
         pause_token=args.pause_token,
@@ -406,7 +420,7 @@ def main() -> None:
                 for row in batch
             ]
             inserted_prefixes = ["" for _ in batch]
-            if args.model_kind in {"sft", "steer"} and args.insert_pause_after_cot_tokens >= 0:
+            if args.model_kind in {"sft", "steer"} and gen_mode == "forced_pause":
                 set_seed(args.seed + global_start)
                 if args.insert_pause_after_cot_tokens > 0:
                     prefix_args = argparse.Namespace(**vars(args))
@@ -460,6 +474,7 @@ def main() -> None:
                         "layer": args.layer,
                         "generated": generated,
                         "generated_for_judge": strip_configured_pause_tokens(generated, args.pause_tokens),
+                        "conditioned_prompt": clean_text(row["prompt"]) + task_suffix(row),
                         "inserted_prefix": inserted,
                         "inserted_pause_count": sum(inserted.count(token) for token in set(args.pause_tokens)),
                         "pause_metrics": extended_pause_metrics(
@@ -469,7 +484,7 @@ def main() -> None:
                             pause_token=args.pause_token,
                             n_pause_tokens=args.n_insert_pauses,
                             separator=args.pause_separator,
-                            expected_cot_offset=args.insert_pause_after_cot_tokens if args.model_kind in {"sft", "steer"} else None,
+                            expected_cot_offset=expected_cot_offset,
                         ),
                         "natural_pause_metrics": extended_pause_metrics(
                             natural_generated,
@@ -478,7 +493,7 @@ def main() -> None:
                             pause_token=args.pause_token,
                             n_pause_tokens=args.n_insert_pauses,
                             separator=args.pause_separator,
-                            expected_cot_offset=args.insert_pause_after_cot_tokens if args.model_kind in {"sft", "steer"} else None,
+                            expected_cot_offset=expected_cot_offset,
                         ),
                         "hook_stats": hook_stat,
                         "predicted_answer": pred,
@@ -492,7 +507,8 @@ def main() -> None:
                             "bos_token": args.bos_token,
                             "user_template": args.user_template,
                             "assistant_template": args.assistant_template,
-                            "insert_pause_after_cot_tokens": args.insert_pause_after_cot_tokens if args.model_kind in {"sft", "steer"} else -1,
+                            "insert_pause_after_cot_tokens": args.insert_pause_after_cot_tokens if gen_mode == "forced_pause" else -1,
+                            "expected_cot_offset": expected_cot_offset,
                             "n_insert_pauses": args.n_insert_pauses if args.model_kind in {"sft", "steer"} else 0,
                             "pause_tokens": args.pause_tokens if args.model_kind in {"sft", "steer"} else [],
                             "pause_separator": args.pause_separator if args.model_kind in {"sft", "steer"} else "",
@@ -516,6 +532,8 @@ def main() -> None:
         "start_index": args.start_index,
         "end_index": args.end_index,
         "generation_backend": args.generation_backend,
+        "generation_mode": gen_mode,
+        "expected_cot_offset": expected_cot_offset,
         "pause_tokens": args.pause_tokens,
         "pause_separator": args.pause_separator,
     }

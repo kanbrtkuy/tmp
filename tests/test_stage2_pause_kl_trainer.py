@@ -17,6 +17,14 @@ def load_pause_kl_module():
         trl_stub = types.ModuleType("trl")
 
         class SFTTrainer:  # pragma: no cover - only used when trl is absent
+            def __init__(self, *args, **kwargs):
+                del args
+                self.model = kwargs.get("model")
+                self.tokenizer = kwargs.get("tokenizer")
+                self.processing_class = kwargs.get("processing_class")
+                self.args = kwargs.get("args") or SimpleNamespace(weight_decay=0.0, logging_steps=100)
+                self.state = SimpleNamespace(global_step=0)
+
             def add_callback(self, callback):
                 self.callbacks = getattr(self, "callbacks", [])
                 self.callbacks.append(callback)
@@ -76,6 +84,18 @@ class TinyLM(torch.nn.Module):
         return SimpleNamespace(**payload)
 
 
+class StubTokenizer:
+    pad_token_id = 0
+    eos_token_id = 1
+    unk_token_id = 99
+
+    def __init__(self):
+        self.ids = {"<|pause_1|>": 4, "<|pause_2|>": 5, "<|pause_3|>": 6}
+
+    def convert_tokens_to_ids(self, token):
+        return self.ids.get(token, self.unk_token_id)
+
+
 def bare_trainer(pause_token_id: int = 6):
     trainer = PauseKLSFTTrainer.__new__(PauseKLSFTTrainer)
     trainer.pause_token_id = pause_token_id
@@ -105,6 +125,28 @@ def bare_trainer(pause_token_id: int = 6):
     trainer._pause_row_initial = {}
     trainer.log = lambda payload: None
     return trainer
+
+
+def test_init_resolves_distinct_pause_ids_with_rows_only_callbacks():
+    model = TinyLM(vocab_size=8, hidden_size=6)
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    model.get_input_embeddings().weight.requires_grad_(True)
+    model.get_output_embeddings().weight.requires_grad_(True)
+
+    trainer = PauseKLSFTTrainer(
+        model=model,
+        tokenizer=StubTokenizer(),
+        args=SimpleNamespace(weight_decay=0.0, logging_steps=100),
+        pause_kl={
+            "pause_tokens": ["<|pause_1|>", "<|pause_2|>", "<|pause_3|>"],
+            "post_step_invariant_check": True,
+        },
+    )
+
+    assert trainer.pause_token_ids == (4, 5, 6)
+    assert trainer.pause_token_id_set == {4, 5, 6}
+    assert trainer.callbacks
 
 
 def test_pause_stripped_batch_preserves_mapping_and_padding():
@@ -157,6 +199,24 @@ def test_select_kl_pairs_aligns_predicted_tokens_after_pause():
     assert (0, 4, 2) in post_pairs
     assert all(pair[0] == 1 for pair in pre_pairs)
     for batch_idx, student_idx, teacher_idx in post_pairs + pre_pairs:
+        assert input_ids[batch_idx, student_idx + 1].item() == teacher_ids[batch_idx, teacher_idx + 1].item()
+
+
+def test_select_kl_pairs_aligns_after_distinct_pause_chain():
+    trainer = bare_trainer(pause_token_id=4)
+    trainer.pause_token_ids = (4, 5, 6)
+    trainer.pause_token_id_set = {4, 5, 6}
+    input_ids = torch.tensor([[10, 11, 4, 5, 6, 12, 13]])
+    attention_mask = torch.ones_like(input_ids)
+    labels = torch.tensor([[-100, -100, 4, 5, 6, 12, 13]])
+
+    teacher_ids, _, mappings = trainer._pause_stripped_batch(input_ids, attention_mask)
+    post_pairs, pre_pairs = trainer._select_kl_pairs(input_ids, labels, attention_mask, mappings)
+
+    assert teacher_ids.tolist() == [[10, 11, 12, 13]]
+    assert pre_pairs == []
+    assert (0, 5, 2) in post_pairs
+    for batch_idx, student_idx, teacher_idx in post_pairs:
         assert input_ids[batch_idx, student_idx + 1].item() == teacher_ids[batch_idx, teacher_idx + 1].item()
 
 
@@ -220,6 +280,21 @@ def test_distinct_pause_chain_masks_stop_after_pause3():
     assert torch.isfinite(suppression)
     assert torch.isfinite(emit_margin)
     assert torch.isfinite(stop_loss)
+
+
+def test_emit_margin_competes_against_rival_pause_tokens():
+    trainer = bare_trainer(pause_token_id=4)
+    trainer.pause_token_ids = (4, 5, 6)
+    trainer.pause_token_id_set = {4, 5, 6}
+    trainer.emit_margin = 0.0
+    logits = torch.zeros(1, 8)
+    logits[0, 4] = 3.0  # rival p1
+    logits[0, 5] = 1.0  # target p2
+    logits[0, 2] = 0.5  # best non-pause
+
+    loss = trainer._emit_margin_loss(logits, torch.tensor([5]), trainer._pause_ids_tensor(logits.device))
+
+    assert loss.item() == pytest.approx(F.softplus(torch.tensor(2.0)).item(), abs=1e-6)
 
 
 def test_rows_only_guard_rejects_weight_decay_and_body_params():

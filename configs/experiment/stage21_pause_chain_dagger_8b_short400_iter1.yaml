@@ -1,0 +1,22 @@
+defaults:
+  - stage21_pause_chain_dagger_8b_short400.yaml
+
+run:
+  name: stage21_pause_chain_dagger_deepseek_8b_cot5_iter1_short400_2xa100
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_stage21_pause_chain_cot5_iter1_short400_2xa100
+
+data:
+  recipe_name: stage21_dagger_iter1_pause_chain
+  prepared_root: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/stage21_dagger_iter1_pause_chain
+
+sft:
+  intra_dir_name: intra_pause_chain_cot5_dagger_iter1
+  tags:
+    - deepseek_8b
+    - stage21_pause_chain
+    - dagger_iter1
+    - after_cot4_before_cot5
+    - margin_stop_suppress
+    - rows_only
+    - short400
+    - a100_2x

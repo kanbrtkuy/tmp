@@ -22,5 +22,6 @@ sft:
 
 stage21_selection:
   min_exact_chain: 0.99
+  min_location_match: 0.99
   max_off_target: 0.005
   max_malformed: 0.005

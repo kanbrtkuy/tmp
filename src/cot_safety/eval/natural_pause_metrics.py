@@ -96,6 +96,8 @@ def strip_pause_tokens(text: str, pause_tokens: Sequence[str]) -> str:
 def count_tokens(text: str, tokenizer: Any | None = None) -> int | None:
     if not text:
         return 0
+    if tokenizer is None:
+        return None
     if tokenizer is not None:
         try:
             encoded = tokenizer(text, add_special_tokens=False)
@@ -106,7 +108,36 @@ def count_tokens(text: str, tokenizer: Any | None = None) -> int | None:
                 return len(input_ids)
         except Exception:
             pass
-    return len(text.split())
+    return None
+
+
+def first_nonspace_token_index(tokenizer: Any, token_ids: Sequence[int]) -> int | None:
+    for idx, token_id in enumerate(token_ids):
+        piece = tokenizer.decode([token_id], skip_special_tokens=False)
+        if str(piece).strip():
+            return idx
+    return None
+
+
+def token_index_after_leading_space_skip(text: str, tokenizer: Any | None = None) -> int | None:
+    if not text:
+        return 0
+    if tokenizer is None:
+        return None
+    try:
+        encoded = tokenizer(text, add_special_tokens=False)
+        token_ids = getattr(encoded, "input_ids", None)
+        if token_ids is None and isinstance(encoded, dict):
+            token_ids = encoded.get("input_ids")
+        if token_ids is None:
+            return None
+        token_ids = list(token_ids)
+        first_idx = first_nonspace_token_index(tokenizer, token_ids)
+        if first_idx is None:
+            return 0
+        return len(token_ids) - first_idx
+    except Exception:
+        return None
 
 
 def natural_pause_metrics(
@@ -152,12 +183,12 @@ def natural_pause_metrics(
     first_pause_token_index = None
     if first_pause >= 0 and think_start >= 0 and first_pause > think_start:
         prefix_inside_think = text[think_start + len(THINK_OPEN) : first_pause]
-        first_pause_token_index = count_tokens(prefix_inside_think, tokenizer)
+        first_pause_token_index = token_index_after_leading_space_skip(prefix_inside_think, tokenizer)
 
     exact_chain = len(spans) == 1 and spans[0].tokens == expected_tokens
     location_match = (
         first_pause_token_index == expected_cot_offset
-        if expected_cot_offset is not None
+        if expected_cot_offset is not None and first_pause_token_index is not None
         else None
     )
     malformed = bool(spans) and not exact_chain

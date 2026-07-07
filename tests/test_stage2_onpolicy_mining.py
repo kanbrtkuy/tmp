@@ -54,8 +54,10 @@ def test_build_onpolicy_row_strips_malformed_pause_and_expert_relabels():
     row = {
         "id": "r1",
         "prompt": "solve",
+        "conditioned_prompt": "solve\n\nSolve the problem step by step. Put the final numeric answer after ####.",
         "generated": "<think> t0 <|pause_3|>t1 t2 t3 t4 t5 </think> answer",
         "dataset": "gsm8k_train",
+        "split": "train",
     }
 
     out = module.build_onpolicy_row(
@@ -69,5 +71,33 @@ def test_build_onpolicy_row_strips_malformed_pause_and_expert_relabels():
 
     assert out["output"] == "<think> t0 t1 t2 t3 t4 <|pause_1|><|pause_2|><|pause_3|>t5 </think> answer"
     assert out["sample_weight"] == 4.0
+    assert out["input"].endswith("####.")
     assert out["metadata"]["onpolicy_violation"] is True
     assert out["source"] == "gsm8k_train"
+
+
+def test_build_onpolicy_row_rejects_non_train_split_when_present():
+    module = load_mining_module()
+    template = ChatTemplate(name="test")
+    spec = PauseSpec(
+        pause_tokens=("<|pause_1|>", "<|pause_2|>", "<|pause_3|>"),
+        n_pause_tokens=3,
+        cot_offset=5,
+    )
+
+    try:
+        module.build_onpolicy_row(
+            {
+                "id": "r2",
+                "prompt": "solve",
+                "generated": "<think> t0 t1 t2 t3 t4 t5 </think> answer",
+                "split": "test",
+            },
+            tokenizer=DummyTokenizer(),
+            template=template,
+            spec=spec,
+        )
+    except ValueError as exc:
+        assert "non_train_split" in str(exc)
+    else:
+        raise AssertionError("expected non-train split rejection")

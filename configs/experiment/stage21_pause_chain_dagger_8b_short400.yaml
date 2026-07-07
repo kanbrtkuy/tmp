@@ -77,5 +77,6 @@ stage21_selection:
     - math500_dev
     - safety_dev
   min_exact_chain: 0.97
+  min_location_match: 0.97
   max_off_target: 0.005
   max_malformed: 0.005

@@ -45,6 +45,36 @@ def materialize_weights(rows: list[dict[str, Any]], max_duplication: int) -> lis
     return expanded
 
 
+def normalize_sft_row(row: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "id": str(row.get("id") or row.get("sample_id") or row.get("uuid") or ""),
+        "input": str(row.get("input") or row.get("prompt") or ""),
+        "output": str(row.get("output") or ""),
+        "source": str(row.get("source") or row.get("dataset") or "unknown"),
+    }
+    optional_scalars = (
+        "domain",
+        "upstream_source",
+        "empty_think",
+        "has_ground_truth_solution",
+        "ground_truth_solution",
+        "n_pause_tokens",
+        "pause_style",
+        "pause_cot_offset",
+    )
+    for key in optional_scalars:
+        if row.get(key) is not None:
+            value = row[key]
+            out[key] = value if isinstance(value, (str, int, float, bool)) else json.dumps(value, ensure_ascii=False)
+    if row.get("pause_tokens") is not None:
+        out["pause_tokens_json"] = json.dumps(row["pause_tokens"], ensure_ascii=False)
+    if row.get("metadata") is not None:
+        out["metadata_json"] = json.dumps(row["metadata"], ensure_ascii=False, sort_keys=True)
+    if row.get("sample_weight") is not None:
+        out["sample_weight"] = float(row["sample_weight"])
+    return out
+
+
 def sample_rows(rows: list[dict[str, Any]], count: int, rng: random.Random) -> list[dict[str, Any]]:
     if count <= 0 or not rows:
         return []
@@ -68,10 +98,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--static_dataset_dir", required=True)
     parser.add_argument("--mined_jsonl", required=True)
     parser.add_argument("--output_dir", required=True)
+    parser.add_argument(
+        "--intra_dir_name",
+        default="",
+        help="If set, treat output_dir as prepared_root and write train/val/test under output_dir/intra_dir_name plus root manifest.json.",
+    )
     parser.add_argument("--static_fraction", type=float, default=0.70)
     parser.add_argument("--seed", type=int, default=260707)
     parser.add_argument("--max_duplication", type=int, default=8)
-    parser.add_argument("--copy_val_test", action="store_true", default=True)
+    parser.add_argument("--copy_val_test", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
 
@@ -81,25 +116,29 @@ def main() -> None:
         raise SystemExit("--static_fraction must be in (0, 1)")
     rng = random.Random(args.seed)
     static_dir = Path(args.static_dataset_dir)
-    output_dir = Path(args.output_dir)
-    static_train = read_json(static_dir / "train.json")
+    output_root = Path(args.output_dir)
+    output_dir = output_root / args.intra_dir_name if args.intra_dir_name else output_root
+    static_train = [normalize_sft_row(row) for row in read_json(static_dir / "train.json")]
     mined_rows = read_jsonl(Path(args.mined_jsonl))
-    expanded_mined = materialize_weights(mined_rows, args.max_duplication)
+    expanded_mined = [normalize_sft_row(row) for row in materialize_weights(mined_rows, args.max_duplication)]
     target_onpolicy = int(round(len(static_train) * (1.0 - args.static_fraction) / args.static_fraction))
     sampled_onpolicy = sample_rows(expanded_mined, target_onpolicy, rng)
     train_rows = list(static_train) + sampled_onpolicy
     rng.shuffle(train_rows)
 
     write_json(output_dir / "train.json", train_rows)
-    for split in ("val", "test"):
-        src = static_dir / f"{split}.json"
-        if src.exists():
-            write_json(output_dir / f"{split}.json", read_json(src))
+    if args.copy_val_test:
+        for split in ("val", "test"):
+            src = static_dir / f"{split}.json"
+            if src.exists():
+                write_json(output_dir / f"{split}.json", [normalize_sft_row(row) for row in read_json(src)])
 
     manifest = {
         "static_dataset_dir": str(static_dir),
         "mined_jsonl": args.mined_jsonl,
         "output_dir": str(output_dir),
+        "prepared_root": str(output_root),
+        "intra_dir_name": args.intra_dir_name,
         "seed": args.seed,
         "static_fraction": args.static_fraction,
         "target_onpolicy_rows": target_onpolicy,
@@ -110,6 +149,14 @@ def main() -> None:
         "sampled_onpolicy_summary": summarize(sampled_onpolicy),
     }
     write_json(output_dir / "manifest.json", manifest)
+    if args.intra_dir_name:
+        root_manifest = {
+            "prepared_root": str(output_root),
+            "intra_dir_name": args.intra_dir_name,
+            "variants": {args.intra_dir_name: manifest},
+            "dagger_mix": manifest,
+        }
+        write_json(output_root / "manifest.json", root_manifest)
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
 

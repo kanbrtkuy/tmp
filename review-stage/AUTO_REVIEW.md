@@ -50,3 +50,45 @@ Full response:
 
 Continuing to Round 2: push implementation to `tmp`, then ask Fable-5
 extra-high to review the full code and identify any blockers before GPU rerun.
+
+## Round 2 (2026-07-07)
+
+### Assessment
+
+External reviewer: Claude Fable-5, extra-high effort.
+
+- Verdict: almost
+- Score: 7/10
+- Raw response:
+  `review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_code_review_260707.md`
+
+### Key Criticisms
+
+- Location metric was not aligned with the formatter because it did not skip
+  leading whitespace tokens and diagnostics lacked tokenizer-aware counting.
+- DAgger mining dropped conditioned prompt suffixes and mixer output was not
+  directly wired to `run_stage2_sft.py`'s prepared-root layout.
+- Emit margin compared pause targets only against non-pause vocab, so rival
+  pause tokens were not margin-separated.
+- `pause_head` fallback was unsafe because generation did not apply it.
+
+### Actions Taken
+
+- Made natural pause location metrics tokenizer-aware and leading-whitespace
+  aligned with the formatter; no-tokenizer location is now `None`, so gates
+  fail rather than silently word-counting.
+- Added tokenizer/config support to `diag_stage2_checkpoint.py`, including
+  `min_location_match` and default recomputation of metrics.
+- Added explicit `generation_mode` and independent `expected_cot_offset` to the
+  eval harness and runner; natural mode no longer depends on forced insertion
+  args.
+- Preserved `conditioned_prompt` in eval outputs and mining rows.
+- Made DAgger mixer emit `prepared_root/intra_dir_name` layout plus root
+  manifest; added iter1 configs.
+- Stabilized mixed row schema and stringified ids/metadata.
+- Changed emit margin to compete against all tokens except the target token,
+  including rival pause tokens.
+- Hard-failed `pause_head.enabled=true` until generation-time application exists.
+- Added regression tests for leading-newline location, DAgger mix layout,
+  conditioned prompt preservation, distinct KL alignment, and rival-pause emit
+  margin.

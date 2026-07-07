@@ -62,7 +62,7 @@ def row_text(row: dict[str, Any], generation_field: str) -> str:
 
 
 def row_prompt(row: dict[str, Any]) -> str:
-    for key in ("input", "prompt", "question", "instruction"):
+    for key in ("conditioned_prompt", "input", "prompt", "question", "instruction"):
         value = row.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -84,7 +84,11 @@ def build_onpolicy_row(
     generation_field: str = "generated",
     clean_weight: float = 1.0,
     violation_weight_value: float = 4.0,
+    require_train_split: bool = True,
 ) -> dict[str, Any]:
+    split = row.get("split")
+    if require_train_split and split is not None and str(split).lower() not in {"train", "training"}:
+        raise ValueError(f"non_train_split:{split}")
     generated = row_text(row, generation_field)
     observed_metrics = natural_pause_metrics(
         generated,
@@ -98,9 +102,10 @@ def build_onpolicy_row(
     stripped = strip_pause_tokens(generated, spec)
     expert_output, expert_info = expert_relabel_pause_output(stripped, tokenizer, template, spec)
     weight = violation_weight(observed_metrics, clean_weight, violation_weight_value)
+    row_id = row.get("id") or row.get("sample_id") or row.get("uuid")
     out = {
-        "id": row.get("id") or row.get("sample_id") or row.get("uuid"),
-        "input": row.get("input") or row_prompt(row),
+        "id": str(row_id) if row_id is not None else None,
+        "input": row_prompt(row),
         "output": expert_output,
         "source": row.get("source") or row.get("dataset") or "onpolicy_pause_mined",
         "n_pause_tokens": len(spec.pause_tokens) if spec.pause_tokens else spec.n_pause_tokens,
@@ -149,6 +154,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--think_close", default="</think>")
     parser.add_argument("--clean_weight", type=float, default=1.0)
     parser.add_argument("--violation_weight", type=float, default=4.0)
+    parser.add_argument("--allow_non_train_split", action="store_true")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--summary_json", default="")
     return parser.parse_args()
@@ -183,6 +189,7 @@ def main() -> None:
                     generation_field=args.generation_field,
                     clean_weight=args.clean_weight,
                     violation_weight_value=args.violation_weight,
+                    require_train_split=not args.allow_non_train_split,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - row-level mining should keep going.
