@@ -1,0 +1,83 @@
+defaults:
+  - stage2_intra_pause_kl_transparent_emit_1p5b_cot5_save25_max400_2xa6000.yaml
+
+run:
+  name: stage21_pause_pure_dagger_deepseek_1p5b_cot5_save25_max400_2xa6000
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_1p5b_stage21_pause_pure_cot5_save25_max400_2xa6000
+
+data:
+  recipe_name: stage21_trusted_cot_18k_pause_pure
+  prepared_root: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/stage21_trusted_cot_18k_pause_pure
+
+sft:
+  method: kl_transparent_emit
+  cot_offset: 5
+  n_pause_tokens: 3
+  pause_token: "<|pause|>"
+  pause_tokens:
+    - "<|pause|>"
+    - "<|pause|>"
+    - "<|pause|>"
+  intra_dir_name: intra_pause_pure_cot5
+  tags:
+    - deepseek_1p5b
+    - stage21_pause_pure
+    - after_cot4_before_cot5
+    - margin_stop_suppress
+    - rows_only
+  learning_rate: 1.0e-3
+  num_train_epochs: 1.0
+  max_steps: 400
+  save_steps: 25
+  eval_steps: 50
+  save_total_limit: 20
+  load_best_model_at_end: false
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  early_stopping:
+    enabled: false
+  format_only:
+    enabled: true
+    trainable_tokens:
+      - "<|pause|>"
+    init_from_text: ""
+  pause_kl:
+    enabled: true
+    pause_token: "<|pause|>"
+    n_pause_tokens: 3
+    pause_tokens:
+      - "<|pause|>"
+      - "<|pause|>"
+      - "<|pause|>"
+    continuation_weight: 1.0
+    pre_weight: 0.0
+    suppression_weight: 1.0
+    emit_weight: 0.3
+    emit_margin_weight: 0.3
+    stop_weight: 2.0
+    suppression_loss_type: margin
+    emit_margin: 3.0
+    suppression_margin: 5.0
+    pause_head:
+      enabled: false
+      hidden_size: 64
+      dropout: 0.0
+    temperature: 1.0
+    max_kl_tokens_per_example: 256
+    suppression_chunk_size: 1024
+    require_pause_before_continuation_kl: true
+    assert_rows_only: true
+    post_step_invariant_check: true
+    invariant_check_interval_steps: 25
+    teacher_eval_mode: true
+
+stage21_selection:
+  metric: natural_generation_min_exact_chain
+  dev_sets:
+    - gsm8k_dev
+    - math500_dev
+    - safety_dev
+  min_exact_chain: 0.97
+  min_location_match: 0.97
+  max_off_target: 0.005
+  max_malformed: 0.005

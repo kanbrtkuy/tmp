@@ -123,14 +123,28 @@ class PauseKLSFTTrainer(SFTTrainer):
             raise ValueError("PauseKLSFTTrainer requires a tokenizer/processing_class")
 
         raw_pause_tokens = self.pause_kl_cfg.get("pause_tokens")
+        configured_n_pause_tokens = int(self.pause_kl_cfg.get("n_pause_tokens", 0) or 0)
         if raw_pause_tokens:
-            self.pause_tokens = [str(token) for token in raw_pause_tokens]
+            pause_chain_tokens = [str(token) for token in raw_pause_tokens]
+            if (
+                configured_n_pause_tokens > 0
+                and len(pause_chain_tokens) not in {1, configured_n_pause_tokens}
+            ):
+                raise ValueError(
+                    "pause_kl.pause_tokens length must be 1 or match "
+                    f"pause_kl.n_pause_tokens={configured_n_pause_tokens}; "
+                    f"got {len(pause_chain_tokens)} tokens."
+                )
+            if len(pause_chain_tokens) == 1 and configured_n_pause_tokens > 1:
+                pause_chain_tokens = pause_chain_tokens * configured_n_pause_tokens
         else:
-            self.pause_tokens = [str(self.pause_kl_cfg.get("pause_token", "<|pause|>"))]
-        if not self.pause_tokens:
+            pause_token = str(self.pause_kl_cfg.get("pause_token", "<|pause|>"))
+            pause_chain_tokens = [pause_token] * max(1, configured_n_pause_tokens)
+        if not pause_chain_tokens:
             raise ValueError("PauseKLSFTTrainer requires at least one pause token")
+        self.pause_tokens = pause_chain_tokens
         self.pause_token = self.pause_tokens[0]
-        pause_token_ids: list[int] = []
+        pause_chain_token_ids: list[int] = []
         for pause_token in self.pause_tokens:
             pause_token_id = tokenizer.convert_tokens_to_ids(pause_token)
             if pause_token_id is None:
@@ -138,8 +152,9 @@ class PauseKLSFTTrainer(SFTTrainer):
             pause_token_id = int(pause_token_id)
             if pause_token_id < 0 or pause_token_id == getattr(tokenizer, "unk_token_id", None):
                 raise ValueError(f"Unknown pause token for PauseKLSFTTrainer: {pause_token!r}")
-            pause_token_ids.append(pause_token_id)
-        self.pause_token_ids = tuple(pause_token_ids)
+            pause_chain_token_ids.append(pause_token_id)
+        self.pause_chain_token_ids = tuple(pause_chain_token_ids)
+        self.pause_token_ids = tuple(dict.fromkeys(pause_chain_token_ids))
         self.pause_token_id = self.pause_token_ids[0]
         self.pause_token_id_set = set(self.pause_token_ids)
 
@@ -549,13 +564,14 @@ class PauseKLSFTTrainer(SFTTrainer):
         contexts: torch.Tensor,
         valid_mask: torch.Tensor,
     ) -> torch.Tensor:
-        if len(self.pause_token_ids) <= 1:
-            return valid_mask & contexts.eq(self.pause_token_id)
         mask = torch.zeros_like(valid_mask, dtype=torch.bool)
-        width = len(self.pause_token_ids)
+        chain_ids = getattr(self, "pause_chain_token_ids", self.pause_token_ids)
+        width = len(chain_ids)
+        if width <= 0:
+            return mask
         if contexts.shape[1] < width:
             return mask
-        expected = torch.tensor(self.pause_token_ids, device=contexts.device, dtype=contexts.dtype)
+        expected = torch.tensor(chain_ids, device=contexts.device, dtype=contexts.dtype)
         for end_pos in range(width - 1, contexts.shape[1]):
             window = contexts[:, end_pos - width + 1 : end_pos + 1]
             mask[:, end_pos] = window.eq(expected.view(1, -1)).all(dim=1)

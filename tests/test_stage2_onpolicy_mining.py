@@ -76,6 +76,38 @@ def test_build_onpolicy_row_strips_malformed_pause_and_expert_relabels():
     assert out["source"] == "gsm8k_train"
 
 
+def test_build_onpolicy_row_relabels_to_pure_repeated_pause_tokens():
+    module = load_mining_module()
+    template = ChatTemplate(name="test")
+    spec = PauseSpec(
+        pause_token="<|pause|>",
+        pause_tokens=("<|pause|>", "<|pause|>", "<|pause|>"),
+        n_pause_tokens=3,
+        cot_offset=5,
+    )
+    row = {
+        "id": "pure1",
+        "conditioned_prompt": "solve",
+        "generated": "<think> t0 <|pause|><|pause|>t1 t2 t3 t4 t5 </think> answer",
+        "dataset": "gsm8k_train",
+        "split": "train",
+    }
+
+    out = module.build_onpolicy_row(
+        row,
+        tokenizer=DummyTokenizer(),
+        template=template,
+        spec=spec,
+        clean_weight=1.0,
+        violation_weight_value=4.0,
+    )
+
+    assert out["output"] == "<think> t0 t1 t2 t3 t4 <|pause|><|pause|><|pause|>t5 </think> answer"
+    assert out["pause_tokens"] == ["<|pause|>", "<|pause|>", "<|pause|>"]
+    assert out["sample_weight"] == 4.0
+    assert out["metadata"]["onpolicy_violation"] is True
+
+
 def test_build_onpolicy_row_rejects_non_train_split_when_present():
     module = load_mining_module()
     template = ChatTemplate(name="test")

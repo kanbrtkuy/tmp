@@ -1,0 +1,35 @@
+name: stage21_pure_dagger_pool
+description: Train-side prompt pools for Stage2.1-pure on-policy pause-emission relabeling.
+notes:
+  - Do not mine from final eval/test splits.
+  - Strip model-emitted pauses, then reinsert three identical pure pause tokens after cot_4 / before cot_5.
+  - Use natural-generation exact-chain metrics for checkpoint selection, not teacher-forced eval loss.
+
+prompt_pools:
+  sft_source:
+    path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/trusted_cot_18k/trusted_cot_raw.jsonl
+    split: train
+  gsm8k_train:
+    path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/capability/gsm8k_train_prompts.jsonl
+    split: train
+  math_train:
+    path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/capability/math_train_prompts.jsonl
+    split: train
+  safety_train:
+    path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/stage1/paired_freeze/train_prompts.jsonl
+    split: train
+
+expert_relabel:
+  pause_token: "<|pause|>"
+  n_pause_tokens: 3
+  pause_tokens:
+    - "<|pause|>"
+    - "<|pause|>"
+    - "<|pause|>"
+  cot_offset: 5
+  clean_weight: 1.0
+  violation_weight: 4.0
+
+mixing:
+  static_rows_fraction: 0.70
+  onpolicy_rows_fraction: 0.30

@@ -92,6 +92,7 @@ def run_logged(
         "PAUSE_KL_EMIT_WEIGHT",
         "PAUSE_KL_EMIT_MARGIN_WEIGHT",
         "PAUSE_KL_STOP_WEIGHT",
+        "PAUSE_KL_N_PAUSE_TOKENS",
         "PAUSE_KL_SUPPRESSION_LOSS_TYPE",
         "PAUSE_KL_EMIT_MARGIN",
         "PAUSE_KL_SUPPRESSION_MARGIN",
@@ -411,6 +412,9 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
     env["PAUSE_KL_EMIT_WEIGHT"] = str(pause_kl.get("emit_weight", 0.3))
     env["PAUSE_KL_EMIT_MARGIN_WEIGHT"] = str(pause_kl.get("emit_margin_weight", 0.0))
     env["PAUSE_KL_STOP_WEIGHT"] = str(pause_kl.get("stop_weight", 0.0))
+    env["PAUSE_KL_N_PAUSE_TOKENS"] = str(
+        pause_kl.get("n_pause_tokens", sft.get("n_pause_tokens", config.get("pause", {}).get("n_pause_tokens", 3)))
+    )
     env["PAUSE_KL_SUPPRESSION_LOSS_TYPE"] = str(pause_kl.get("suppression_loss_type", "unlikelihood"))
     env["PAUSE_KL_EMIT_MARGIN"] = str(pause_kl.get("emit_margin", 3.0))
     env["PAUSE_KL_SUPPRESSION_MARGIN"] = str(pause_kl.get("suppression_margin", 5.0))

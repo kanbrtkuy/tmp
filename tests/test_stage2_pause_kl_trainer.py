@@ -99,6 +99,7 @@ class StubTokenizer:
 def bare_trainer(pause_token_id: int = 6):
     trainer = PauseKLSFTTrainer.__new__(PauseKLSFTTrainer)
     trainer.pause_token_id = pause_token_id
+    trainer.pause_chain_token_ids = (pause_token_id, pause_token_id, pause_token_id)
     trainer.pause_token_ids = (pause_token_id,)
     trainer.pause_token_id_set = {pause_token_id}
     trainer.pad_token_id = 0
@@ -146,7 +147,54 @@ def test_init_resolves_distinct_pause_ids_with_rows_only_callbacks():
 
     assert trainer.pause_token_ids == (4, 5, 6)
     assert trainer.pause_token_id_set == {4, 5, 6}
+    assert trainer.pause_chain_token_ids == (4, 5, 6)
     assert trainer.callbacks
+
+
+def test_init_keeps_repeated_pause_chain_length_but_deduplicates_pause_ids():
+    model = TinyLM(vocab_size=8, hidden_size=6)
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    model.get_input_embeddings().weight.requires_grad_(True)
+    model.get_output_embeddings().weight.requires_grad_(True)
+
+    tokenizer = StubTokenizer()
+    tokenizer.ids["<|pause|>"] = 6
+    trainer = PauseKLSFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        args=SimpleNamespace(weight_decay=0.0, logging_steps=100),
+        pause_kl={
+            "pause_tokens": ["<|pause|>", "<|pause|>", "<|pause|>"],
+            "post_step_invariant_check": False,
+        },
+    )
+
+    assert trainer.pause_chain_token_ids == (6, 6, 6)
+    assert trainer.pause_token_ids == (6,)
+    assert trainer.pause_token_id_set == {6}
+
+
+def test_init_rejects_pause_chain_length_mismatch():
+    model = TinyLM(vocab_size=8, hidden_size=6)
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    model.get_input_embeddings().weight.requires_grad_(True)
+    model.get_output_embeddings().weight.requires_grad_(True)
+
+    tokenizer = StubTokenizer()
+    tokenizer.ids["<|pause|>"] = 6
+    with pytest.raises(ValueError, match="n_pause_tokens=3"):
+        PauseKLSFTTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            args=SimpleNamespace(weight_decay=0.0, logging_steps=100),
+            pause_kl={
+                "n_pause_tokens": 3,
+                "pause_tokens": ["<|pause|>", "<|pause|>"],
+                "post_step_invariant_check": False,
+            },
+        )
 
 
 def test_pause_stripped_batch_preserves_mapping_and_padding():
@@ -204,6 +252,7 @@ def test_select_kl_pairs_aligns_predicted_tokens_after_pause():
 
 def test_select_kl_pairs_aligns_after_distinct_pause_chain():
     trainer = bare_trainer(pause_token_id=4)
+    trainer.pause_chain_token_ids = (4, 5, 6)
     trainer.pause_token_ids = (4, 5, 6)
     trainer.pause_token_id_set = {4, 5, 6}
     input_ids = torch.tensor([[10, 11, 4, 5, 6, 12, 13]])
@@ -265,6 +314,7 @@ def test_pause_losses_match_manual_shifted_ce_and_suppression():
 
 def test_distinct_pause_chain_masks_stop_after_pause3():
     trainer = bare_trainer(pause_token_id=4)
+    trainer.pause_chain_token_ids = (4, 5, 6)
     trainer.pause_token_ids = (4, 5, 6)
     trainer.pause_token_id_set = {4, 5, 6}
     trainer.suppression_loss_type = "margin"
@@ -280,6 +330,35 @@ def test_distinct_pause_chain_masks_stop_after_pause3():
     assert torch.isfinite(suppression)
     assert torch.isfinite(emit_margin)
     assert torch.isfinite(stop_loss)
+
+
+def test_repeated_single_pause_chain_masks_stop_only_after_third_pause():
+    trainer = bare_trainer(pause_token_id=4)
+    trainer.pause_chain_token_ids = (4, 4, 4)
+    trainer.pause_token_ids = (4,)
+    trainer.pause_token_id_set = {4}
+    input_ids = torch.tensor(
+        [
+            [1, 4, 4, 4, 2],
+            [1, 4, 4, 2, 3],
+            [1, 4, 2, 4, 4],
+        ]
+    )
+    labels = torch.tensor(
+        [
+            [-100, 4, 4, 4, 2],
+            [-100, 4, 4, 2, 3],
+            [-100, 4, 2, 4, 4],
+        ]
+    )
+
+    stop_mask = trainer._stop_after_pause_chain_mask(input_ids[:, :-1], labels[:, 1:].ne(-100))
+
+    assert stop_mask.tolist() == [
+        [False, False, False, True],
+        [False, False, False, False],
+        [False, False, False, False],
+    ]
 
 
 def test_emit_margin_competes_against_rival_pause_tokens():

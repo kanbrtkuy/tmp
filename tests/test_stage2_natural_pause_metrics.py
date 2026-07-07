@@ -85,6 +85,24 @@ def test_natural_pause_metrics_supports_distinct_exact_chain():
     assert metrics["off_target_pause_count"] == 0
 
 
+def test_natural_pause_metrics_supports_pure_repeated_exact_chain():
+    text = "<think> t0 t1 t2 t3 t4 <|pause|><|pause|><|pause|>t5 </think> answer"
+
+    metrics = natural_pause_metrics(
+        text,
+        tokenizer=WordTokenizer(),
+        pause_tokens=["<|pause|>", "<|pause|>", "<|pause|>"],
+        expected_cot_offset=5,
+    )
+
+    assert metrics["pause_tokens"] == ["<|pause|>", "<|pause|>", "<|pause|>"]
+    assert metrics["pause_run_tokens"] == [["<|pause|>", "<|pause|>", "<|pause|>"]]
+    assert metrics["has_single_pause_run_of_3"] is True
+    assert metrics["has_exact_pause_chain"] is True
+    assert metrics["location_match"] is True
+    assert metrics["off_target_pause_count"] == 0
+
+
 def test_location_metric_skips_leading_whitespace_like_formatter():
     tokenizer = LeadingNewlineTokenizer()
     spec = PauseSpec(
