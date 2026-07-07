@@ -1,0 +1,6 @@
+defaults:
+  - stage2_model_comparison_eval_1p5b_stage21_pure_cot5_2xa6000.yaml
+
+run:
+  name: stage2_model_comparison_eval_deepseek_1p5b_stage21_pure_cot5_selected_2xa6000
+  output_dir: ${STAGE21_FULL_EVAL_ROOT:-/workspace/cot-safety/runs/eval/stage2_model_comparison_deepseek_1p5b_stage21_pure_cot5_selected_2xa6000}

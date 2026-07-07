@@ -148,12 +148,28 @@ def row_prompt(row: dict[str, Any], source: dict[str, Any]) -> str:
     return prompt or context
 
 
-def sample_rows(rows: list[dict[str, Any]], limit: int, seed: int) -> list[dict[str, Any]]:
-    if limit <= 0 or len(rows) <= limit:
+def sample_rows(rows: list[dict[str, Any]], limit: int, seed: int, offset: int = 0) -> list[dict[str, Any]]:
+    offset = max(0, int(offset))
+    if not rows:
         return rows
     shuffled = list(rows)
     random.Random(seed).shuffle(shuffled)
+    if offset:
+        shuffled = shuffled[offset:]
+    if limit <= 0:
+        return shuffled
     return shuffled[:limit]
+
+
+def enforce_min_rows(rows: list[dict[str, Any]], source: dict[str, Any], *, stage: str) -> list[dict[str, Any]]:
+    min_rows = int(source.get("min_rows", 0) or 0)
+    if min_rows > 0 and len(rows) < min_rows:
+        name = source.get("name") or source.get("path") or "unknown"
+        raise ValueError(
+            f"{stage} source {name!r} yielded {len(rows)} rows after limit/sample_offset; "
+            f"expected at least {min_rows}."
+        )
+    return rows
 
 
 def normalize_capability_source(source: dict[str, Any], seed: int) -> list[dict[str, Any]]:
@@ -177,7 +193,8 @@ def normalize_capability_source(source: dict[str, Any], seed: int) -> list[dict[
                 "eval_hint": str(source.get("eval_hint", "exact")),
             }
         )
-    return sample_rows(output, int(source.get("limit", 0)), seed)
+    sampled = sample_rows(output, int(source.get("limit", 0)), seed, int(source.get("sample_offset", 0)))
+    return enforce_min_rows(sampled, source, stage="capability")
 
 
 def normalize_safety_source(source: dict[str, Any], seed: int) -> list[dict[str, Any]]:
@@ -203,7 +220,8 @@ def normalize_safety_source(source: dict[str, Any], seed: int) -> list[dict[str,
                 "category": clean_text(first_present(row, list(source.get("category_fields") or ["category", "Category", "SemanticCategory", "type"]))),
             }
         )
-    return sample_rows(output, int(source.get("limit", 0)), seed)
+    sampled = sample_rows(output, int(source.get("limit", 0)), seed, int(source.get("sample_offset", 0)))
+    return enforce_min_rows(sampled, source, stage="safety")
 
 
 def main() -> None:
@@ -244,6 +262,14 @@ def main() -> None:
         "safety_rows": len(safety_rows),
         "capability_sources": [source.get("name") for source in data_cfg.get("capability_sources", [])],
         "safety_sources": [source.get("name") for source in data_cfg.get("safety_sources", [])],
+        "capability_sample_offsets": {
+            str(source.get("name")): int(source.get("sample_offset", 0))
+            for source in data_cfg.get("capability_sources", [])
+        },
+        "safety_sample_offsets": {
+            str(source.get("name")): int(source.get("sample_offset", 0))
+            for source in data_cfg.get("safety_sources", [])
+        },
     }
     write_jsonl(out_dir / "capability_prompts.jsonl", capability_rows)
     write_jsonl(out_dir / "heldout_safety_prompts.jsonl", safety_rows)

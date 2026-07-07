@@ -42,6 +42,9 @@ Trainer：
 - 新增 1.5B / 8B model-comparison eval 配置。
 - 新增 1.5B smoke eval 配置，用于 25-step smoke 后快速检查
   natural exact-3/location。
+- 新增 1.5B selection-dev eval 配置
+  `configs/experiment/stage2_model_comparison_eval_1p5b_stage21_pure_cot5_selection_dev_2xa6000.yaml`，
+  使用 `sample_offset` 构造与正式 full eval 不重叠的小 dev prompt subset。
 
 Pipeline：
 
@@ -56,6 +59,12 @@ Pipeline：
   `per_device_train_batch_size`、`per_device_eval_batch_size`、
   `gradient_accumulation_steps`、`dataloader_num_workers` 和 `optim`，用于
   远端 batch probe，不需要手改 YAML。
+- `scripts/prepare_model_comparison_eval_data.py` 支持每个 source 设置
+  `sample_offset`，用于 checkpoint selection 和最终报告集 prompt disjoint。
+- 新增 `scripts/select_stage21_checkpoint.py`，用于在训练结束后对候选 checkpoint
+  跑 selection-dev natural exact-3/location sweep，并输出
+  `sweep_summary.json`、`sweep_summary.md` 和 `selected_checkpoint.txt`。
+  脚本支持从 R2 下载已被本地 watcher 删除的 checkpoint，评估后可删除下载副本。
 - 新增 `pipelines/run_stage21_pure_8b_full.sh`，把 8B formal 的 pytest、
   data prep、full SFT、model-comparison generation、strict natural gate、
   judge 和 summary 串成一个入口。
@@ -89,6 +98,8 @@ Pipeline：
 已完成：
 
 - `python3 -m py_compile` 通过；
+- `scripts/select_stage21_checkpoint.py --help` 通过；
+- `sample_offset` 本地 sanity check 通过，offset=0 和 offset=3 的抽样集合不重叠；
 - 用临时 pytest stub runner 执行相关测试函数：`26 tests OK`；
 - pure 1.5B / 8B training configs dry-run 通过；
 - pure 1.5B / 8B model-comparison eval configs dry-run 通过。
@@ -134,6 +145,8 @@ review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_smoke_gate_f
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_8b_formal_pipeline_review_260707.md
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_1p5b_full_pipeline_review_260707.md
 review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_1p5b_full_pipeline_followup_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_1p5b_running_review_260707.md
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_selection_review_260707.md
 ```
 
 Fable 结论：
@@ -149,6 +162,13 @@ Fable 结论：
   和 strict natural gate 均符合当前目标。
 - 将 `save_total_limit` 提到 64 后，Fable follow-up 再次确认
   `OK_TO_RUN`；唯一 advisory 是监控 cold `/workspace` 容量。
+- 训练启动后的 running review 结论：run 本身与目标一致，无需停止；即时检查
+  `0/1063` full-epoch 和 R2 watcher 均通过；但必须补 checkpoint selection
+  sweep，并用 disjoint selection-dev prompts 选 checkpoint，避免在正式报告集上
+  43 选 1 的 selection bias。
+- selection layer follow-up review 结论：`OK_TO_USE`。Fable 确认
+  `gate_score` 的 0 值排序 bug 和 selection-dev 空 source 风险均已修复；
+  selection-dev 与 full eval 严格 disjoint。
 
 ## 当前剩余风险
 
@@ -169,10 +189,13 @@ Fable 结论：
 1. 当前 2xA6000 节点优先跑
    `bash pipelines/run_stage21_pure_1p5b_full.sh`，完整 1 epoch、无早停；
 2. 检查 full run final/checkpoints 的 natural exact-3/location gate；
-3. 如果 gate 明显失败，先修 Stage2.1-pure 目标或 DAgger 负例；
-4. 如果 gate 可行，再跑 1.5B short400 / DAgger iter1；
-5. capability sanity；
-6. 最后再决定是否跑 8B full。
+3. 使用 `scripts/select_stage21_checkpoint.py` 在 disjoint selection-dev prompts
+   上选择 checkpoint；
+4. 对 selected checkpoint 在 full eval config 上重新跑 natural/forced generation、
+   strict gate、capability sanity 和 judge；
+5. 如果 gate 明显失败，先修 Stage2.1-pure 目标或 DAgger 负例；
+6. 如果 gate 可行，再跑 1.5B short400 / DAgger iter1；
+7. 最后再决定是否跑 8B full。
 
 8B full 的一键入口：
 
@@ -183,3 +206,133 @@ bash pipelines/run_stage21_pure_8b_full.sh
 当前旧 RunPod 2xA6000 节点已经不可连接：直连端口拒绝，proxy SSH
 返回 publickey denied。下一步需要新 GPU 节点后才能取得真实 SFT /
 natural exact-3 / capability 结果。
+
+## 2026-07-07 1.5B Full 实验结果
+
+后续新 2xA6000 节点已完成 1.5B Stage2.1-pure full run。
+
+训练证据：
+
+```text
+/workspace/outputs/deepseek_1p5b_stage21_pause_pure_cot5_full_2xa6000/checkpoint-1063/trainer_state.json
+global_step = 1063
+epoch = 1.0
+max_steps = 1063
+```
+
+这次不是 400-step pilot，也没有早停。训练完成了 1 full epoch。
+
+最终 natural gate 失败：
+
+```text
+n = 2100
+exact_chain_rate = 0.8886
+block_presence_rate = 0.9948
+malformed_rate = 0.1062
+off_target_rate = 0.1119
+location_match_rate = 0.6395
+avg_pause_count = 3.1224
+```
+
+source-wise 最差是 GSM8K：
+
+```text
+exact_chain_rate = 0.8100
+location_match_rate = 0.0427
+off_target_rate = 0.3440
+malformed_rate = 0.1740
+```
+
+selection-dev sweep 结果：
+
+```text
+completed steps = 750, 800, 850, 900, 950, 1000, 1050
+all completed checkpoints = gate fail
+ranked best among completed candidates = checkpoint-1050
+checkpoint-1050 min_exact_chain = 0.7900
+checkpoint-1050 min_location_match = 0.0408
+checkpoint-1050 max_off_target = 0.3200
+checkpoint-1050 max_malformed = 0.1900
+```
+
+因为所有已测 checkpoint 都远低于 strict gate，并且 GSM8K trend 没有改善，
+用户要求停止 sweep 以避免继续烧 GPU。训练和 selection 进程均已停止，GPU
+确认空闲。
+
+## 失败分析
+
+Fable 和本地诊断共同结论：
+
+- teacher-forced 目标已饱和，但 free-running natural generation 没学会；
+- 这不是“没训够”，而是 off-policy teacher-forced objective 与 autoregressive
+  行为之间的 gap；
+- 当前 run 名义上是 `dagger`，但实际使用的是 fixed offline pool，还没有执行
+  true on-policy DAgger relabeling；
+- safety-style sources 在 `5±1` 位置口径下大幅改善；
+- GSM8K 仍然真实失败，尤其有大量 after-`</think>` pause re-trigger。
+
+B1/B2 诊断：
+
+```text
+B2 full 17k train metric round-trip:
+exact_chain = 1.0
+location_match = 1.0
+off_target = 0.0
+first_pause_index = {5: 17000}
+
+B1 GSM8K final natural:
+first index top = 4:160, 2:38, 3:30, 1:30, 5:21, 6:19, None:8
+pause totals inside/before/after = 1208 / 0 / 367
+loc in {4,5} = 0.3679
+```
+
+所以 metric 对训练文本没有 ceiling 问题；自然生成里的 GSM8K 失败是真实
+behavioral failure。
+
+Fable review 记录：
+
+```text
+review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_pure_1p5b_failure_analysis_260707.md
+```
+
+## R2 备份
+
+本次 1.5B full run 已归档到：
+
+```text
+cloudflare_r2_cot_safety:cot-safety/stage2-stage3/20260707-2xa6000-1p5b-stage21-pure-full-cot5-bs4-ga2/
+```
+
+最终 size：
+
+```text
+Total objects: 757
+Total size: 220.918 GiB
+```
+
+已验证：
+
+```text
+eval result backup: 0 differences found, 81 matching files, 165.178 MiB
+selection sweep backup: 0 differences found, 109 matching files, 75.691 MiB
+```
+
+R2 文档：
+
+```text
+docs/stage21_1p5b_pure_r2_archive_260707.md
+```
+
+## 更新后的下一步
+
+不要继续扩大当前 rows-only offline SFT 或直接跑 8B full。下一步应是
+Stage2.1 true DAgger：
+
+1. 用当前 checkpoint on-policy 生成训练 prompts；
+2. strip 错误 pause；
+3. 用 expert formatter 重新插入 pure repeated pause；
+4. 加 GSM8K-heavy、after-`</think>` re-trigger、off-target 和 run-length
+   counterexamples；
+5. warm-start rows-only 训练；
+6. 继续用 natural-generation dev gate 做 checkpoint selection；
+7. 如果 true DAgger 后仍不改善，再考虑 LoRA+KL。

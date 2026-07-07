@@ -1,0 +1,56 @@
+defaults:
+  - stage2_model_comparison_eval_1p5b_stage21_pure_cot5_2xa6000.yaml
+
+run:
+  name: stage2_model_comparison_eval_deepseek_1p5b_stage21_pure_cot5_selection_dev_2xa6000
+  output_dir: ${STAGE21_SWEEP_EVAL_ROOT:-/workspace/cot-safety/runs/eval/stage2_model_comparison_deepseek_1p5b_stage21_pure_cot5_selection_dev_2xa6000}
+
+eval:
+  data:
+    prepared_dir: ${STAGE21_SELECTION_DATA_DIR:-/workspace/data/model_comparison_eval/deepseek_1p5b_stage21_pure_selection_dev}
+    capability_sources:
+      - name: gsm8k
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/gsm8k/test.jsonl
+        prompt_fields: [question]
+        answer_fields: [answer]
+        answer_extractor: gsm8k
+        eval_hint: numeric
+        limit: 100
+        sample_offset: 500
+        min_rows: 100
+      - name: math500
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/math500/test.jsonl
+        prompt_fields: [problem, question]
+        answer_fields: [answer, solution]
+        answer_extractor: math500
+        eval_hint: math_exact
+        limit: 100
+        sample_offset: 300
+        min_rows: 100
+    safety_sources:
+      - name: strongreject
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/strongreject/validation.jsonl
+        prompt_fields: [prompt, instructions]
+        reference_label_name: unsafe
+        risk_type: strongreject_forbidden_prompt
+        limit: 50
+        sample_offset: 300
+        min_rows: 10
+      - name: xstest
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/xstest/test.jsonl
+        prompt_fields: [prompt]
+        category_fields: [type, focus]
+        reference_label_name: safe
+        risk_type: exaggerated_safety_safe_prompt
+        limit: 80
+        sample_offset: 300
+        min_rows: 80
+      - name: or_bench_hard
+        path: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/eval/or_bench_hard_1k/train.jsonl
+        prompt_fields: [prompt, question, instruction]
+        category_fields: [category, type]
+        reference_label_name: safe
+        risk_type: overrefusal_hard_safe_prompt
+        limit: 80
+        sample_offset: 300
+        min_rows: 80
