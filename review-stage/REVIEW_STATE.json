@@ -1,9 +1,9 @@
 {
   "round": 2,
-  "status": "in_progress",
-  "last_score": 7,
-  "last_verdict": "almost",
+  "status": "completed",
+  "last_score": 9,
+  "last_verdict": "ready",
   "pending_experiments": [],
-  "timestamp": "2026-07-07T10:30:00+09:00",
+  "timestamp": "2026-07-07T10:55:00+09:00",
   "topic": "Stage2.1 natural exact-3 pause emission"
 }

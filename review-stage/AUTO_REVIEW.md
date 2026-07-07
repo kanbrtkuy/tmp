@@ -92,3 +92,24 @@ External reviewer: Claude Fable-5, extra-high effort.
 - Added regression tests for leading-newline location, DAgger mix layout,
   conditioned prompt preservation, distinct KL alignment, and rival-pause emit
   margin.
+
+### Re-review
+
+External reviewer: Claude Fable-5, extra-high effort.
+
+- Verdict: ready
+- Score: 9/10
+- Raw response:
+  `review-stage/stage2_1_clean_pause_design_260707/fable_stage2_1_code_rereview_260707.md`
+
+Fable says all prior GPU-blocking code issues are fixed. Remaining sequencing
+requirements before a 25-step smoke run:
+
+- run torch-gated trainer tests on the GPU box;
+- run a real `load_pause_sft_dataset()` load test on the prepared dataset;
+- run a real-tokenizer location sanity check on a small sample.
+
+### Status
+
+Ready for no-GPU data-prep validation and then 25-step 1.5B smoke after the
+GPU-box torch tests pass.
