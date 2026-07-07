@@ -306,8 +306,8 @@ cloudflare_r2_cot_safety:cot-safety/stage2-stage3/20260707-2xa6000-1p5b-stage21-
 最终 size：
 
 ```text
-Total objects: 757
-Total size: 220.918 GiB
+Total objects: 805
+Total size: 220.919 GiB
 ```
 
 已验证：
@@ -315,6 +315,8 @@ Total size: 220.918 GiB
 ```text
 eval result backup: 0 differences found, 81 matching files, 165.178 MiB
 selection sweep backup: 0 differences found, 109 matching files, 75.691 MiB
+runs/logs backup: 0 differences found, 3 matching files
+r2_checkpoint_sync backup: 0 differences found, 45 matching files
 ```
 
 R2 文档：

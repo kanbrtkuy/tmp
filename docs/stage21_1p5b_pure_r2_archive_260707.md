@@ -13,8 +13,8 @@ cloudflare_r2_cot_safety:cot-safety/stage2-stage3/20260707-2xa6000-1p5b-stage21-
 Final verified size after copying eval and selection results:
 
 ```text
-Total objects: 757
-Total size: 220.918 GiB
+Total objects: 805
+Total size: 220.919 GiB
 ```
 
 ## Main Contents
@@ -24,6 +24,8 @@ Total size: 220.918 GiB
 | `workspace/outputs/deepseek_1p5b_stage21_pause_pure_cot5_full_2xa6000/` | `/workspace/outputs/deepseek_1p5b_stage21_pause_pure_cot5_full_2xa6000` | Full 1-epoch Stage2.1-pure SFT output: checkpoints every 25 steps and final model. |
 | `workspace/cot-safety/runs/eval/stage2_model_comparison_deepseek_1p5b_stage21_pure_cot5_2xa6000/` | `/workspace/cot-safety/runs/eval/stage2_model_comparison_deepseek_1p5b_stage21_pure_cot5_2xa6000` | Full final model-comparison generation outputs, logs, resolved config, and strict natural gate. |
 | `workspace/cot-safety/runs/stage21_selection/deepseek_1p5b_stage21_pause_pure_cot5_full_2xa6000/` | `/workspace/cot-safety/runs/stage21_selection/deepseek_1p5b_stage21_pause_pure_cot5_full_2xa6000` | Disjoint selection-dev checkpoint sweep outputs and selection summaries. |
+| `workspace/cot-safety/runs/logs/` | `/workspace/cot-safety/runs/logs` | Training wrapper, R2 watcher, and post-selection logs. |
+| `workspace/cot-safety/runs/r2_checkpoint_sync/` | `/workspace/cot-safety/runs/r2_checkpoint_sync` | R2 checkpoint watcher ledger and per-checkpoint upload marker files. |
 
 ## Checkpoint Coverage
 
@@ -118,6 +120,25 @@ Result:
 0 differences found
 109 matching files
 Total size: 75.691 MiB
+```
+
+Run logs and R2 watcher ledger:
+
+```text
+rclone check /workspace/cot-safety/runs/logs \
+  cloudflare_r2_cot_safety:cot-safety/stage2-stage3/20260707-2xa6000-1p5b-stage21-pure-full-cot5-bs4-ga2/workspace/cot-safety/runs/logs \
+  --one-way --fast-list
+
+rclone check /workspace/cot-safety/runs/r2_checkpoint_sync \
+  cloudflare_r2_cot_safety:cot-safety/stage2-stage3/20260707-2xa6000-1p5b-stage21-pure-full-cot5-bs4-ga2/workspace/cot-safety/runs/r2_checkpoint_sync \
+  --one-way --fast-list
+```
+
+Result:
+
+```text
+runs/logs: 0 differences found, 3 matching files
+runs/r2_checkpoint_sync: 0 differences found, 45 matching files
 ```
 
 ## Local Analysis Documents
