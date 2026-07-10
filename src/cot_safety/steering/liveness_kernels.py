@@ -160,7 +160,7 @@ def make_position_masks(
     pause_mask = torch.zeros_like(all_pause_mask)
     if n_insert_pauses is not None and n_insert_pauses > 0:
         for row_idx in range(input_ids.shape[0]):
-            valid = torch.flatnonzero(attention_mask[row_idx].bool())
+            valid = attention_mask[row_idx].bool().nonzero(as_tuple=False).flatten()
             if valid.numel() < n_insert_pauses:
                 pause_mask[row_idx] = all_pause_mask[row_idx]
                 continue
@@ -181,11 +181,11 @@ def make_position_masks(
     content_mask = torch.zeros_like(pause_mask)
     bos_mask = torch.zeros_like(pause_mask)
     for row_idx in range(input_ids.shape[0]):
-        valid = torch.flatnonzero(attention_mask[row_idx].bool())
+        valid = attention_mask[row_idx].bool().nonzero(as_tuple=False).flatten()
         if valid.numel() == 0:
             continue
         bos_mask[row_idx, int(valid[0].item())] = True
-        pauses = torch.flatnonzero(pause_mask[row_idx])
+        pauses = pause_mask[row_idx].nonzero(as_tuple=False).flatten()
         if pauses.numel() == 0:
             continue
         first_pause = int(pauses[0].item())

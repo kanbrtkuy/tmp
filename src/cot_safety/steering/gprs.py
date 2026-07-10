@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -21,25 +22,37 @@ def validate_gprs_config(config: dict[str, Any]) -> dict[str, Any]:
         return {"method": method}
 
     gprs = steering.get("gprs") or {}
-    required = ["direction_artifact", "safe_centroid", "probe_checkpoint"]
+    gate_mode = str(gprs.get("gate_mode", "none"))
+    if gate_mode not in {"none"}:
+        raise ValueError(f"Unsupported steering.gprs.gate_mode: {gate_mode!r}")
+    required = ["direction_artifact", "safe_centroid"]
+    if gate_mode != "none":
+        required.append("probe_checkpoint")
     missing = [key for key in required if not gprs.get(key)]
     if missing:
         raise ValueError(f"GPRS steering requires steering.gprs keys: {missing}")
     norm_cap = float(gprs.get("norm_cap", 0.10))
     if norm_cap <= 0.0:
         raise ValueError("steering.gprs.norm_cap must be positive.")
-    gate_threshold = float(gprs.get("gate_threshold", 0.95))
-    if not 0.0 <= gate_threshold <= 1.0:
-        raise ValueError("steering.gprs.gate_threshold must be in [0, 1].")
+    strength_mode = str(gprs.get("strength_mode", "projection"))
+    if strength_mode not in {"projection", "matched_relative"}:
+        raise ValueError(f"Unsupported steering.gprs.strength_mode: {strength_mode!r}")
+    gate_threshold = None
+    if gate_mode != "none":
+        gate_threshold = float(gprs.get("gate_threshold", 0.95))
+        if not 0.0 <= gate_threshold <= 1.0:
+            raise ValueError("steering.gprs.gate_threshold must be in [0, 1].")
     return {
         "method": method,
         "direction_artifact": str(gprs["direction_artifact"]),
         "safe_centroid": str(gprs["safe_centroid"]),
-        "probe_checkpoint": str(gprs["probe_checkpoint"]),
+        "probe_checkpoint": str(gprs.get("probe_checkpoint", "")),
         "artifact_manifest": str(gprs.get("artifact_manifest", "")),
         "stage3_evidence_report": str(gprs.get("stage3_evidence_report", "")),
         "allow_teacher_forced_only": bool(gprs.get("allow_teacher_forced_only", False)),
         "norm_cap": norm_cap,
+        "strength_mode": strength_mode,
+        "gate_mode": gate_mode,
         "gate_threshold": gate_threshold,
     }
 
@@ -97,10 +110,10 @@ def gprs_artifact_status(
     meta = validate_gprs_config(config)
     if meta["method"] == "learned_delta":
         return {"method": "learned_delta", "ready": True, "paths": {}, "missing": []}
-    paths = {
-        key: _resolve_path(str(meta[key]), base_dir=base_dir)
-        for key in ("direction_artifact", "safe_centroid", "probe_checkpoint")
-    }
+    artifact_keys = ["direction_artifact", "safe_centroid"]
+    if meta.get("probe_checkpoint"):
+        artifact_keys.append("probe_checkpoint")
+    paths = {key: _resolve_path(str(meta[key]), base_dir=base_dir) for key in artifact_keys}
     manifest_path = (
         _resolve_path(str(meta["artifact_manifest"]), base_dir=base_dir)
         if meta.get("artifact_manifest")
@@ -158,8 +171,10 @@ def gprs_artifact_status(
         "stage3_evidence_ready": evidence_ready,
         "manifest_layer": manifest.get("layer"),
         "manifest_positions": manifest.get("positions"),
+        "gate_mode": meta["gate_mode"],
         "gate_threshold": meta["gate_threshold"],
         "norm_cap": meta["norm_cap"],
+        "strength_mode": meta["strength_mode"],
     }
 
 
@@ -183,6 +198,7 @@ def projection_rejection_update(
     *,
     strength: float = 1.0,
     norm_cap: float | None = 0.10,
+    strength_mode: str = "projection",
     gate_score: Any | None = None,
     gate_threshold: float | None = None,
 ) -> Any:
@@ -196,6 +212,8 @@ def projection_rejection_update(
         raise ValueError("strength must be non-negative.")
     if gate_threshold is not None and not 0.0 <= gate_threshold <= 1.0:
         raise ValueError("gate_threshold must be in [0, 1] when provided.")
+    if strength_mode not in {"projection", "matched_relative"}:
+        raise ValueError(f"Unsupported strength_mode: {strength_mode!r}")
     centered = h - safe_centroid
     direction_norm = direction / direction.norm().clamp_min(1e-12)
     coeff = (centered * direction_norm).sum(dim=-1, keepdim=True).clamp_min(0.0)
@@ -206,6 +224,15 @@ def projection_rejection_update(
         while gate.ndim < coeff.ndim:
             gate = gate.unsqueeze(-1)
         coeff = coeff * gate
+    if strength_mode == "matched_relative":
+        if norm_cap is None:
+            raise ValueError("norm_cap is required for strength_mode='matched_relative'.")
+        if norm_cap <= 0.0:
+            raise ValueError("norm_cap must be positive when provided.")
+        target_relative_norm = min(float(strength), 1.0) * float(norm_cap)
+        delta_scale = target_relative_norm * h.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+        gate = (coeff > 0.0).to(delta_scale.dtype) if gate_score is not None else 1.0
+        return h - delta_scale * gate * direction_norm
     delta = -float(strength) * coeff * direction_norm
     if norm_cap is not None:
         if norm_cap <= 0.0:
@@ -214,3 +241,115 @@ def projection_rejection_update(
         delta_norm = delta.norm(dim=-1, keepdim=True).clamp_min(1e-12)
         delta = delta * (max_norm / delta_norm).clamp_max(1.0)
     return h + delta
+
+
+def layer_to_block_index(layer_id: int) -> int:
+    if int(layer_id) <= 0:
+        raise ValueError("HF hidden-state layer ids must be >= 1.")
+    return int(layer_id) - 1
+
+
+def _as_row_counts(mask: Any) -> list[int]:
+    return [int(item) for item in mask.sum(dim=1).detach().cpu().tolist()]
+
+
+@contextmanager
+def gprs_forward_hook(
+    layers: Any,
+    *,
+    layer: int,
+    target_mask: Any,
+    direction: Any,
+    safe_centroid: Any,
+    strength: float,
+    norm_cap: float | None,
+    strength_mode: str = "projection",
+    apply_once: bool = True,
+):
+    """Apply GPRS to a precomputed batch target mask during a forward pass.
+
+    The hook is designed for Stage4 generation with a conditioned prefix. The
+    first full-prefix forward has hidden shape `[batch, prefix_len, hidden]`,
+    matching `target_mask`; cached one-token forwards do not match and are left
+    untouched. This makes the target mask explicit and auditable instead of
+    re-detecting positions from token identity inside the hook.
+    """
+
+    stats: dict[str, Any] = {
+        "layer": int(layer),
+        "strength": float(strength),
+        "norm_cap": norm_cap,
+        "strength_mode": str(strength_mode),
+        "effective_relative_norm": (
+            min(float(strength), 1.0) * float(norm_cap)
+            if strength_mode == "matched_relative" and norm_cap is not None
+            else None
+        ),
+        "scope": "batch",
+        "num_hook_calls": 0,
+        "num_applied_calls": 0,
+        "num_target_tokens": int(target_mask.sum().detach().cpu().item()),
+        "per_row_target_tokens": _as_row_counts(target_mask),
+        "applied_relative_norms": [],
+        "applied_delta_norms": [],
+        "applied_hidden_norms": [],
+        "per_row_applied_relative_norms": [[] for _ in range(int(target_mask.shape[0]))],
+        "per_row_applied_delta_norms": [[] for _ in range(int(target_mask.shape[0]))],
+        "per_row_applied_hidden_norms": [[] for _ in range(int(target_mask.shape[0]))],
+        "shape_mismatches": [],
+    }
+    applied = {"done": False}
+    block_idx = layer_to_block_index(int(layer))
+
+    def hook(_module: Any, _inputs: tuple[Any, ...], output: Any) -> Any:
+        stats["num_hook_calls"] += 1
+        hidden = output[0] if isinstance(output, tuple) else output
+        if tuple(hidden.shape[:2]) != tuple(target_mask.shape):
+            stats["shape_mismatches"].append(
+                {"hidden": tuple(int(item) for item in hidden.shape[:2]), "mask": tuple(int(item) for item in target_mask.shape)}
+            )
+            return output
+        if apply_once and applied["done"]:
+            return output
+        mask = target_mask.to(device=hidden.device, dtype=bool)
+        if not bool(mask.any()):
+            return output
+        selected = hidden[mask]
+        updated = projection_rejection_update(
+            selected,
+            direction.to(device=hidden.device, dtype=selected.dtype),
+            safe_centroid.to(device=hidden.device, dtype=selected.dtype),
+            strength=float(strength),
+            norm_cap=norm_cap,
+            strength_mode=strength_mode,
+        )
+        delta = updated - selected
+        hidden_norm = selected.float().norm(dim=-1).clamp_min(1e-12)
+        delta_norm = delta.float().norm(dim=-1)
+        relative_norm = delta_norm / hidden_norm
+        delta_norm_cpu = [float(item) for item in delta_norm.detach().cpu().tolist()]
+        hidden_norm_cpu = [float(item) for item in hidden_norm.detach().cpu().tolist()]
+        relative_norm_cpu = [float(item) for item in relative_norm.detach().cpu().tolist()]
+        stats["applied_delta_norms"].extend(delta_norm_cpu)
+        stats["applied_hidden_norms"].extend(hidden_norm_cpu)
+        stats["applied_relative_norms"].extend(relative_norm_cpu)
+        cursor = 0
+        for row_idx, count in enumerate(_as_row_counts(mask)):
+            end = cursor + count
+            stats["per_row_applied_delta_norms"][row_idx].extend(delta_norm_cpu[cursor:end])
+            stats["per_row_applied_hidden_norms"][row_idx].extend(hidden_norm_cpu[cursor:end])
+            stats["per_row_applied_relative_norms"][row_idx].extend(relative_norm_cpu[cursor:end])
+            cursor = end
+        stats["num_applied_calls"] += 1
+        applied["done"] = True
+        edited = hidden.clone()
+        edited[mask] = updated
+        if isinstance(output, tuple):
+            return (edited,) + output[1:]
+        return edited
+
+    handle = layers[block_idx].register_forward_hook(hook)
+    try:
+        yield stats
+    finally:
+        handle.remove()

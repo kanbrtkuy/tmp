@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -179,6 +180,7 @@ def build_env(config: dict[str, Any], legacy_root: Path, repo_root: Path, args: 
     env.setdefault("JUDGE_MAX_INPUT_LENGTH", str(eval_cfg.get("judge_max_input_length", 4096)))
     env.setdefault("MAX_NEW_TOKENS", str(eval_cfg.get("max_new_tokens", 1024)))
     env.setdefault("TORCH_DTYPE", str(runtime.get("torch_dtype", "bfloat16")))
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
     vllm_cfg = eval_cfg.get("vllm", {})
     env.setdefault("VLLM_JUDGE_GPU_MEMORY_UTILIZATION", str(vllm_cfg.get("gpu_memory_utilization", 0.90)))
@@ -231,6 +233,239 @@ def run_validate(config_path: str, repo_root: Path, env: dict[str, str]) -> int:
     ).returncode
 
 
+def alpha_label(alpha: Any) -> str:
+    return str(alpha).replace("-", "m").replace(".", "p")
+
+
+def parse_dataset_spec_lines(specs: str) -> list[dict[str, Any]]:
+    rows = []
+    for line in specs.splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        name, input_file, label_filter, rows_per_label = raw.split("|", 3)
+        rows.append(
+            {
+                "name": name,
+                "input_file": input_file,
+                "label_filter": label_filter,
+                "rows_per_label": int(rows_per_label),
+            }
+        )
+    return rows
+
+
+def generation_devices(env: dict[str, str]) -> list[str]:
+    raw = str(env.get("DEVICES", "")).strip()
+    if not raw:
+        return ["cuda"]
+    devices = []
+    for piece in raw.split(","):
+        item = piece.strip()
+        if item:
+            devices.append(item if item.startswith("cuda") else f"cuda:{item}")
+    return devices or ["cuda"]
+
+
+def gprs_generation_commands(
+    config: dict[str, Any],
+    repo_root: Path,
+    env: dict[str, str],
+    args: argparse.Namespace,
+) -> list[list[str]]:
+    from cot_safety.steering.scope import validate_target_specs
+
+    model = config.get("model", {})
+    steering = config.get("steering", {})
+    eval_cfg = config.get("eval", {})
+    gprs = steering.get("gprs") or {}
+    run = config.get("run", {})
+    out_root = Path(env["OUT_ROOT"])
+    raw_conditions = steering.get("generation_conditions") or [steering.get("generation_condition", "gprs")]
+    conditions = [str(item) for item in raw_conditions]
+    raw_direction_controls = steering.get("direction_controls") or [steering.get("direction_control", "none")]
+    direction_controls = [str(item) for item in raw_direction_controls]
+    target_specs_raw = target_specs(steering)
+    diagnostic_targets = bool(steering.get("diagnostic_targets", False))
+    parsed_targets = validate_target_specs(target_specs_raw, diagnostic_targets=diagnostic_targets)
+    specs = dataset_specs(eval_cfg, repo_root)
+    datasets = parse_dataset_spec_lines(specs) if specs else []
+    if not datasets:
+        raise SystemExit("GPRS generation requires eval.dataset_specs entries.")
+    commands: list[list[str]] = []
+    devices = generation_devices(env)
+    tokenizer = str(resolve_value(model.get("tokenizer") or model_path(model)))
+    position_lora_path = str(resolve_value(model.get("position_lora_path") or ""))
+    token_rows = str(resolve_value(model.get("trainable_token_rows") or ""))
+    for dataset in datasets:
+        for condition in conditions:
+            condition_targets = parsed_targets
+            if condition == "base":
+                condition_targets = (("no_target", ("pause_0", "pause_1", "pause_2")),)
+            elif condition in {"fsm", "ppc"}:
+                pause_targets = tuple(spec for spec in parsed_targets if spec[0] == "pause_all3")
+                condition_targets = pause_targets or parsed_targets[:1]
+            alpha_values = [0.0] if condition in {"base", "fsm", "ppc"} else steering.get("alpha_grid", [0.0])
+            condition_direction_controls = ["none"] if condition in {"base", "fsm", "ppc"} else direction_controls
+            for target_name, positions in condition_targets:
+                is_diag = any(not str(pos).startswith("pause_") for pos in positions)
+                for seed in steering.get("seeds", [260618]):
+                    for alpha in alpha_values:
+                        for direction_control in condition_direction_controls:
+                            if float(alpha) == 0.0 and direction_control != "none":
+                                continue
+                            direction_tag = "random" if direction_control == "random" else "main"
+                            out_dir = (
+                                out_root
+                                / f"condition_{condition}"
+                                / f"direction_{direction_tag}"
+                                / str(dataset["name"])
+                                / str(target_name)
+                                / f"seed_{seed}"
+                                / f"alpha_{alpha_label(alpha)}"
+                            )
+                            cmd = [
+                                args.python,
+                                "scripts/run_stage4_gprs_generation.py",
+                                "--input_jsonl",
+                                str(dataset["input_file"]),
+                                "--output_jsonl",
+                                str(out_dir / "generations.jsonl"),
+                                "--model",
+                                env["MODEL"],
+                                "--tokenizer",
+                                tokenizer,
+                                "--condition",
+                                condition,
+                                "--model_label",
+                                f"{steering.get('model_label', run.get('name', 'stage4_gprs'))}::{condition}::{direction_tag}",
+                                "--target_positions",
+                                csv(list(positions)),
+                                "--alpha",
+                                str(alpha),
+                                "--norm_cap",
+                                str(gprs.get("norm_cap", 0.10)),
+                                "--strength_mode",
+                                str(gprs.get("strength_mode", "projection")),
+                                "--gate_mode",
+                                str(gprs.get("gate_mode", "none")),
+                                "--layer",
+                                str(steering.get("layer", 14)),
+                                "--seed",
+                                str(seed),
+                                "--label_filter",
+                                str(dataset.get("label_filter", "all")),
+                                "--rows_per_label",
+                                str(dataset.get("rows_per_label", 0)),
+                                "--batch_size",
+                                str(config.get("runtime", {}).get("generation", {}).get("batch_size_per_gpu", 4)),
+                                "--max_input_length",
+                                str(model.get("max_input_length", model.get("max_length", 2048))),
+                                "--max_new_tokens",
+                                str(eval_cfg.get("max_new_tokens", 1024)),
+                                "--prefix_new_tokens",
+                                str(steering.get("prefix_new_tokens", 64)),
+                                "--n_insert_pauses",
+                                str(steering.get("n_insert_pauses", 3)),
+                                "--cot_offset",
+                                str(steering.get("insert_pause_after_cot_tokens", 5)),
+                                "--torch_dtype",
+                                str(config.get("runtime", {}).get("torch_dtype", "bfloat16")),
+                                "--device",
+                                devices[len(commands) % len(devices)],
+                            ]
+                            if bool(model.get("trust_remote_code", False)):
+                                cmd.append("--trust_remote_code")
+                            if is_diag:
+                                cmd.append("--diagnostic_targets")
+                            if condition in {"ppc", "gprs"}:
+                                if position_lora_path:
+                                    cmd.extend(["--position_lora_path", position_lora_path])
+                                if token_rows:
+                                    cmd.extend(["--trainable_token_rows", token_rows])
+                            if condition == "gprs" and float(alpha) != 0.0:
+                                cmd.extend(
+                                    [
+                                        "--direction_artifact",
+                                        absolute_path(gprs.get("direction_artifact"), repo_root),
+                                        "--safe_centroid",
+                                        absolute_path(gprs.get("safe_centroid"), repo_root),
+                                    ]
+                                )
+                            if direction_control == "random":
+                                cmd.append("--random_direction")
+                            commands.append(cmd)
+    return commands
+
+
+def run_generation_commands(
+    commands: list[list[str]],
+    *,
+    repo_root: Path,
+    env: dict[str, str],
+    max_workers: int,
+) -> int:
+    if max_workers <= 1 or len(commands) <= 1:
+        for command in commands:
+            rc = subprocess.run(command, cwd=repo_root, env=env).returncode
+            if rc != 0:
+                return rc
+        return 0
+
+    def command_device(command: list[str]) -> str:
+        try:
+            index = command.index("--device")
+        except ValueError:
+            return "__default__"
+        if index + 1 >= len(command):
+            return "__default__"
+        return command[index + 1]
+
+    queues: dict[str, list[tuple[int, list[str]]]] = {}
+    device_order: list[str] = []
+    for index, command in enumerate(commands):
+        device = command_device(command)
+        if device not in queues:
+            queues[device] = []
+            device_order.append(device)
+        queues[device].append((index, command))
+
+    active: dict[str, tuple[int, subprocess.Popen[Any]]] = {}
+    while any(queues.values()) or active:
+        for device in device_order:
+            if len(active) >= max_workers:
+                break
+            if device in active or not queues.get(device):
+                continue
+            index, command = queues[device].pop(0)
+            active[device] = (index, subprocess.Popen(command, cwd=repo_root, env=env))
+        still_active: dict[str, tuple[int, subprocess.Popen[Any]]] = {}
+        for device, (index, proc) in active.items():
+            rc = proc.poll()
+            if rc is None:
+                still_active[device] = (index, proc)
+                continue
+            if rc != 0:
+                print(f"Stage4 generation command failed: index={index} device={device} rc={rc}", file=sys.stderr)
+                others = [
+                    (other_device, other)
+                    for other_device, (_other_index, other) in active.items()
+                    if other_device != device and other.poll() is None
+                ]
+                for _other_device, other in others:
+                    other.terminate()
+                for _other_device, other in others:
+                    try:
+                        other.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        other.kill()
+                return rc
+        active = still_active
+        if active:
+            time.sleep(1.0)
+    return 0
+
+
 def require_gprs_readiness(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
     from cot_safety.steering.gprs import require_gprs_artifacts
     from cot_safety.steering.liveness import liveness_gate_status
@@ -249,6 +484,32 @@ def require_gprs_readiness(config: dict[str, Any], repo_root: Path) -> dict[str,
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from exc
     return {"liveness": live_status, "artifacts": artifact_status}
+
+
+def require_pivot_artifact_paths(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    model = config.get("model", {})
+    gprs = (config.get("steering", {}).get("gprs") or {})
+    checks = {
+        "direction_artifact": gprs.get("direction_artifact"),
+        "safe_centroid": gprs.get("safe_centroid"),
+        "position_lora_path": model.get("position_lora_path"),
+        "trainable_token_rows": model.get("trainable_token_rows"),
+    }
+    resolved: dict[str, str] = {}
+    missing: dict[str, str] = {}
+    for key, raw in checks.items():
+        value = str(resolve_value(raw or "")).strip()
+        if not value:
+            continue
+        path = Path(value)
+        if not path.is_absolute():
+            path = repo_root / path
+        resolved[key] = str(path)
+        if not path.exists():
+            missing[key] = str(path)
+    if missing:
+        raise SystemExit(f"Stage4 steering-first pivot artifact preflight failed: missing={missing}")
+    return {"ready": True, "paths": resolved}
 
 
 def main() -> None:
@@ -331,12 +592,25 @@ def main() -> None:
             return
         raise SystemExit(subprocess.run(command, cwd=repo_root, env=env).returncode)
 
-    if steering_method in {"gprs", "projection"} and args.phase not in {"validate", "liveness"}:
-        readiness = require_gprs_readiness(config, repo_root)
+    if steering_method in {"gprs", "projection"} and args.phase in {"generation", "eval", "all"}:
+        if not bool(config.get("steering", {}).get("gprs", {}).get("steering_first_pivot", False)):
+            readiness = require_gprs_readiness(config, repo_root)
+            print(dump_config({"readiness": readiness}))
+        elif not args.dry_run:
+            print(dump_config({"pivot_artifact_preflight": require_pivot_artifact_paths(config, repo_root)}))
+        commands = gprs_generation_commands(config, repo_root, env, args)
+        for command in commands:
+            print("$ " + " ".join(command))
+        if not args.dry_run:
+            max_workers = int(env.get("MAX_PARALLEL_GENERATION_JOBS", "1"))
+            rc = run_generation_commands(commands, repo_root=repo_root, env=env, max_workers=max_workers)
+            if rc != 0:
+                raise SystemExit(rc)
+        if args.phase == "generation":
+            return
         raise SystemExit(
-            "GPRS generation is scaffolded but not wired into the legacy generation shell yet. "
-            "Run --phase validate or --phase liveness now; implement the GPRS hook before eval. "
-            f"readiness={readiness}"
+            "GPRS generation completed. Judge/summary wiring for the matched A0-A5 battery is intentionally separate; "
+            "run the judge phase after inspecting generation manifests."
         )
 
     command = ["bash", str(legacy_root / "scripts/steering/run_intra_pause_full_steering_eval.sh")]

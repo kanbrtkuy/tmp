@@ -1,0 +1,78 @@
+defaults:
+  - ../model/deepseek_r1_distill_qwen_1_5b.yaml
+  - ../data/stage4_steering_eval_sources.yaml
+  - ../runtime/a6000_2x.yaml
+
+run:
+  name: stage4_lora_clean_gprs_1p5b
+  output_dir: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_lora_clean_gprs_1p5b
+
+model:
+  # PPC uses a clean base model plus explicit pause-row / position-LoRA artifacts.
+  sft_checkpoint: ""
+  local_base_model: ${COT_SAFETY_MODEL_ROOT:-/workspace/models}/DeepSeek-R1-Distill-Qwen-1.5B
+  tokenizer: ${STAGE23_PPC_TOKENIZER:-/workspace/outputs/deepseek_1p5b_stage23_ppc_read_lora_cot5_2xa6000/final}
+  position_lora_path: ${STAGE23_POSITION_LORA:-/workspace/outputs/deepseek_1p5b_stage23_ppc_read_lora_cot5_2xa6000/final/stage23_position_lora.pt}
+  trainable_token_rows: ${STAGE23_TOKEN_ROWS:-/workspace/outputs/deepseek_1p5b_stage23_ppc_read_lora_cot5_2xa6000/final/stage2_trainable_token_rows.pt}
+  max_input_length: 2048
+
+runtime:
+  torch_dtype: bfloat16
+  generation:
+    batch_size_per_gpu: 160
+
+steering:
+  method: gprs
+  generation_conditions: [base, fsm, ppc, gprs]
+  direction_controls: [none, random]
+  diagnostic_targets: true
+  layer: 14
+  alpha_grid: [0.0, 0.25, 0.5, 1.0]
+  seeds: [260710]
+  prefix_new_tokens: 96
+  insert_pause_after_cot_tokens: 5
+  n_insert_pauses: 3
+  model_label: stage4_lora_clean_1p5b
+  target_specs:
+    - name: pause_all3
+      positions: [pause_0, pause_1, pause_2]
+    - name: content_pre_pause_2_4
+      positions: [cot_2, cot_3, cot_4]
+    - name: post_pause_1_3
+      positions: [post_pause_1, post_pause_2, post_pause_3]
+  gprs:
+    steering_first_pivot: true
+    gate_mode: none
+    direction_artifact: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_lora_clean_gprs_artifacts_1p5b/pause_mean_diff_direction.pt
+    safe_centroid: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_lora_clean_gprs_artifacts_1p5b/pause_safe_centroid.pt
+    artifact_manifest: ${COT_SAFETY_RUN_ROOT:-runs}/stage4_lora_clean_gprs_artifacts_1p5b/manifest.json
+    norm_cap: 0.10
+    strength_mode: matched_relative
+    allow_teacher_forced_only: true
+
+eval:
+  primary_endpoint: unsafe_cot_rate
+  max_new_tokens: 1024
+  dataset_specs:
+    - name: xstest_safe
+      input_file: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/intra_pause_hardsafe_steering_eval/xstest_safe.jsonl
+      label_filter: safe
+      rows_per_label: 250
+    - name: xstest_contrast_unsafe
+      input_file: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/intra_pause_hardsafe_steering_eval/xstest_contrast_unsafe.jsonl
+      label_filter: unsafe
+      rows_per_label: 250
+    - name: or_bench_hard_safe
+      input_file: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/intra_pause_hardsafe_steering_eval/or_bench_hard_safe.jsonl
+      label_filter: safe
+      rows_per_label: 300
+    - name: or_bench_toxic_unsafe
+      input_file: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/intra_pause_hardsafe_steering_eval/or_bench_toxic_unsafe.jsonl
+      label_filter: unsafe
+      rows_per_label: 300
+  judges: [wildguard]
+  judge_backend: ${STAGE4_JUDGE_BACKEND:-vllm}
+  vllm_judges: [wildguard, llamaguard]
+  judge_model_map:
+    wildguard: ${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/wildguard
+    llamaguard: ${COT_SAFETY_JUDGE_ROOT:-/workspace/models/judges}/Llama-Guard-3-8B

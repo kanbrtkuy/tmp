@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from cot_safety.steering.gprs import (
+    gprs_forward_hook,
     gprs_artifact_status,
     projection_rejection_update,
     require_gprs_artifacts,
@@ -168,7 +169,6 @@ def test_validate_gprs_config_requires_artifacts():
         validate_gprs_config(config)
     except ValueError as exc:
         assert "safe_centroid" in str(exc)
-        assert "probe_checkpoint" in str(exc)
     else:
         raise AssertionError("validate_gprs_config should reject incomplete GPRS configs")
 
@@ -186,7 +186,118 @@ def test_validate_gprs_config_accepts_complete_config():
             },
         }
     }
-    assert validate_gprs_config(config)["method"] == "gprs"
+    meta = validate_gprs_config(config)
+    assert meta["method"] == "gprs"
+    assert meta["gate_mode"] == "none"
+    assert meta["gate_threshold"] is None
+    assert meta["strength_mode"] == "projection"
+
+
+def test_validate_gprs_config_accepts_matched_relative_strength_mode():
+    config = {
+        "steering": {
+            "method": "gprs",
+            "gprs": {
+                "direction_artifact": "u.pt",
+                "safe_centroid": "mu.pt",
+                "norm_cap": 0.1,
+                "strength_mode": "matched_relative",
+            },
+        }
+    }
+    assert validate_gprs_config(config)["strength_mode"] == "matched_relative"
+
+
+def test_gprs_forward_hook_applies_only_matching_prefix_shape():
+    torch = pytest.importorskip("torch")
+
+    class DummyBlock(torch.nn.Module):
+        def forward(self, x):
+            return x
+
+    layers = torch.nn.ModuleList([DummyBlock()])
+    hidden = torch.tensor([[[2.0, 0.0], [0.0, 1.0], [3.0, 0.0]]])
+    mask = torch.tensor([[True, False, True]])
+    direction = torch.tensor([1.0, 0.0])
+    safe = torch.tensor([0.0, 0.0])
+
+    with gprs_forward_hook(
+        layers,
+        layer=1,
+        target_mask=mask,
+        direction=direction,
+        safe_centroid=safe,
+        strength=1.0,
+        norm_cap=None,
+    ) as stats:
+        out = layers[0](hidden)
+        cached = layers[0](hidden[:, -1:, :])
+
+    assert torch.allclose(out[0, 0], torch.zeros(2))
+    assert torch.allclose(out[0, 1], hidden[0, 1])
+    assert torch.allclose(out[0, 2], torch.zeros(2))
+    assert torch.allclose(cached, hidden[:, -1:, :])
+    assert stats["num_applied_calls"] == 1
+    assert stats["num_target_tokens"] == 2
+    assert stats["shape_mismatches"]
+
+
+def test_gprs_forward_hook_zero_strength_is_bit_exact():
+    torch = pytest.importorskip("torch")
+
+    class DummyBlock(torch.nn.Module):
+        def forward(self, x):
+            return x
+
+    layers = torch.nn.ModuleList([DummyBlock()])
+    hidden = torch.randn(2, 4, 3)
+    mask = torch.tensor([[True, False, False, True], [False, True, False, False]])
+    direction = torch.randn(3)
+    safe = torch.zeros(3)
+
+    with gprs_forward_hook(
+        layers,
+        layer=1,
+        target_mask=mask,
+        direction=direction,
+        safe_centroid=safe,
+        strength=0.0,
+        norm_cap=0.1,
+    ) as stats:
+        out = layers[0](hidden)
+
+    assert torch.allclose(out, hidden)
+    assert stats["num_applied_calls"] == 1
+    assert max(stats["applied_delta_norms"]) == 0.0
+
+
+def test_gprs_forward_hook_records_matched_relative_mode():
+    torch = pytest.importorskip("torch")
+
+    class DummyBlock(torch.nn.Module):
+        def forward(self, x):
+            return x
+
+    layers = torch.nn.ModuleList([DummyBlock()])
+    hidden = torch.tensor([[[2.0, 0.0], [-2.0, 0.0]]])
+    mask = torch.tensor([[True, True]])
+    direction = torch.tensor([1.0, 0.0])
+    safe = torch.tensor([0.0, 0.0])
+
+    with gprs_forward_hook(
+        layers,
+        layer=1,
+        target_mask=mask,
+        direction=direction,
+        safe_centroid=safe,
+        strength=0.5,
+        norm_cap=0.1,
+        strength_mode="matched_relative",
+    ) as stats:
+        layers[0](hidden)
+
+    assert stats["strength_mode"] == "matched_relative"
+    assert stats["applied_relative_norms"] == pytest.approx([0.05, 0.05])
 
 
 def test_gprs_artifact_status_requires_all_artifacts(tmp_path):
@@ -344,3 +455,25 @@ def test_projection_rejection_update_without_cap_reaches_safe_halfspace():
 
     assert updated[0].tolist() == pytest.approx([0.0, 0.0])
     assert updated[1].tolist() == pytest.approx([-2.0, 0.0])
+
+
+def test_projection_rejection_update_matched_relative_has_equal_actual_norm():
+    torch = pytest.importorskip("torch")
+    h = torch.tensor([[2.0, 0.0], [-2.0, 0.0], [0.0, 3.0]])
+    direction = torch.tensor([1.0, 0.0])
+    safe_centroid = torch.tensor([0.0, 0.0])
+
+    updated = projection_rejection_update(
+        h,
+        direction,
+        safe_centroid,
+        strength=0.5,
+        norm_cap=0.1,
+        strength_mode="matched_relative",
+    )
+    delta = updated - h
+    relative_norm = delta.norm(dim=-1) / h.norm(dim=-1)
+
+    assert relative_norm.tolist() == pytest.approx([0.05, 0.05, 0.05])
+    assert updated[0, 0].item() < h[0, 0].item()
+    assert updated[1, 0].item() < h[1, 0].item()

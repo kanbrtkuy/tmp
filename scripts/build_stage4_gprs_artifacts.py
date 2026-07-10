@@ -80,6 +80,8 @@ def build_artifacts(
     positions: list[str],
     manifest_path: Path,
     allow_teacher_forced_only: bool = False,
+    allow_failed_stage3_for_smoke: bool = False,
+    require_probe_checkpoint: bool = True,
 ) -> dict[str, Any]:
     evidence = read_json(stage3_evidence_report)
     from cot_safety.steering.gprs import stage3_evidence_gate
@@ -88,7 +90,7 @@ def build_artifacts(
         evidence,
         require_confirmatory=not allow_teacher_forced_only,
     )
-    if not evidence_gate["ready"]:
+    if not evidence_gate["ready"] and not allow_failed_stage3_for_smoke:
         raise SystemExit(
             "Refusing to build GPRS artifacts because Stage3 evidence did not pass: "
             f"status={evidence_gate['status']} pause_only_status={evidence_gate['pause_only_status']} "
@@ -128,7 +130,7 @@ def build_artifacts(
                 )
         if probe_source.resolve() != probe_target.resolve():
             shutil.copy2(probe_source, probe_target)
-    elif not probe_target.exists():
+    elif require_probe_checkpoint and not probe_target.exists():
         raise FileNotFoundError(
             "Probe checkpoint is missing. Pass --probe_checkpoint_source or create "
             f"the configured checkpoint first: {probe_target}"
@@ -138,7 +140,8 @@ def build_artifacts(
         confirmatory_endpoint.get("report_path") if isinstance(confirmatory_endpoint, dict) else None
     )
     manifest = {
-        "status": "ready",
+        "status": "smoke_ready_stage3_failed" if allow_failed_stage3_for_smoke and not evidence_gate["ready"] else "ready",
+        "smoke_only": bool(allow_failed_stage3_for_smoke and not evidence_gate["ready"]),
         "direction_artifact": str(direction_path),
         "safe_centroid": str(centroid_path),
         "probe_checkpoint": str(probe_target),
@@ -161,6 +164,8 @@ def build_artifacts(
             "confirmatory_endpoint": confirmatory_endpoint,
             "on_policy_report_path": confirmatory_report_path,
             "require_confirmatory": evidence_gate["require_confirmatory"],
+            "gate_ready": evidence_gate["ready"],
+            "gate_missing": evidence_gate["missing"],
         },
         "direction_norm_before_normalization": direction_norm,
         **meta,
@@ -180,6 +185,11 @@ def main() -> None:
     parser.add_argument("--layer", type=int, default=None)
     parser.add_argument("--probe_checkpoint_source", default=None)
     parser.add_argument("--manifest_json", default=None)
+    parser.add_argument(
+        "--allow_failed_stage3_for_smoke",
+        action="store_true",
+        help="Build direction/centroid artifacts for parameter smoke only even when Stage3 evidence failed.",
+    )
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
 
@@ -221,6 +231,8 @@ def main() -> None:
         "stage3_evidence_report": str(evidence_report),
         "manifest_json": str(manifest_path),
         "allow_teacher_forced_only": bool(meta.get("allow_teacher_forced_only", False)),
+        "allow_failed_stage3_for_smoke": bool(args.allow_failed_stage3_for_smoke),
+        "require_probe_checkpoint": bool(meta.get("gate_mode") != "none"),
     }
     if args.dry_run:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
@@ -236,6 +248,8 @@ def main() -> None:
         positions=positions,
         manifest_path=manifest_path,
         allow_teacher_forced_only=bool(meta.get("allow_teacher_forced_only", False)),
+        allow_failed_stage3_for_smoke=bool(args.allow_failed_stage3_for_smoke),
+        require_probe_checkpoint=bool(meta.get("gate_mode") != "none"),
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
