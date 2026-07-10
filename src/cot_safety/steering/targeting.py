@@ -146,7 +146,7 @@ def resolve_steering_positions(
         positions[f"pause_{idx}"] = int(pos)
 
     pause_set = set(pause_positions)
-    original_reasoning_positions = [pos for pos in range(reasoning_start, end_think_start) if pos not in pause_set]
+    original_reasoning_positions = [pos for pos in range(reasoning_start, pause_positions[0]) if pos not in pause_set]
     for idx, pos in enumerate(original_reasoning_positions):
         positions[f"cot_{idx}"] = int(pos)
         positions[f"token_{idx}"] = int(pos)

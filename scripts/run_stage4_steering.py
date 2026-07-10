@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -294,6 +295,7 @@ def gprs_generation_commands(
         raise SystemExit("GPRS generation requires eval.dataset_specs entries.")
     commands: list[list[str]] = []
     devices = generation_devices(env)
+    strength_mode = str(gprs["strength_mode"])
     tokenizer = str(resolve_value(model.get("tokenizer") or model_path(model)))
     position_lora_path = str(resolve_value(model.get("position_lora_path") or ""))
     token_rows = str(resolve_value(model.get("trainable_token_rows") or ""))
@@ -321,6 +323,7 @@ def gprs_generation_commands(
                                 / f"direction_{direction_tag}"
                                 / str(dataset["name"])
                                 / str(target_name)
+                                / f"mode_{strength_mode}"
                                 / f"seed_{seed}"
                                 / f"alpha_{alpha_label(alpha)}"
                             )
@@ -346,7 +349,7 @@ def gprs_generation_commands(
                                 "--norm_cap",
                                 str(gprs.get("norm_cap", 0.10)),
                                 "--strength_mode",
-                                str(gprs.get("strength_mode", "projection")),
+                                strength_mode,
                                 "--gate_mode",
                                 str(gprs.get("gate_mode", "none")),
                                 "--layer",
@@ -492,6 +495,7 @@ def require_pivot_artifact_paths(config: dict[str, Any], repo_root: Path) -> dic
     checks = {
         "direction_artifact": gprs.get("direction_artifact"),
         "safe_centroid": gprs.get("safe_centroid"),
+        "artifact_manifest": gprs.get("artifact_manifest"),
         "position_lora_path": model.get("position_lora_path"),
         "trainable_token_rows": model.get("trainable_token_rows"),
     }
@@ -509,7 +513,100 @@ def require_pivot_artifact_paths(config: dict[str, Any], repo_root: Path) -> dic
             missing[key] = str(path)
     if missing:
         raise SystemExit(f"Stage4 steering-first pivot artifact preflight failed: missing={missing}")
-    return {"ready": True, "paths": resolved}
+    manifest_path = Path(resolved.get("artifact_manifest", ""))
+    if not manifest_path.exists():
+        raise SystemExit("Stage4 steering-first pivot artifact preflight failed: missing artifact_manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    problems: list[str] = []
+    expected_layer = int(config.get("steering", {}).get("layer", -1))
+    manifest_layer = int(manifest.get("layer", -1))
+    if manifest_layer != expected_layer:
+        problems.append(f"layer:{manifest_layer}!={expected_layer}")
+    if bool(manifest.get("smoke_only", False)):
+        problems.append("artifact_manifest_is_smoke_only")
+    manifest_positions = {str(item) for item in manifest.get("positions", [])}
+    required_pause_targets = {f"pause_{idx}" for idx in range(int(config.get("steering", {}).get("n_insert_pauses", 3)))}
+    if not required_pause_targets.issubset(manifest_positions):
+        problems.append(f"positions_missing:{sorted(required_pause_targets - manifest_positions)}")
+    smoke_test = manifest.get("smoke_test") or {}
+    if str(smoke_test.get("status") or "") != "pass":
+        problems.append("missing_or_failed_smoke_stamp")
+    if problems:
+        raise SystemExit(f"Stage4 steering-first pivot provenance failed: {problems}")
+    return {"ready": True, "paths": resolved, "artifact_manifest": manifest}
+
+
+def stage4_judge_command(
+    config: dict[str, Any],
+    repo_root: Path,
+    legacy_root: Path,
+    env: dict[str, str],
+    args: argparse.Namespace,
+) -> list[str]:
+    eval_cfg = config.get("eval", {})
+    judges = [str(item) for item in eval_cfg.get("judges", ["wildguard"])]
+    judge = judges[0] if judges else "wildguard"
+    mapped = judge_models(eval_cfg)
+    model_map_json = json.dumps(mapped or {judge: env.get(f"{judge.upper()}_MODEL", "")})
+    max_model_len_json = json.dumps(
+        {
+            "wildguard": int(env.get("JUDGE_MAX_INPUT_LENGTH", "4096")),
+            "llamaguard": int(env.get("JUDGE_MAX_INPUT_LENGTH", "4096")),
+            "harmbench": int(eval_cfg.get("harmbench_max_input_length", 2048)),
+        }
+    )
+    return [
+        args.python,
+        "scripts/run_stage4_judge.py",
+        "--run_root",
+        env["OUT_ROOT"],
+        "--legacy_root",
+        str(legacy_root),
+        "--python",
+        args.python,
+        "--judge",
+        judge,
+        "--backend",
+        str(eval_cfg.get("judge_backend", env.get("STAGE4_JUDGE_BACKEND", "vllm"))),
+        "--model_map_json",
+        model_map_json,
+        "--max_model_len_json",
+        max_model_len_json,
+        "--batch_size",
+        env.get("JUDGE_BATCH_SIZE", "1"),
+        "--max_input_length",
+        env.get("JUDGE_MAX_INPUT_LENGTH", "4096"),
+        "--devices",
+        env.get("DEVICES", "0"),
+        "--gpu_memory_utilization",
+        env.get("VLLM_JUDGE_GPU_MEMORY_UTILIZATION", "0.90"),
+        "--max_num_seqs",
+        env.get("VLLM_JUDGE_MAX_NUM_SEQS", "32"),
+        "--dtype",
+        str(config.get("runtime", {}).get("torch_dtype", "bfloat16")),
+        "--strategy",
+        str(eval_cfg.get("judge_strategy", "conservative")),
+    ]
+
+
+def stage4_summary_command(env: dict[str, str], args: argparse.Namespace) -> list[str]:
+    return [
+        args.python,
+        "scripts/analyze_stage4_bootstrap.py",
+        "--run_root",
+        env["OUT_ROOT"],
+        "--normalized_filename",
+        "open_judges_normalized.jsonl",
+        "--output_json",
+        str(Path(env["OUT_ROOT"]) / "stage4_bootstrap_summary.json"),
+    ]
+
+
+def run_or_print(command: list[str], *, repo_root: Path, env: dict[str, str], dry_run: bool) -> int:
+    print("$ " + " ".join(command))
+    if dry_run:
+        return 0
+    return subprocess.run(command, cwd=repo_root, env=env).returncode
 
 
 def main() -> None:
@@ -592,6 +689,12 @@ def main() -> None:
             return
         raise SystemExit(subprocess.run(command, cwd=repo_root, env=env).returncode)
 
+    if steering_method in {"gprs", "projection"} and args.phase == "judge":
+        raise SystemExit(run_or_print(stage4_judge_command(config, repo_root, legacy_root, env, args), repo_root=repo_root, env=env, dry_run=args.dry_run))
+
+    if steering_method in {"gprs", "projection"} and args.phase == "summary":
+        raise SystemExit(run_or_print(stage4_summary_command(env, args), repo_root=repo_root, env=env, dry_run=args.dry_run))
+
     if steering_method in {"gprs", "projection"} and args.phase in {"generation", "eval", "all"}:
         if not bool(config.get("steering", {}).get("gprs", {}).get("steering_first_pivot", False)):
             readiness = require_gprs_readiness(config, repo_root)
@@ -608,10 +711,11 @@ def main() -> None:
                 raise SystemExit(rc)
         if args.phase == "generation":
             return
-        raise SystemExit(
-            "GPRS generation completed. Judge/summary wiring for the matched A0-A5 battery is intentionally separate; "
-            "run the judge phase after inspecting generation manifests."
-        )
+        judge_rc = run_or_print(stage4_judge_command(config, repo_root, legacy_root, env, args), repo_root=repo_root, env=env, dry_run=args.dry_run)
+        if judge_rc != 0:
+            raise SystemExit(judge_rc)
+        summary_rc = run_or_print(stage4_summary_command(env, args), repo_root=repo_root, env=env, dry_run=args.dry_run)
+        raise SystemExit(summary_rc)
 
     command = ["bash", str(legacy_root / "scripts/steering/run_intra_pause_full_steering_eval.sh")]
     printable_env = {

@@ -78,14 +78,42 @@ def test_resolve_open_ended_stage4_targets():
         n_pause_tokens=3,
     )
     assert resolved.info["parse_status"] == "open_ended_think"
-    assert [resolved.positions[name] for name in ("cot_4", "pause_0", "pause_2", "cot_5", "post_pause_1")] == [
-        8,
-        9,
-        11,
-        12,
-        12,
-    ]
+    assert [resolved.positions[name] for name in ("cot_4", "pause_0", "pause_2", "post_pause_1")] == [8, 9, 11, 12]
+    assert "cot_5" not in resolved.positions
     assert resolved.positions["token_4"] == resolved.positions["cot_4"]
+
+
+def test_requesting_cot_after_pause_fails_resolution():
+    tok = TinyTokenizer()
+    row = [
+        tok.vocab["<｜Assistant｜>"],
+        tok.vocab["<think>"],
+        tok.vocab["\n"],
+        tok.vocab["a"],
+        tok.vocab["b"],
+        tok.vocab["c"],
+        tok.vocab["d"],
+        tok.vocab["e"],
+        tok.vocab["<|pause|>"],
+        tok.vocab["<|pause|>"],
+        tok.vocab["<|pause|>"],
+        tok.vocab["f"],
+    ]
+    input_ids = torch.tensor([row], dtype=torch.long)
+    attention_mask = torch.ones_like(input_ids)
+    _mask, resolutions = build_target_mask(
+        input_ids,
+        attention_mask,
+        tok,
+        target_positions=["cot_5"],
+        assistant_ids=[tok.vocab["<｜Assistant｜>"]],
+        pause_ids=[tok.vocab["<|pause|>"]],
+        think_ids=[tok.vocab["<think>"]],
+        end_think_ids=[tok.vocab["</think>"]],
+        n_pause_tokens=3,
+    )
+    assert resolutions[0]["status"] == "missing_targets"
+    assert resolutions[0]["missing"] == ["cot_5"]
 
 
 def test_build_target_mask_maps_unpadded_positions_to_left_padded_batch():

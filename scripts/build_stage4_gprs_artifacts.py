@@ -82,6 +82,7 @@ def build_artifacts(
     allow_teacher_forced_only: bool = False,
     allow_failed_stage3_for_smoke: bool = False,
     require_probe_checkpoint: bool = True,
+    smoke_test_report: Path | None = None,
 ) -> dict[str, Any]:
     evidence = read_json(stage3_evidence_report)
     from cot_safety.steering.gprs import stage3_evidence_gate
@@ -139,6 +140,19 @@ def build_artifacts(
     confirmatory_report_path = (
         confirmatory_endpoint.get("report_path") if isinstance(confirmatory_endpoint, dict) else None
     )
+    smoke_test = {"status": "missing"}
+    if smoke_test_report is not None:
+        smoke_payload = read_json(smoke_test_report)
+        passed = bool(
+            smoke_payload.get("passed") is True
+            or smoke_payload.get("matched_strength_pass") is True
+            or str(smoke_payload.get("status") or "") == "pass"
+        )
+        smoke_test = {
+            "status": "pass" if passed else "fail",
+            "path": str(smoke_test_report),
+            "keys": sorted(str(key) for key in smoke_payload.keys()),
+        }
     manifest = {
         "status": "smoke_ready_stage3_failed" if allow_failed_stage3_for_smoke and not evidence_gate["ready"] else "ready",
         "smoke_only": bool(allow_failed_stage3_for_smoke and not evidence_gate["ready"]),
@@ -146,6 +160,7 @@ def build_artifacts(
         "safe_centroid": str(centroid_path),
         "probe_checkpoint": str(probe_target),
         "direction_provenance": "teacher_forced_prompt_labels",
+        "smoke_test": smoke_test,
         "probe_metadata": {
             "source": str(probe_source) if probe_source else str(probe_target),
             "layers": probe_layers if probe_source is not None and isinstance(probe_payload, dict) else [],
@@ -185,6 +200,7 @@ def main() -> None:
     parser.add_argument("--layer", type=int, default=None)
     parser.add_argument("--probe_checkpoint_source", default=None)
     parser.add_argument("--manifest_json", default=None)
+    parser.add_argument("--smoke_test_report", default=None)
     parser.add_argument(
         "--allow_failed_stage3_for_smoke",
         action="store_true",
@@ -215,6 +231,7 @@ def main() -> None:
         raise SystemExit("GPRS artifact builder requires --stage3_evidence_report or steering.gprs.stage3_evidence_report.")
     evidence_report = resolve_repo_path(str(evidence_report_raw))
     probe_source = resolve_repo_path(args.probe_checkpoint_source) if args.probe_checkpoint_source else None
+    smoke_test_report = resolve_repo_path(args.smoke_test_report) if args.smoke_test_report else None
     manifest_path = (
         resolve_repo_path(args.manifest_json)
         if args.manifest_json
@@ -233,6 +250,7 @@ def main() -> None:
         "allow_teacher_forced_only": bool(meta.get("allow_teacher_forced_only", False)),
         "allow_failed_stage3_for_smoke": bool(args.allow_failed_stage3_for_smoke),
         "require_probe_checkpoint": bool(meta.get("gate_mode") != "none"),
+        "smoke_test_report": str(smoke_test_report) if smoke_test_report else "",
     }
     if args.dry_run:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
@@ -250,6 +268,7 @@ def main() -> None:
         allow_teacher_forced_only=bool(meta.get("allow_teacher_forced_only", False)),
         allow_failed_stage3_for_smoke=bool(args.allow_failed_stage3_for_smoke),
         require_probe_checkpoint=bool(meta.get("gate_mode") != "none"),
+        smoke_test_report=smoke_test_report,
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 

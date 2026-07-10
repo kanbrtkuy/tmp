@@ -12,6 +12,7 @@ This review packet is for the clean Stage4 steering battery after the Stage2/3 P
   - `content_pre_pause_2_4` = `cot_2,cot_3,cot_4`.
   - `post_pause_1_3` = `post_pause_1,post_pause_2,post_pause_3`.
 - Strength mode: `matched_relative`, so pause/content/post arms receive matched applied relative perturbation norms.
+- The older projection-rejection protocol draft in this folder is superseded by the revised protocol wording: the primary run is a fixed-relative-norm positional perturbation, not an unsafe-projection-removal claim.
 - Gate mode: `none` for this first clean battery.
 - Main comparison: `A3 - A2` is steering effect; `A3 - A0` must not be reported as steering.
 

@@ -67,24 +67,26 @@ Date: 2026-07-10
 
 ## Steering Method
 
-采用 GPRS / projection-rejection：
+主实验采用 `matched_relative` positional perturbation，而不是 projection-removal：
 
 ```text
-h <- h - lambda * max((h - mu_safe) dot u, 0) * u
+h <- h - alpha * norm_cap * ||h|| * u
 ```
 
 其中：
 
-- `u` 是 unsafe direction；
-- `mu_safe` 是 safe centroid；
-- 加 norm cap，避免把 hidden 拉飞；
-- 可加 gate，只在 probe 判断 unsafe risk 高时动手。
+- `u` 是 pause-site unsafe direction；
+- `alpha` 必须在 `(0, 1]`，不允许静默 clamp；
+- `norm_cap` 决定 applied relative norm；
+- pause/content/post arms 必须用 matched applied relative norm；
+- 这个主实验回答的是“同等大小扰动下，pause 作为位置是否更 clean”，不是“移除 unsafe projection 后发生了什么”；
+- projection-rejection `h <- h - lambda * max((h - mu_safe) dot u, 0) * u` 只能作为 archival/sensitivity mode，不能和 matched_relative 数字混报。
 
 Direction 规则：
 
-- primary pause direction：用 on-policy Stage3 / branch-rollout pause states 的 train split 拟合；
-- ordinary-token counterfactual primary：每个 target site 用同样 recipe 拟合 site-specific direction；
-- sensitivity：把 pause direction 直接搬到 ordinary token 上。
+- primary pause direction：用 Stage3 pause states 的 train split 拟合；
+- 当前 A4 是 direction-transport counterfactual：同一个 pause direction 被施加到 ordinary content/post-pause sites；
+- 如果以后要做 site-specific ordinary-token direction，必须单独命名，不能和当前 A4 混为一谈。
 
 这样能回答两个问题：
 
@@ -118,7 +120,7 @@ Primary:
 
 G-S0 integrity:
 
-- `lambda=0` 必须 bit-exact 等于 A2；
+- `alpha=0` 必须 bit-exact 等于 A2；
 - adapter off + row reverted 必须等于 base；
 - steering 后 exact-3/location >= 98%；
 - hook 必须只碰目标位置。
@@ -156,7 +158,7 @@ G-S4 side effects:
 - harmful prompts: 200，总共来自 StrongReject / HarmBench / JailbreakBench / WildJailbreak，`k=8`；
 - safe prompts: XSTest-safe 250 + OR-Bench-hard-safe 200，`k=4`；
 - capability: GSM8K 500 + MATH500，`k=4`；
-- lambda pilot: 50 held-out validation prompts，`k=8`。
+- alpha/norm-cap pilot: 50 held-out validation prompts，`k=8`。
 
 Judges：
 
@@ -181,22 +183,22 @@ Judges：
    - 修 `stage3_evidence_gate`，增加显式 `steering_first_pivot`，不能静默 bypass。
 
 3. 先跑 code integrity tests：
-   - lambda=0 bit-exact；
-   - large-lambda output changes；
+   - alpha=0 bit-exact；
+   - large-alpha output changes；
    - hook target count 正确；
    - ordinary-token diagnostic mode 被 headline report 拒绝；
    - pause-row / LoRA artifact 没被 reinit。
 
 4. 构建 artifacts：
    - pause direction；
-   - cot/post/token site-specific directions；
+   - cot/post/token site-specific directions 是后续扩展；当前 A4 明确是 pause-direction transport；
    - random direction；
    - safe centroid；
    - manifest hash。
 
-5. 跑 lambda pilot：
+5. 跑 alpha/norm-cap pilot：
    - 选择最小能改变 unsafe rate、且不破坏格式/能力的强度；
-   - 冻结 lambda/norm-cap，不在 test 上调参。
+   - 冻结 alpha/norm-cap，不在 test 上调参。
 
 6. 跑完整 1.5B Stage4 battery：
    - A0-A5 必跑；
@@ -218,10 +220,10 @@ Must-have:
 2. generation hook 必须在 KV cache 写入前改 hidden，否则对后续 token 可能是 no-op。
 3. 加 `diagnostic_targets: true`，显式允许 `cot_*` / `post_pause_*` / `token_*`，但报告里必须标 `diagnostic_only`。
 4. 默认 `scope.py` 继续禁止非 pause target。
-5. matched-strength：每个 target 记录 applied norm，跨 arm tolerance 建议 <= 10%。
+5. matched-strength：每个 target 记录 applied norm，跨 arm tolerance 建议 <= 1%。
 6. shared position resolver 复用 Stage3 extraction 的 cot offset 逻辑。
 7. paired bootstrap analysis 输出 A3-A2、A3-best(A4)、A3-A5。
-8. manifest 记录 direction hash、lambda、norm cap、target positions、seed、pause-row source、LoRA artifact path、base checksum。
+8. manifest 记录 direction provenance、strength_mode、alpha、norm cap、target positions、seed、pause-row source、LoRA artifact path、base checksum。
 
 Nice-to-have:
 

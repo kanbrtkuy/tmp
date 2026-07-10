@@ -448,6 +448,20 @@ def continue_batch(
             logits_processor=suppress_processor,
         )
         batch_hook_stats = dict(stats)
+    if float(args.alpha) != 0.0:
+        if int(batch_hook_stats.get("num_applied_calls", 0)) < 1 or batch_hook_stats.get("shape_mismatches"):
+            raise RuntimeError(
+                "gprs_hook_not_applied:"
+                + json.dumps(
+                    {
+                        "num_applied_calls": batch_hook_stats.get("num_applied_calls"),
+                        "shape_mismatches": batch_hook_stats.get("shape_mismatches"),
+                        "target_positions": target_positions,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
     prompt_width = int(input_ids_sub.shape[1])
     for sub_row_idx, (row_idx, row) in enumerate(zip(ok_indices, generated)):
         continuation = [int(item) for item in row[prompt_width:].detach().cpu().tolist()]
@@ -465,6 +479,23 @@ def continue_batch(
         if "per_row_target_tokens" in batch_hook_stats:
             row_stats["num_target_tokens"] = int(batch_hook_stats["per_row_target_tokens"][sub_row_idx])
             row_stats["per_row_target_tokens"] = [int(batch_hook_stats["per_row_target_tokens"][sub_row_idx])]
+        if float(args.alpha) != 0.0:
+            applied = len(row_stats.get("applied_relative_norms") or [])
+            expected = int(row_stats.get("num_target_tokens", 0))
+            if applied != expected:
+                raise RuntimeError(
+                    "gprs_row_norm_count_mismatch:"
+                    + json.dumps(
+                        {
+                            "row_index": int(row_idx),
+                            "applied_relative_norms": applied,
+                            "num_target_tokens": expected,
+                            "target_positions": target_positions,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
         hook_stats_rows[row_idx] = row_stats
     return continuations, resolutions, hook_stats_rows
 
@@ -607,7 +638,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--random_direction", action="store_true")
     parser.add_argument("--alpha", type=float, default=0.0)
     parser.add_argument("--norm_cap", type=float, default=0.10)
-    parser.add_argument("--strength_mode", choices=("projection", "matched_relative"), default="projection")
+    parser.add_argument("--strength_mode", choices=("projection", "matched_relative"), required=True)
     parser.add_argument("--gate_mode", choices=("none",), default="none")
     parser.add_argument("--layer", type=int, default=14)
     parser.add_argument("--batch_size", type=int, default=4)

@@ -34,7 +34,9 @@ def validate_gprs_config(config: dict[str, Any]) -> dict[str, Any]:
     norm_cap = float(gprs.get("norm_cap", 0.10))
     if norm_cap <= 0.0:
         raise ValueError("steering.gprs.norm_cap must be positive.")
-    strength_mode = str(gprs.get("strength_mode", "projection"))
+    if not gprs.get("strength_mode"):
+        raise ValueError("GPRS steering requires steering.gprs.strength_mode.")
+    strength_mode = str(gprs["strength_mode"])
     if strength_mode not in {"projection", "matched_relative"}:
         raise ValueError(f"Unsupported steering.gprs.strength_mode: {strength_mode!r}")
     gate_threshold = None
@@ -196,9 +198,9 @@ def projection_rejection_update(
     direction: Any,
     safe_centroid: Any,
     *,
+    strength_mode: str,
     strength: float = 1.0,
     norm_cap: float | None = 0.10,
-    strength_mode: str = "projection",
     gate_score: Any | None = None,
     gate_threshold: float | None = None,
 ) -> Any:
@@ -229,7 +231,9 @@ def projection_rejection_update(
             raise ValueError("norm_cap is required for strength_mode='matched_relative'.")
         if norm_cap <= 0.0:
             raise ValueError("norm_cap must be positive when provided.")
-        target_relative_norm = min(float(strength), 1.0) * float(norm_cap)
+        if not 0.0 < float(strength) <= 1.0:
+            raise ValueError(f"matched_relative requires alpha in (0, 1], got {strength}")
+        target_relative_norm = float(strength) * float(norm_cap)
         delta_scale = target_relative_norm * h.norm(dim=-1, keepdim=True).clamp_min(1e-12)
         gate = (coeff > 0.0).to(delta_scale.dtype) if gate_score is not None else 1.0
         return h - delta_scale * gate * direction_norm
@@ -263,7 +267,7 @@ def gprs_forward_hook(
     safe_centroid: Any,
     strength: float,
     norm_cap: float | None,
-    strength_mode: str = "projection",
+    strength_mode: str,
     apply_once: bool = True,
 ):
     """Apply GPRS to a precomputed batch target mask during a forward pass.
@@ -281,7 +285,7 @@ def gprs_forward_hook(
         "norm_cap": norm_cap,
         "strength_mode": str(strength_mode),
         "effective_relative_norm": (
-            min(float(strength), 1.0) * float(norm_cap)
+            float(strength) * float(norm_cap)
             if strength_mode == "matched_relative" and norm_cap is not None
             else None
         ),

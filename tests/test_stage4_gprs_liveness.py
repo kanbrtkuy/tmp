@@ -173,6 +173,12 @@ def test_validate_gprs_config_requires_artifacts():
         raise AssertionError("validate_gprs_config should reject incomplete GPRS configs")
 
 
+def test_validate_gprs_config_requires_strength_mode():
+    config = {"steering": {"method": "gprs", "gprs": {"direction_artifact": "u.pt", "safe_centroid": "mu.pt"}}}
+    with pytest.raises(ValueError, match="strength_mode"):
+        validate_gprs_config(config)
+
+
 def test_validate_gprs_config_accepts_complete_config():
     config = {
         "steering": {
@@ -183,6 +189,7 @@ def test_validate_gprs_config_accepts_complete_config():
                 "probe_checkpoint": "probe.pt",
                 "gate_threshold": 0.9,
                 "norm_cap": 0.1,
+                "strength_mode": "projection",
             },
         }
     }
@@ -229,6 +236,7 @@ def test_gprs_forward_hook_applies_only_matching_prefix_shape():
         safe_centroid=safe,
         strength=1.0,
         norm_cap=None,
+        strength_mode="projection",
     ) as stats:
         out = layers[0](hidden)
         cached = layers[0](hidden[:, -1:, :])
@@ -263,6 +271,7 @@ def test_gprs_forward_hook_zero_strength_is_bit_exact():
         safe_centroid=safe,
         strength=0.0,
         norm_cap=0.1,
+        strength_mode="projection",
     ) as stats:
         out = layers[0](hidden)
 
@@ -308,6 +317,7 @@ def test_gprs_artifact_status_requires_all_artifacts(tmp_path):
                 "direction_artifact": "u.pt",
                 "safe_centroid": "mu.pt",
                 "probe_checkpoint": "probe.pt",
+                "strength_mode": "projection",
             },
         }
     }
@@ -359,6 +369,7 @@ def test_gprs_artifact_status_requires_on_policy_confirmatory_pass(tmp_path):
                 "safe_centroid": "mu.pt",
                 "probe_checkpoint": "probe.pt",
                 "stage3_evidence_report": "stage3_evidence_report.json",
+                "strength_mode": "projection",
             },
         }
     }
@@ -412,6 +423,7 @@ def test_projection_rejection_update_only_moves_positive_side_and_caps_norm():
         h,
         direction,
         safe_centroid,
+        strength_mode="projection",
         strength=1.0,
         norm_cap=0.25,
     )
@@ -435,6 +447,7 @@ def test_projection_rejection_update_uses_probe_gate_threshold():
         h,
         direction,
         safe_centroid,
+        strength_mode="projection",
         strength=1.0,
         norm_cap=None,
         gate_score=scores,
@@ -451,10 +464,36 @@ def test_projection_rejection_update_without_cap_reaches_safe_halfspace():
     direction = torch.tensor([1.0, 0.0])
     safe_centroid = torch.tensor([0.0, 0.0])
 
-    updated = projection_rejection_update(h, direction, safe_centroid, strength=1.0, norm_cap=None)
+    updated = projection_rejection_update(h, direction, safe_centroid, strength_mode="projection", strength=1.0, norm_cap=None)
 
     assert updated[0].tolist() == pytest.approx([0.0, 0.0])
     assert updated[1].tolist() == pytest.approx([-2.0, 0.0])
+
+
+def test_projection_rejection_update_matched_relative_rejects_silent_alpha_clamp():
+    torch = pytest.importorskip("torch")
+    h = torch.tensor([[2.0, 0.0]])
+    direction = torch.tensor([1.0, 0.0])
+    safe_centroid = torch.tensor([0.0, 0.0])
+
+    with pytest.raises(ValueError, match="matched_relative requires alpha"):
+        projection_rejection_update(
+            h,
+            direction,
+            safe_centroid,
+            strength=2.0,
+            norm_cap=0.1,
+            strength_mode="matched_relative",
+        )
+    with pytest.raises(ValueError, match="matched_relative requires alpha"):
+        projection_rejection_update(
+            h,
+            direction,
+            safe_centroid,
+            strength=0.0,
+            norm_cap=0.1,
+            strength_mode="matched_relative",
+        )
 
 
 def test_projection_rejection_update_matched_relative_has_equal_actual_norm():
