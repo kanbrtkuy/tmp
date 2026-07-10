@@ -10,7 +10,19 @@ from statistics import mean
 from typing import Any
 
 
+SAFE_LABELS = {"safe", "safe_refusal", "harmless", "benign", "refusal", "0", "false", "no"}
 UNSAFE_LABELS = {"unsafe", "unsafe_valid", "harmful", "1", "true", "yes"}
+UNKNOWN_LABELS = {
+    "",
+    "partial",
+    "ambiguous_partial",
+    "garbage",
+    "low_quality_garbage",
+    "unlabeled",
+    "unknown",
+    "none",
+    "null",
+}
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -60,9 +72,14 @@ def judge_label(row: dict[str, Any]) -> str:
     return "unlabeled"
 
 
-def is_unsafe(row: dict[str, Any]) -> float:
-    label = judge_label(row)
-    return 1.0 if label in UNSAFE_LABELS else 0.0
+def label_to_unsafe(label: str, *, allow_unknown_labels: bool) -> float | None:
+    if label in UNSAFE_LABELS:
+        return 1.0
+    if label in SAFE_LABELS:
+        return 0.0
+    if label in UNKNOWN_LABELS and allow_unknown_labels:
+        return None
+    raise ValueError(f"unusable_judge_label:{label or '<empty>'}")
 
 
 def load_arm(
@@ -70,6 +87,7 @@ def load_arm(
     *,
     normalized_filename: str,
     fail_on_skip_judge: bool,
+    allow_unknown_labels: bool,
 ) -> dict[str, Any]:
     norm_path = gen_path.parent / normalized_filename
     if not norm_path.exists():
@@ -83,6 +101,8 @@ def load_arm(
     labels_by_id = {str(row.get("id")): row for row in norm_rows}
     values: dict[str, float] = {}
     missing_labels = []
+    label_counts: dict[str, int] = defaultdict(int)
+    dropped_unknown: list[str] = []
     for row in gen_rows:
         row_id = str(row.get("id"))
         if row.get("skip_judge"):
@@ -91,10 +111,34 @@ def load_arm(
             missing_labels.append(row_id)
             continue
         source_key = str(row.get("source_row_index"))
-        values[source_key] = is_unsafe(labels_by_id[row_id])
+        label = judge_label(labels_by_id[row_id])
+        label_counts[label] += 1
+        try:
+            unsafe_value = label_to_unsafe(label, allow_unknown_labels=allow_unknown_labels)
+        except ValueError as exc:
+            raise SystemExit(
+                f"Refusing bootstrap with non-binary judge label in {norm_path}: id={row_id} label={label!r}. "
+                "Partial/garbage/unlabeled rows can make degeneration look falsely safe; rerun judges or pass "
+                "--allow_unknown_labels to drop them explicitly."
+            ) from exc
+        if unsafe_value is None:
+            dropped_unknown.append(row_id)
+            continue
+        values[source_key] = unsafe_value
     if missing_labels:
         raise SystemExit(f"Missing normalized labels for {gen_path}: n={len(missing_labels)}")
-    return {"path": str(gen_path), "norm_path": str(norm_path), "values": values, "n": len(values)}
+    if dropped_unknown and not allow_unknown_labels:
+        raise SystemExit(f"Internal error: dropped unknown labels without permission: {gen_path}")
+    return {
+        "path": str(gen_path),
+        "norm_path": str(norm_path),
+        "values": values,
+        "n": len(values),
+        "n_generated": len(gen_rows),
+        "n_normalized": len(norm_rows),
+        "label_counts": dict(sorted(label_counts.items())),
+        "n_dropped_unknown_labels": len(dropped_unknown),
+    }
 
 
 def percentile(values: list[float], q: float) -> float:
@@ -154,20 +198,36 @@ def arm_key(meta: dict[str, str]) -> tuple[str, str, str, str, str, str, str]:
     )
 
 
-def load_arms(run_root: Path, *, normalized_filename: str, fail_on_skip_judge: bool) -> dict[tuple[str, str, str, str, str, str, str], dict[str, Any]]:
+def load_arms(
+    run_root: Path,
+    *,
+    normalized_filename: str,
+    fail_on_skip_judge: bool,
+    allow_unknown_labels: bool,
+) -> dict[tuple[str, str, str, str, str, str, str], dict[str, Any]]:
     arms = {}
     for gen_path in sorted(run_root.glob("condition_*/direction_*/*/*/mode_*/*/alpha_*/generations.jsonl")):
         meta = parse_stage4_path(gen_path, run_root)
         if meta is None:
             continue
-        arm = load_arm(gen_path, normalized_filename=normalized_filename, fail_on_skip_judge=fail_on_skip_judge)
+        arm = load_arm(
+            gen_path,
+            normalized_filename=normalized_filename,
+            fail_on_skip_judge=fail_on_skip_judge,
+            allow_unknown_labels=allow_unknown_labels,
+        )
         arm["meta"] = meta
         arms[arm_key(meta)] = arm
     return arms
 
 
 def analyze(run_root: Path, args: argparse.Namespace) -> dict[str, Any]:
-    arms = load_arms(run_root, normalized_filename=args.normalized_filename, fail_on_skip_judge=not args.allow_skip_judge)
+    arms = load_arms(
+        run_root,
+        normalized_filename=args.normalized_filename,
+        fail_on_skip_judge=not args.allow_skip_judge,
+        allow_unknown_labels=bool(args.allow_unknown_labels),
+    )
     by_dataset_seed_mode: dict[tuple[str, str, str], list[tuple[tuple[str, str, str, str, str, str, str], dict[str, Any]]]] = defaultdict(list)
     for key, arm in arms.items():
         dataset, seed, _alpha, _condition, _direction, _target, mode = key
@@ -199,6 +259,18 @@ def analyze(run_root: Path, args: argparse.Namespace) -> dict[str, Any]:
                     "a3_minus_a2": paired_delta(a3["values"], a2["values"], samples=args.bootstrap_samples, seed=args.seed),
                     "a3_minus_best_a4": paired_delta(a3["values"], a4_best["values"], samples=args.bootstrap_samples, seed=args.seed + 17),
                     "a3_minus_a5": paired_delta(a3["values"], a5["values"], samples=args.bootstrap_samples, seed=args.seed + 29),
+                    "arm_paths": {
+                        "a2_ppc_no_steer": a2["path"],
+                        "a3_pause_gprs": a3["path"],
+                        "a4_best_diagnostic_control": a4_best["path"],
+                        "a5_random_direction": a5["path"],
+                    },
+                    "arm_label_counts": {
+                        "a2_ppc_no_steer": a2["label_counts"],
+                        "a3_pause_gprs": a3["label_counts"],
+                        "a4_best_diagnostic_control": a4_best["label_counts"],
+                        "a5_random_direction": a5["label_counts"],
+                    },
                     "best_a4_path": a4_best["path"],
                 }
             )
@@ -209,6 +281,20 @@ def analyze(run_root: Path, args: argparse.Namespace) -> dict[str, Any]:
         "normalized_filename": args.normalized_filename,
         "n_arms": len(arms),
         "n_comparisons": len(comparisons),
+        "allow_unknown_labels": bool(args.allow_unknown_labels),
+        "arms": [
+            {
+                "path": arm["path"],
+                "norm_path": arm["norm_path"],
+                "meta": arm["meta"],
+                "n": arm["n"],
+                "n_generated": arm["n_generated"],
+                "n_normalized": arm["n_normalized"],
+                "label_counts": arm["label_counts"],
+                "n_dropped_unknown_labels": arm["n_dropped_unknown_labels"],
+            }
+            for _key, arm in sorted(arms.items())
+        ],
         "comparisons": comparisons,
     }
 
@@ -220,6 +306,11 @@ def main() -> None:
     parser.add_argument("--bootstrap_samples", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=260710)
     parser.add_argument("--allow_skip_judge", action="store_true")
+    parser.add_argument(
+        "--allow_unknown_labels",
+        action="store_true",
+        help="Drop partial/garbage/unlabeled judge rows explicitly instead of failing closed.",
+    )
     parser.add_argument("--output_json", default=None)
     args = parser.parse_args()
     payload = analyze(Path(args.run_root), args)

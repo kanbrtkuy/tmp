@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -40,6 +41,14 @@ def words(values: list[Any] | tuple[Any, ...]) -> str:
 def absolute_path(value: Any, base: Path) -> str:
     path = Path(str(resolve_value(value)))
     return str(path if path.is_absolute() else base / path)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def model_path(model: dict[str, Any]) -> str:
@@ -492,6 +501,8 @@ def require_gprs_readiness(config: dict[str, Any], repo_root: Path) -> dict[str,
 def require_pivot_artifact_paths(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
     model = config.get("model", {})
     gprs = (config.get("steering", {}).get("gprs") or {})
+    if not str(resolve_value(gprs.get("artifact_manifest") or "")).strip():
+        raise SystemExit("Stage4 steering-first pivot artifact preflight failed: missing artifact_manifest in config")
     checks = {
         "direction_artifact": gprs.get("direction_artifact"),
         "safe_centroid": gprs.get("safe_centroid"),
@@ -531,6 +542,41 @@ def require_pivot_artifact_paths(config: dict[str, Any], repo_root: Path) -> dic
     smoke_test = manifest.get("smoke_test") or {}
     if str(smoke_test.get("status") or "") != "pass":
         problems.append("missing_or_failed_smoke_stamp")
+    artifact_files = manifest.get("artifact_files") or {}
+    for key in ("direction_artifact", "safe_centroid"):
+        entry = artifact_files.get(key)
+        if not isinstance(entry, dict):
+            problems.append(f"{key}_manifest_entry_missing")
+            continue
+        expected_path = Path(resolved[key])
+        manifest_raw_path = str(entry.get("path") or manifest.get(key) or "")
+        if not manifest_raw_path.strip():
+            problems.append(f"{key}_manifest_path_missing")
+        else:
+            manifest_path_entry = Path(resolve_value(manifest_raw_path))
+            if not manifest_path_entry.is_absolute():
+                manifest_path_entry = repo_root / manifest_path_entry
+            if manifest_path_entry.resolve() != expected_path.resolve():
+                problems.append(f"{key}_path_mismatch:{manifest_path_entry}!={expected_path}")
+        expected_hash = str(entry.get("sha256") or "")
+        if not expected_hash:
+            problems.append(f"{key}_sha256_missing")
+        else:
+            actual_hash = sha256_file(expected_path)
+            if actual_hash != expected_hash:
+                problems.append(f"{key}_sha256_mismatch")
+        entry_layer = entry.get("layer")
+        if entry_layer is not None and int(entry_layer) != expected_layer:
+            problems.append(f"{key}_layer:{entry_layer}!={expected_layer}")
+        entry_positions = {str(item) for item in entry.get("positions", [])}
+        if entry_positions and not required_pause_targets.issubset(entry_positions):
+            problems.append(f"{key}_positions_missing:{sorted(required_pause_targets - entry_positions)}")
+    if "probe_checkpoint" in resolved:
+        probe_entry = artifact_files.get("probe_checkpoint")
+        if not isinstance(probe_entry, dict):
+            problems.append("probe_checkpoint_manifest_entry_missing")
+        elif probe_entry.get("sha256") and sha256_file(Path(resolved["probe_checkpoint"])) != str(probe_entry["sha256"]):
+            problems.append("probe_checkpoint_sha256_mismatch")
     if problems:
         raise SystemExit(f"Stage4 steering-first pivot provenance failed: {problems}")
     return {"ready": True, "paths": resolved, "artifact_manifest": manifest}

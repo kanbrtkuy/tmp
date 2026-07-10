@@ -58,11 +58,75 @@ def prepare_judge_input(gen_path: Path, *, fail_on_skip_judge: bool) -> tuple[Pa
     return out, {"rows_in": len(rows), "rows_selected": len(selected), "rows_skip_judge": len(skipped), "rows_empty_response": len(empty)}
 
 
-def complete_jsonl(path: Path, expected_rows: int) -> bool:
-    if not path.exists() or path.stat().st_size == 0:
-        return False
-    actual = sum(1 for line in path.open("r", encoding="utf-8") if line.strip())
-    return actual == expected_rows
+def jsonl_ids(path: Path) -> list[str]:
+    ids = []
+    for idx, row in enumerate(read_jsonl(path)):
+        value = str(row.get("id") or "").strip()
+        if not value:
+            raise ValueError(f"missing_id:{path}:{idx}")
+        ids.append(value)
+    return ids
+
+
+def complete_normalized(judge_input: Path, norm_path: Path) -> dict[str, Any]:
+    expected_ids = jsonl_ids(judge_input)
+    norm_exists = norm_path.exists()
+    if not norm_exists or norm_path.stat().st_size == 0:
+        return {
+            "complete": False,
+            "reason": "missing_or_empty",
+            "expected_rows": len(expected_ids),
+            "actual_rows": 0,
+            "stale_existing": norm_exists,
+        }
+    try:
+        actual_ids = jsonl_ids(norm_path)
+    except ValueError as exc:
+        return {
+            "complete": False,
+            "reason": str(exc),
+            "expected_rows": len(expected_ids),
+            "actual_rows": sum(1 for line in norm_path.open("r", encoding="utf-8") if line.strip()),
+            "stale_existing": True,
+        }
+    expected_set = set(expected_ids)
+    actual_set = set(actual_ids)
+    duplicate_expected = len(expected_set) != len(expected_ids)
+    duplicate_actual = len(actual_set) != len(actual_ids)
+    if len(actual_ids) != len(expected_ids):
+        return {
+            "complete": False,
+            "reason": "row_count_mismatch",
+            "expected_rows": len(expected_ids),
+            "actual_rows": len(actual_ids),
+            "stale_existing": True,
+            "missing_ids": sorted(expected_set - actual_set)[:10],
+            "extra_ids": sorted(actual_set - expected_set)[:10],
+        }
+    if duplicate_expected or duplicate_actual or expected_set != actual_set:
+        return {
+            "complete": False,
+            "reason": "id_set_mismatch",
+            "expected_rows": len(expected_ids),
+            "actual_rows": len(actual_ids),
+            "stale_existing": True,
+            "duplicate_expected": duplicate_expected,
+            "duplicate_actual": duplicate_actual,
+            "missing_ids": sorted(expected_set - actual_set)[:10],
+            "extra_ids": sorted(actual_set - expected_set)[:10],
+        }
+    return {
+        "complete": True,
+        "reason": "ids_match",
+        "expected_rows": len(expected_ids),
+        "actual_rows": len(actual_ids),
+        "stale_existing": False,
+    }
+
+
+def unlink_if_exists(path: Path) -> None:
+    if path.exists():
+        path.unlink()
 
 
 def parse_json_obj(value: str) -> dict[str, str]:
@@ -227,7 +291,8 @@ def main() -> None:
         raw_path = gen_path.parent / args.raw_filename
         norm_path = gen_path.parent / args.normalized_filename
         expected_rows = int(detail["rows_selected"])
-        if complete_jsonl(norm_path, expected_rows):
+        resume_status = complete_normalized(judge_input, norm_path)
+        if resume_status["complete"]:
             status = "complete"
         else:
             status = "pending"
@@ -239,6 +304,7 @@ def main() -> None:
                 "norm": norm_path,
                 "expected_rows": expected_rows,
                 "status": status,
+                "resume_status": resume_status,
                 **detail,
             }
         )
@@ -249,7 +315,19 @@ def main() -> None:
         "n_generation_files": len(gen_files),
         "n_pending": sum(1 for task in tasks if task["status"] == "pending"),
         "n_complete": sum(1 for task in tasks if task["status"] == "complete"),
+        "n_stale_existing_normalized": sum(
+            1 for task in tasks if task["resume_status"].get("stale_existing")
+        ),
         "normalized_filename": args.normalized_filename,
+        "resume_checks": [
+            {
+                "gen": str(task["gen"]),
+                "status": task["status"],
+                "resume_status": task["resume_status"],
+                "expected_rows": task["expected_rows"],
+            }
+            for task in tasks
+        ],
     }
     write_json(run_root / f"stage4_judge_{args.judge}_manifest.json", manifest)
     if args.dry_run:
@@ -257,6 +335,12 @@ def main() -> None:
         return
 
     pending = [task for task in tasks if task["status"] == "pending"]
+    for task in pending:
+        if task["resume_status"].get("stale_existing"):
+            unlink_if_exists(task["raw"])
+            unlink_if_exists(task["norm"])
+            unlink_if_exists(task["raw"].with_suffix(".manifest.json"))
+            unlink_if_exists(task["norm"].with_suffix(".manifest.json"))
     if args.backend == "transformers":
         for task in pending:
             run_transformers_task(

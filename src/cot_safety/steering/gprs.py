@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -11,6 +12,14 @@ def _resolve_path(value: str, *, base_dir: Path | None = None) -> Path:
     if path.is_absolute() or base_dir is None:
         return path
     return base_dir / path
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def validate_gprs_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -25,7 +34,7 @@ def validate_gprs_config(config: dict[str, Any]) -> dict[str, Any]:
     gate_mode = str(gprs.get("gate_mode", "none"))
     if gate_mode not in {"none"}:
         raise ValueError(f"Unsupported steering.gprs.gate_mode: {gate_mode!r}")
-    required = ["direction_artifact", "safe_centroid"]
+    required = ["direction_artifact", "safe_centroid", "artifact_manifest"]
     if gate_mode != "none":
         required.append("probe_checkpoint")
     missing = [key for key in required if not gprs.get(key)]
@@ -116,11 +125,7 @@ def gprs_artifact_status(
     if meta.get("probe_checkpoint"):
         artifact_keys.append("probe_checkpoint")
     paths = {key: _resolve_path(str(meta[key]), base_dir=base_dir) for key in artifact_keys}
-    manifest_path = (
-        _resolve_path(str(meta["artifact_manifest"]), base_dir=base_dir)
-        if meta.get("artifact_manifest")
-        else paths["direction_artifact"].parent / "gprs_artifact_manifest.json"
-    )
+    manifest_path = _resolve_path(str(meta["artifact_manifest"]), base_dir=base_dir)
     missing = [key for key, path in paths.items() if not path.exists()]
     manifest: dict[str, Any] = {}
     evidence_ready = False
@@ -160,6 +165,20 @@ def gprs_artifact_status(
             manifest_positions = {str(item) for item in manifest.get("positions", [])}
             if manifest_layer != expected_layer or (expected_positions and manifest_positions != expected_positions):
                 missing.append("steering_config_mismatch")
+            artifact_files = manifest.get("artifact_files") or {}
+            for key, expected_path in paths.items():
+                entry = artifact_files.get(key)
+                if not isinstance(entry, dict):
+                    missing.append(f"{key}_manifest_entry")
+                    continue
+                manifest_file = _resolve_path(str(entry.get("path") or manifest.get(key) or ""), base_dir=base_dir)
+                if manifest_file.resolve() != expected_path.resolve():
+                    missing.append(f"{key}_path_mismatch")
+                expected_hash = str(entry.get("sha256") or "")
+                if not expected_hash:
+                    missing.append(f"{key}_sha256_missing")
+                elif expected_path.exists() and sha256_file(expected_path) != expected_hash:
+                    missing.append(f"{key}_sha256_mismatch")
     return {
         "method": meta["method"],
         "ready": not missing,

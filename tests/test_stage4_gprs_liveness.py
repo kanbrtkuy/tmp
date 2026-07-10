@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 import pytest
 
 from cot_safety.steering.gprs import (
@@ -11,6 +14,10 @@ from cot_safety.steering.gprs import (
 )
 from cot_safety.steering.liveness import liveness_config, liveness_decision, liveness_plan_status
 from cot_safety.steering.liveness import liveness_gate_status, liveness_report_path
+
+
+def _sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def test_liveness_config_uses_gate_defaults():
@@ -174,7 +181,16 @@ def test_validate_gprs_config_requires_artifacts():
 
 
 def test_validate_gprs_config_requires_strength_mode():
-    config = {"steering": {"method": "gprs", "gprs": {"direction_artifact": "u.pt", "safe_centroid": "mu.pt"}}}
+    config = {
+        "steering": {
+            "method": "gprs",
+            "gprs": {
+                "direction_artifact": "u.pt",
+                "safe_centroid": "mu.pt",
+                "artifact_manifest": "manifest.json",
+            },
+        }
+    }
     with pytest.raises(ValueError, match="strength_mode"):
         validate_gprs_config(config)
 
@@ -186,6 +202,7 @@ def test_validate_gprs_config_accepts_complete_config():
             "gprs": {
                 "direction_artifact": "u.pt",
                 "safe_centroid": "mu.pt",
+                "artifact_manifest": "manifest.json",
                 "probe_checkpoint": "probe.pt",
                 "gate_threshold": 0.9,
                 "norm_cap": 0.1,
@@ -207,6 +224,7 @@ def test_validate_gprs_config_accepts_matched_relative_strength_mode():
             "gprs": {
                 "direction_artifact": "u.pt",
                 "safe_centroid": "mu.pt",
+                "artifact_manifest": "manifest.json",
                 "norm_cap": 0.1,
                 "strength_mode": "matched_relative",
             },
@@ -317,6 +335,7 @@ def test_gprs_artifact_status_requires_all_artifacts(tmp_path):
                 "direction_artifact": "u.pt",
                 "safe_centroid": "mu.pt",
                 "probe_checkpoint": "probe.pt",
+                "artifact_manifest": "manifest.json",
                 "strength_mode": "projection",
             },
         }
@@ -336,7 +355,7 @@ def test_gprs_artifact_status_requires_all_artifacts(tmp_path):
     with pytest.raises(FileNotFoundError):
         require_gprs_artifacts(config, base_dir=tmp_path)
 
-    (tmp_path / "gprs_artifact_manifest.json").write_text(
+    (tmp_path / "manifest.json").write_text(
         '{"stage3_evidence":{"status":"fail_no_independent_pause_signal","pause_only_status":"pass"}}\n',
         encoding="utf-8",
     )
@@ -345,12 +364,34 @@ def test_gprs_artifact_status_requires_all_artifacts(tmp_path):
     assert "stage3_evidence_pass" in status["missing"]
     assert "stage3_confirmatory_pass" in status["missing"]
 
-    (tmp_path / "gprs_artifact_manifest.json").write_text(
-        (
-            '{"layer":14,"positions":["pause_0"],'
-            '"stage3_evidence":{"status":"pass_independent","independent_status":"pass",'
-            '"pause_only_status":"pass","confirmatory_status":"pass"}}\n'
-        ),
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "layer": 14,
+                "positions": ["pause_0"],
+                "stage3_evidence": {
+                    "status": "pass_independent",
+                    "independent_status": "pass",
+                    "pause_only_status": "pass",
+                    "confirmatory_status": "pass",
+                },
+                "artifact_files": {
+                    "direction_artifact": {
+                        "path": "u.pt",
+                        "sha256": _sha256(tmp_path / "u.pt"),
+                    },
+                    "safe_centroid": {
+                        "path": "mu.pt",
+                        "sha256": _sha256(tmp_path / "mu.pt"),
+                    },
+                    "probe_checkpoint": {
+                        "path": "probe.pt",
+                        "sha256": _sha256(tmp_path / "probe.pt"),
+                    },
+                },
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     status = require_gprs_artifacts(config, base_dir=tmp_path)
@@ -368,6 +409,7 @@ def test_gprs_artifact_status_requires_on_policy_confirmatory_pass(tmp_path):
                 "direction_artifact": "u.pt",
                 "safe_centroid": "mu.pt",
                 "probe_checkpoint": "probe.pt",
+                "artifact_manifest": "manifest.json",
                 "stage3_evidence_report": "stage3_evidence_report.json",
                 "strength_mode": "projection",
             },
@@ -375,7 +417,7 @@ def test_gprs_artifact_status_requires_on_policy_confirmatory_pass(tmp_path):
     }
     for name in ("u.pt", "mu.pt", "probe.pt"):
         (tmp_path / name).write_text(name, encoding="utf-8")
-    (tmp_path / "gprs_artifact_manifest.json").write_text(
+    (tmp_path / "manifest.json").write_text(
         (
             '{"layer":14,"positions":["pause_0"],'
             '"stage3_evidence":{"status":"pass_independent","independent_status":"pass",'

@@ -243,6 +243,8 @@ def load_gprs_vectors(args: argparse.Namespace, *, hidden_size: int | None = Non
         raise SystemExit("--direction_artifact and --safe_centroid are required when --alpha != 0")
     direction_payload = torch.load(args.direction_artifact, map_location="cpu")
     centroid_payload = torch.load(args.safe_centroid, map_location="cpu")
+    if not isinstance(direction_payload, dict) or not isinstance(centroid_payload, dict):
+        raise ValueError("GPRS artifacts must be torch-saved dictionaries with embedded metadata.")
     direction = direction_payload.get("direction")
     safe_centroid = centroid_payload.get("safe_centroid")
     if direction is None:
@@ -251,6 +253,34 @@ def load_gprs_vectors(args: argparse.Namespace, *, hidden_size: int | None = Non
         raise ValueError(f"safe_centroid_missing_safe_centroid:{args.safe_centroid}")
     direction = direction.detach().float().flatten()
     safe_centroid = safe_centroid.detach().float().flatten()
+    required_pause_positions = {f"pause_{idx}" for idx in range(int(args.n_insert_pauses))}
+    direction_positions = [str(item) for item in direction_payload.get("positions", [])]
+    centroid_positions = [str(item) for item in centroid_payload.get("positions", [])]
+    direction_layer = direction_payload.get("layer")
+    centroid_layer = centroid_payload.get("layer")
+    if direction_layer is None:
+        raise ValueError(f"direction_artifact_missing_layer_metadata:{args.direction_artifact}")
+    if centroid_layer is None:
+        raise ValueError(f"safe_centroid_missing_layer_metadata:{args.safe_centroid}")
+    if int(direction_layer) != int(args.layer):
+        raise ValueError(f"direction_layer_mismatch:{direction_layer}!={args.layer}")
+    if int(centroid_layer) != int(args.layer):
+        raise ValueError(f"safe_centroid_layer_mismatch:{centroid_layer}!={args.layer}")
+    if not required_pause_positions.issubset(set(direction_positions)):
+        raise ValueError(
+            "direction_artifact_positions_missing_pause_targets:"
+            f"missing={sorted(required_pause_positions - set(direction_positions))}"
+        )
+    if not required_pause_positions.issubset(set(centroid_positions)):
+        raise ValueError(
+            "safe_centroid_positions_missing_pause_targets:"
+            f"missing={sorted(required_pause_positions - set(centroid_positions))}"
+        )
+    if direction_positions != centroid_positions:
+        raise ValueError(
+            "gprs_artifact_position_mismatch:"
+            f"direction={direction_positions}:safe_centroid={centroid_positions}"
+        )
     if args.random_direction:
         generator = torch.Generator(device="cpu")
         generator.manual_seed(int(args.seed) + 98717)
@@ -263,6 +293,11 @@ def load_gprs_vectors(args: argparse.Namespace, *, hidden_size: int | None = Non
         "safe_centroid": args.safe_centroid,
         "direction_norm": float(direction.norm().item()),
         "safe_centroid_norm": float(safe_centroid.norm().item()),
+        "direction_layer": int(direction_layer),
+        "safe_centroid_layer": int(centroid_layer),
+        "direction_positions": direction_positions,
+        "safe_centroid_positions": centroid_positions,
+        "artifact_schema_version": str(direction_payload.get("artifact_schema_version") or ""),
         "random_direction": bool(args.random_direction),
     }
     return direction, safe_centroid, meta

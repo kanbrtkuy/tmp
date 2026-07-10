@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import sys
@@ -29,6 +30,14 @@ def read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"Expected a JSON object: {path}")
     return payload
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def select_state_block(npz_path: Path, *, layer: int, positions: list[str]) -> tuple[Any, Any, dict[str, Any]]:
@@ -114,8 +123,18 @@ def build_artifacts(
     direction_path.parent.mkdir(parents=True, exist_ok=True)
     centroid_path.parent.mkdir(parents=True, exist_ok=True)
     probe_target.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"direction": torch.as_tensor(direction), **meta}, direction_path)
-    torch.save({"safe_centroid": torch.as_tensor(safe_centroid), **meta}, centroid_path)
+    artifact_meta = {
+        **meta,
+        "artifact_schema_version": "stage4_gprs_v2",
+        "artifact_kind": "pause_mean_diff_direction",
+    }
+    centroid_meta = {
+        **meta,
+        "artifact_schema_version": "stage4_gprs_v2",
+        "artifact_kind": "pause_safe_centroid",
+    }
+    torch.save({"direction": torch.as_tensor(direction), **artifact_meta}, direction_path)
+    torch.save({"safe_centroid": torch.as_tensor(safe_centroid), **centroid_meta}, centroid_path)
     if probe_source is not None:
         if not probe_source.exists():
             raise FileNotFoundError(f"Probe checkpoint source is missing: {probe_source}")
@@ -136,6 +155,30 @@ def build_artifacts(
             "Probe checkpoint is missing. Pass --probe_checkpoint_source or create "
             f"the configured checkpoint first: {probe_target}"
         )
+    artifact_files: dict[str, dict[str, Any]] = {
+        "direction_artifact": {
+            "path": str(direction_path),
+            "sha256": sha256_file(direction_path),
+            "layer": layer,
+            "positions": positions,
+            "kind": "pause_mean_diff_direction",
+        },
+        "safe_centroid": {
+            "path": str(centroid_path),
+            "sha256": sha256_file(centroid_path),
+            "layer": layer,
+            "positions": positions,
+            "kind": "pause_safe_centroid",
+        },
+    }
+    if probe_target.is_file():
+        artifact_files["probe_checkpoint"] = {
+            "path": str(probe_target),
+            "sha256": sha256_file(probe_target),
+            "layer": layer,
+            "positions": positions,
+            "kind": "stage3_probe_checkpoint",
+        }
     confirmatory_endpoint = evidence.get("confirmatory_endpoint") or {}
     confirmatory_report_path = (
         confirmatory_endpoint.get("report_path") if isinstance(confirmatory_endpoint, dict) else None
@@ -159,6 +202,8 @@ def build_artifacts(
         "direction_artifact": str(direction_path),
         "safe_centroid": str(centroid_path),
         "probe_checkpoint": str(probe_target),
+        "artifact_schema_version": "stage4_gprs_v2",
+        "artifact_files": artifact_files,
         "direction_provenance": "teacher_forced_prompt_labels",
         "smoke_test": smoke_test,
         "probe_metadata": {
@@ -225,18 +270,18 @@ def main() -> None:
     )
     direction_path = resolve_repo_path(meta["direction_artifact"])
     centroid_path = resolve_repo_path(meta["safe_centroid"])
-    probe_target = resolve_repo_path(meta["probe_checkpoint"])
+    probe_target = (
+        resolve_repo_path(meta["probe_checkpoint"])
+        if str(meta.get("probe_checkpoint") or "").strip()
+        else direction_path.parent / "probe_checkpoint.pt"
+    )
     evidence_report_raw = args.stage3_evidence_report or meta.get("stage3_evidence_report") or ""
     if not str(evidence_report_raw).strip():
         raise SystemExit("GPRS artifact builder requires --stage3_evidence_report or steering.gprs.stage3_evidence_report.")
     evidence_report = resolve_repo_path(str(evidence_report_raw))
     probe_source = resolve_repo_path(args.probe_checkpoint_source) if args.probe_checkpoint_source else None
     smoke_test_report = resolve_repo_path(args.smoke_test_report) if args.smoke_test_report else None
-    manifest_path = (
-        resolve_repo_path(args.manifest_json)
-        if args.manifest_json
-        else direction_path.parent / "gprs_artifact_manifest.json"
-    )
+    manifest_path = resolve_repo_path(args.manifest_json or meta["artifact_manifest"])
     plan = {
         "hidden_npz": str(resolve_repo_path(args.hidden_npz)),
         "layer": layer,
