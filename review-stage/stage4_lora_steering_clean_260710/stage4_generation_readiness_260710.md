@@ -28,6 +28,11 @@ This review packet is for the clean Stage4 steering battery after the Stage2/3 P
   - one active process per `--device`;
   - failure path terminates live sibling processes before returning rc.
 - Fable final response: no remaining scheduler blocker before formal Stage4 generation.
+- Follow-up review for commit `59f2691` (`Bind Stage4 artifacts and labels fail-closed`) reached PASS for the remaining N1-N3 blocker set:
+  - N1 artifact manifests are config-bound and hash-bound to the `.pt` artifacts; loaders validate embedded layer/position metadata.
+  - N2 partial/garbage/unlabeled judge labels fail closed by default and per-arm label composition is reported.
+  - N3 judge resume now validates current id sets rather than only line counts and removes stale raw/normalized outputs before rejudging.
+- Fable note: this latest verdict was based on the stated implementation facts plus tests, after earlier full-code rounds had already reviewed B1-B6. No new code-level blocker was identified for rebuilding non-smoke artifacts and running Stage4.
 
 ## Smoke Evidence
 
@@ -70,14 +75,18 @@ RunPod dry-run command:
 ```bash
 python scripts/run_stage4_steering.py \
   --config configs/experiment/stage4_lora_clean_gprs_1p5b.yaml \
-  --phase generation \
+  --phase eval \
   --dry_run
 ```
 
 Dry-run counts:
 
-- Total commands: 96.
-- Commands with `--batch_size 160`: 96.
+- Total commands: 98.
+- Generation commands: 96.
+- Judge commands: 1.
+- Summary/bootstrap commands: 1.
+- Generation commands with `--batch_size 160`: 96.
+- Generation commands with `mode_matched_relative`: 96.
 - `direction_random`: 36.
 - `pause_all3`: 36.
 - `content_pre_pause_2_4`: 28.
@@ -89,6 +98,27 @@ Dry-run counts:
 
 ## Remaining Notes
 
-- Local and RunPod venvs did not have `pytest`, so targeted pytest was not run in this environment.
-- `py_compile` passed for the Stage4 modified scripts/modules.
+- Local targeted pytest passed:
+
+```bash
+PYTHONPATH=src python3 -m pytest \
+  tests/test_stage4_fail_closed_guards.py \
+  tests/test_stage4_gprs_liveness.py \
+  tests/test_steering_scope.py
+```
+
+Result: 24 passed, 8 skipped.
+
+- RunPod venv did not have `pytest`; RunPod validation used `py_compile` plus the full dry-run command matrix.
+- `py_compile` passed locally and on RunPod for the Stage4 modified scripts/modules.
+- Current RunPod artifacts under `runs/stage4_lora_clean_gprs_artifacts_1p5b` are intentionally rejected by formal preflight because they are `smoke_only` / old-manifest artifacts. Observed rejection includes:
+  - `artifact_manifest_is_smoke_only`
+  - `missing_or_failed_smoke_stamp`
+  - `direction_artifact_manifest_entry_missing`
+  - `safe_centroid_manifest_entry_missing`
+- The current Stage2.3/PPC on-policy Stage3 confirmatory report is not a passing formal Stage4 gate:
+  - report: `runs/stage23_ppc_1p5b_full_batched_260709/stage3/stage3_on_policy_confirmatory_report.json`
+  - status: `fail_on_policy_within_prompt_signal`
+  - source gate: `passed_sources = 0 / 5`
+- Paired/teacher-forced Stage3 results show useful separability signal, but they do not establish the stricter on-policy within-prompt trajectory-specific pause signal. Formal safety claims should keep this distinction explicit.
 - Formal generation should be followed by judge and summary phases before making safety claims.
