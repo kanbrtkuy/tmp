@@ -22,3 +22,7 @@ data:
     - intra_pause_cot3
     - no_pause
     - pre_think_pause
+  # Off by default so historical/pilot recipes retain their old row-shuffle
+  # semantics.  The canonical 2xA100 config explicitly enables this contract.
+  formal_freeze:
+    enabled: false

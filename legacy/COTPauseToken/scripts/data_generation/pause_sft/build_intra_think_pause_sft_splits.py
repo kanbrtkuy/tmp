@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -15,6 +16,8 @@ from typing import Any
 THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
 PAUSE_TOKEN = "<|pause|>"
+FORMAL_FREEZE_SCHEMA_VERSION = "stage2_formal_freeze_v1"
+DECONTAMINATION_SCHEMA_VERSION = "stage2_formal_decontamination_v1"
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -34,6 +37,14 @@ def write_json(path: str | Path, rows: Any) -> None:
     with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=2)
     os.replace(tmp_path, path)
+
+
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def split_think_output(output: str) -> tuple[str, str, str]:
@@ -157,6 +168,19 @@ def base_metadata(row: dict[str, Any]) -> dict[str, Any]:
         new_row["has_ground_truth_solution"] = row.get("has_ground_truth_solution")
     if row.get("ground_truth_solution"):
         new_row["ground_truth_solution"] = row.get("ground_truth_solution")
+    # These fields are present only in the formal freeze.  Preserving them is
+    # what makes the downstream pause variants auditable against the exact
+    # groupwise split rather than a new row shuffle.
+    for field in (
+        "source_family_id",
+        "normalized_prompt_sha256",
+        "formal_group_id",
+        "formal_group_original_size",
+        "formal_freeze_seed",
+        "formal_split",
+    ):
+        if row.get(field) is not None:
+            new_row[field] = row[field]
     return new_row
 
 
@@ -244,6 +268,95 @@ def split_triplets(
     }
 
 
+def load_formal_bindings(args: argparse.Namespace) -> dict[str, Any] | None:
+    if not args.formal_freeze_manifest and not args.decontamination_report:
+        return None
+    if not args.formal_freeze_manifest or not args.decontamination_report:
+        raise ValueError("formal mode requires both --formal_freeze_manifest and --decontamination_report")
+    manifest_path = Path(args.formal_freeze_manifest)
+    report_path = Path(args.decontamination_report)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != FORMAL_FREEZE_SCHEMA_VERSION or manifest.get("status") != "frozen":
+        raise ValueError("formal_freeze_manifest_not_frozen")
+    if report.get("schema_version") != DECONTAMINATION_SCHEMA_VERSION or report.get("status") != "pass":
+        raise ValueError("formal_decontamination_report_not_pass")
+    if manifest.get("normalization") != "nfkc_casefold_whitespace_v1":
+        raise ValueError("formal_freeze_normalization_mismatch")
+    methods = manifest.get("methods") or {}
+    if (methods.get("lexical") or {}).get("method") != "word_5gram_jaccard_v1" or float((methods.get("lexical") or {}).get("threshold", -1.0)) != 0.80:
+        raise ValueError("formal_freeze_lexical_contract_mismatch")
+    if float((methods.get("cosine") or {}).get("threshold", -1.0)) != 0.90:
+        raise ValueError("formal_freeze_cosine_contract_mismatch")
+    if manifest.get("groupwise_disjoint") is not True or manifest.get("formal_eval_disjoint") is not True:
+        raise ValueError("formal_freeze_disjoint_contract_failed")
+    frozen = manifest.get("frozen_rows") or {}
+    if int(frozen.get("rows", -1)) != args.train_size + args.val_size + args.test_size:
+        raise ValueError("formal_frozen_row_count_mismatch")
+    if str(frozen.get("sha256") or "") != sha256_file(args.input_jsonl):
+        raise ValueError("formal_frozen_input_hash_mismatch")
+    expected_splits = {"train": args.train_size, "val": args.val_size, "test": args.test_size}
+    if {key: int((manifest.get("split_counts") or {}).get(key, -1)) for key in expected_splits} != expected_splits:
+        raise ValueError("formal_split_counts_mismatch")
+    bound_manifest = report.get("stage2_freeze_manifest") or {}
+    if str(bound_manifest.get("sha256") or "") != sha256_file(manifest_path):
+        raise ValueError("formal_report_manifest_hash_mismatch")
+    disjoint = report.get("formal_eval_disjoint") or {}
+    if disjoint.get("status") != "pass" or int(disjoint.get("confirmed_overlap_count", -1)) != 0:
+        raise ValueError("formal_eval_disjoint_not_pass")
+    manual = report.get("manual_decisions") or {}
+    if manual.get("status") != "complete" or int(manual.get("unresolved_pair_count", -1)) != 0:
+        raise ValueError("formal_manual_decisions_incomplete")
+    if report.get("normalization") != "nfkc_casefold_whitespace_v1" or float((report.get("lexical") or {}).get("threshold", -1.0)) != 0.80 or float((report.get("cosine") or {}).get("threshold", -1.0)) != 0.90:
+        raise ValueError("formal_decontamination_method_contract_mismatch")
+    report_eval = report.get("formal_eval_files") or {}
+    manifest_eval = manifest.get("formal_eval_files") or {}
+    if set(report_eval) != set(manifest_eval) or any(
+        str((report_eval.get(name) or {}).get("sha256") or "")
+        != str((manifest_eval.get(name) or {}).get("sha256") or "")
+        for name in report_eval
+    ):
+        raise ValueError("formal_decontamination_eval_binding_mismatch")
+    return {
+        "formal_freeze_manifest_path": str(manifest_path.resolve()),
+        "formal_freeze_manifest_sha256": sha256_file(manifest_path),
+        "decontamination_report_path": str(report_path.resolve()),
+        "decontamination_report_sha256": sha256_file(report_path),
+        "frozen_rows_sha256": sha256_file(args.input_jsonl),
+        "formal_eval_files": report.get("formal_eval_files"),
+    }
+
+
+def split_formal_triplets(
+    triplets: list[dict[str, dict[str, Any]]],
+    *,
+    variant_name: str,
+    train_size: int,
+    val_size: int,
+    test_size: int,
+) -> dict[str, list[dict[str, dict[str, Any]]]]:
+    expected = {"train": train_size, "val": val_size, "test": test_size}
+    splits: dict[str, list[dict[str, dict[str, Any]]]] = {name: [] for name in expected}
+    groups: dict[str, set[str]] = {name: set() for name in expected}
+    for triplet in triplets:
+        row = triplet[variant_name]
+        split = str(row.get("formal_split") or "")
+        group = str(row.get("formal_group_id") or "")
+        if split not in splits or not group:
+            raise ValueError("formal_row_missing_split_or_group")
+        splits[split].append(triplet)
+        groups[split].add(group)
+    counts = {name: len(rows) for name, rows in splits.items()}
+    if counts != expected:
+        raise ValueError(f"formal_split_row_counts_mismatch:{counts}!={expected}")
+    names = tuple(expected)
+    for left_index, left in enumerate(names):
+        for right in names[left_index + 1 :]:
+            if groups[left] & groups[right]:
+                raise ValueError(f"formal_group_cross_split_overlap:{left}:{right}")
+    return splits
+
+
 def summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "rows": len(rows),
@@ -278,6 +391,8 @@ def write_variant(
         "cot_offset": args.cot_offset,
         "summary": {split: summarize_rows(rows) for split, rows in split_rows.items()},
     }
+    if args.formal_bindings is not None:
+        manifest["formal_freeze"] = dict(args.formal_bindings)
     write_json(out_dir / "manifest.json", manifest)
     return manifest
 
@@ -312,6 +427,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no_pause_dir_name", default="no_pause_matched")
     parser.add_argument("--pre_think_dir_name", default="pre_think_pause3_matched")
     parser.add_argument("--rejected_jsonl", default=None)
+    parser.add_argument(
+        "--formal_freeze_manifest",
+        default=None,
+        help="Enables canonical fail-closed mode and preserves its preassigned groupwise splits.",
+    )
+    parser.add_argument("--decontamination_report", default=None)
     return parser.parse_args()
 
 
@@ -319,6 +440,7 @@ def main() -> None:
     args = parse_args()
     args.pause_tokens = parse_pause_tokens(args.pause_tokens, args.pause_token, args.n_pause_tokens)
     args.n_pause_tokens = len(args.pause_tokens)
+    args.formal_bindings = load_formal_bindings(args)
     tokenizer = load_tokenizer(args.tokenizer_path, args.pause_tokens)
     raw_rows = read_jsonl(args.input_jsonl)
     triplets = []
@@ -336,13 +458,22 @@ def main() -> None:
                 }
             )
 
-    split_rows = split_triplets(
-        triplets,
-        train_size=args.train_size,
-        val_size=args.val_size,
-        test_size=args.test_size,
-        seed=args.seed,
-    )
+    if args.formal_bindings is not None:
+        split_rows = split_formal_triplets(
+            triplets,
+            variant_name=args.intra_dir_name,
+            train_size=args.train_size,
+            val_size=args.val_size,
+            test_size=args.test_size,
+        )
+    else:
+        split_rows = split_triplets(
+            triplets,
+            train_size=args.train_size,
+            val_size=args.val_size,
+            test_size=args.test_size,
+            seed=args.seed,
+        )
     output_root = Path(args.output_root)
     variant_names = [args.intra_dir_name, args.no_pause_dir_name, args.pre_think_dir_name]
     variant_manifests = {
@@ -373,6 +504,8 @@ def main() -> None:
         "rejected_reasons": dict(Counter(row["reason"] for row in rejected)),
         "variants": variant_manifests,
     }
+    if args.formal_bindings is not None:
+        root_manifest["formal_freeze"] = dict(args.formal_bindings)
     write_json(output_root / "manifest.json", root_manifest)
     print(json.dumps(root_manifest, ensure_ascii=False, indent=2))
 

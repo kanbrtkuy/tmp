@@ -1,0 +1,33 @@
+stage234_ledger:
+  seed: 260714
+  # This small immutable ledger is a cross-stage authority, not disposable
+  # scratch.  Keep its canonical fallback on the cold workspace run root.
+  output_jsonl: ${STAGE234_LEDGER_JSONL:-/workspace/cot-safety/runs/stage234_formal_8b_2xa100/prompt_family_ledger.jsonl}
+  manifest_json: ${STAGE234_LEDGER_MANIFEST:-/workspace/cot-safety/runs/stage234_formal_8b_2xa100/prompt_family_ledger.manifest.json}
+  drop_cross_source_exact_duplicates: true
+  split_counts:
+    stage3_train: 30
+    stage3_sealed: 70
+    stage4_calibration: 20
+    stage4_final: 40
+  sources:
+    - name: harmbench
+      input_jsonl: ${STAGE234_HARMBENCH_JSONL:-/workspace/data/eval/harmbench_standard/train.jsonl}
+      prompt_fields: [prompt, behavior, Behavior]
+      family_fields: [family_id, BehaviorID, behavior_id]
+      row_id_fields: [id, BehaviorID, row_id]
+    - name: reasoningshield
+      input_jsonl: ${STAGE234_REASONINGSHIELD_JSONL:-/workspace/data/reasoningshield_rewrite_all4813/unsafe_trajectory_seeds.jsonl}
+      prompt_fields: [prompt, input, question, query]
+      family_fields: [family_id, problem_id, source_family_id]
+      row_id_fields: [id, row_id, source_row_id]
+    - name: strongreject
+      input_jsonl: ${STAGE234_STRONGREJECT_JSONL:-/workspace/data/eval/strongreject/validation.jsonl}
+      prompt_fields: [prompt, forbidden_prompt, input]
+      family_fields: [family_id, category, source_family_id]
+      row_id_fields: [id, row_id, source_row_id]
+    - name: wildjailbreak
+      input_jsonl: ${STAGE234_WILDJAILBREAK_JSONL:-/workspace/data/eval/wildjailbreak_vanilla_harmful/train.jsonl}
+      prompt_fields: [prompt, vanilla, request, instruction, goal, query]
+      family_fields: [family_id, source_family_id, problem_id]
+      row_id_fields: [id, row_id, source_row_id]

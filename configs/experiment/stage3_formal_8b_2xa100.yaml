@@ -1,0 +1,124 @@
+defaults:
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+  - ../runtime/a100_2x.yaml
+
+run:
+  name: stage3_formal_8b_four_source_2xa100
+  output_dir: ${STAGE3_FORMAL_RUN_ROOT:-/workspace/cot-safety/runs}/stage3_formal_8b_four_source_2xa100
+
+model:
+  sft_checkpoint: ${STAGE2_FULL_SFT_CHECKPOINT:-/workspace/outputs/deepseek_8b_intra_pause_cot5_trusted_cot_18k_full_2xa100/checkpoint-1064}
+  tokenizer: ${STAGE2_FULL_SFT_TOKENIZER:-/workspace/outputs/deepseek_8b_intra_pause_cot5_trusted_cot_18k_full_2xa100/checkpoint-1064}
+  stage2_provenance: ${STAGE2_FULL_SFT_PROVENANCE:-/workspace/outputs/deepseek_8b_intra_pause_cot5_trusted_cot_18k_full_2xa100/stage2_full_sft_provenance.json}
+
+# This config is a formal-protocol skeleton.  Generation, judging, and exact-ID
+# HF replay runners must fail closed unless their immutable ledgers match these
+# values; the pure analysis implementation lives in
+# cot_safety.probes.stage3_formal.
+stage3_formal:
+  protocol_version: stage3_formal_nested_four_source_loso_v1
+  ledger_jsonl: ${STAGE234_LEDGER_JSONL:-/workspace/cot-safety/runs/stage234_formal_8b_2xa100/prompt_family_ledger.jsonl}
+  sources: [harmbench, reasoningshield, strongreject, wildjailbreak]
+  primary_layers: [4, 6, 7, 8, 10, 12, 14, 16, 17, 18, 20, 21, 22, 24, 25, 26, 28, 30]
+  readout_diagnostic_layers: [32]
+
+  prompt_candidates:
+    selection: frozen_family_hash
+    direction_train_per_source: 30
+    sealed_per_source: 70
+    forbid_outcome_based_replacement: true
+
+  generation:
+    backend: vllm
+    draws_per_prompt: 100
+    seed: 260714
+    temperature: 0.6
+    top_p: 0.95
+    max_new_tokens: 2048
+    max_model_len: 4096
+    tensor_parallel_size: 1
+    rollout_num_shards: 2
+    expected_scheduled_cells: 40000
+    gpu_memory_utilization: 0.90
+    forced_pause_prefix: false
+    canonical_cell_key: [global_seed, source, prompt_id, draw_index]
+    checkpoint_every_draws: 5
+    adaptive_stopping: false
+    store_prompt_token_ids: true
+    store_output_token_ids: true
+
+  primary_judge:
+    name: wildguard
+    input: full_user_prompt_plus_full_assistant_response
+    deterministic_retries: 1
+    terminal_parse_failure_label: unknown
+    num_shards: 2
+  sensitivity_judges: [llamaguard]
+
+  hf_replay_bridge:
+    training_only_prompts: 32
+    require_direct_token_id_replay: true
+    token_and_position_agreement: 1.0
+    greedy_first_tokens: 64
+    min_greedy_agreement: 0.99
+    max_chosen_logprob_median_abs_error: 0.02
+    max_chosen_logprob_p99_abs_error: 0.10
+    failure_blocks_sealed_scoring: true
+
+  hidden:
+    # Hugging Face hidden_states indices. Index 32 is never a primary candidate.
+    primary_layers: [4, 6, 7, 8, 10, 12, 14, 16, 17, 18, 20, 21, 22, 24, 25, 26, 28, 30]
+    diagnostic_only_layers: [32]
+    pause_positions: [pause_0, pause_1, pause_2]
+    pooling: raw_mean
+    final_direction_normalization_only: true
+    replay_batch_size: 4
+    replay_min_batch_size: 1
+    replay_oom_policy: halve
+    right_padding_with_explicit_position_ids: true
+    capture_requested_positions_with_decoder_hooks: true
+    surface_hash_dimension: 256
+    artifact_schema: safechain.stage3.hidden_compact.v2
+    stored_rollout_representation: raw_mean_pause_0_pause_1_pause_2
+    store_prompt_positions_once_per_prompt_globally: true
+    prompt_state_shard_ownership: stable_shard_of_canonical_draw_000_cell
+
+  diagnostics:
+    enabled: true
+    changes_stage3_gate: false
+    prompt_positions: [last_prompt_token, pre_think]
+    prompt_target: unsafe_propensity
+    prompt_evaluation: across_prompt_heldout_source
+    prompt_candidate_layers: primary_plus_readout_32_diagnostic_only
+    nuisance_score_scope: outer_fold_sealed_only
+    surface_hash_dimension: 256
+
+  eligibility:
+    expected_scheduled_per_prompt: 100
+    min_valid_exact_location_primary_label: 90
+    min_safe: 5
+    min_unsafe: 5
+    retain_ineligible_in_coverage_table: true
+
+  layer_selection:
+    method: training_only_nested_four_source_loso
+    tie_break: lower_hidden_state_index
+    outer_score_split: sealed
+    final_stage4_layer_uses_sealed_results: false
+
+  inference:
+    endpoint: prompt_equal_within_prompt_mann_whitney_auroc
+    source_aggregation: equal
+    bootstrap_unit: prompt_cluster
+    bootstrap_stratification: source
+    bootstrap_samples: 10000
+    bootstrap_seed: 260713
+
+  gate:
+    min_eligible_train_per_source: 10
+    min_eligible_sealed_per_source: 30
+    min_eligible_sealed_total: 120
+    macro_auroc_ci_low_strictly_greater_than: 0.55
+    min_heldout_sources_at_or_above_0_55: 3
+    no_heldout_source_below: 0.50
+    surface_and_nuisance_controls_are_gates: false

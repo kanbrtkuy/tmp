@@ -15,6 +15,8 @@ KEEP_LATEST_HOT=0
 KEEP_BEST_HOT=0
 SYNC_OUTPUT_AFTER_STOP=0
 REMOVE_HOT_OUTPUT_AFTER_STOP=0
+CHECKPOINT_INTEGRITY_STRICT="${CHECKPOINT_INTEGRITY_STRICT:-0}"
+CHECKPOINT_INTEGRITY_CLI="${CHECKPOINT_INTEGRITY_CLI:-${ROOT}/scripts/checkpoint_integrity.py}"
 
 usage() {
   cat <<'USAGE'
@@ -44,14 +46,29 @@ Options:
                       from /workspace outputs.
   --once              Sync currently complete checkpoints once, then exit.
 
+Environment:
+  CHECKPOINT_INTEGRITY_STRICT=1
+                      Canonical fail-closed mode. Consume only checkpoints
+                      sealed with .checkpoint_complete.json, copy through a
+                      cold-side partial directory, rehash every payload file,
+                      and commit .cold_complete.json last.
+
 The script persists complete hot checkpoints to /workspace/outputs/PATH.
-A checkpoint is considered complete when trainer_state.json and
-one model weight artifact both exist.
+Legacy mode uses trainer_state.json plus one weight artifact. Strict mode
+requires and verifies the strong completion marker described above.
 USAGE
 }
 
 checkpoint_complete() {
   local checkpoint_dir="$1"
+  if [[ "${CHECKPOINT_INTEGRITY_STRICT}" == "1" ]]; then
+    [[ -f "${checkpoint_dir}/.checkpoint_complete.json" ]] || return 1
+    if ! python3 "${CHECKPOINT_INTEGRITY_CLI}" verify "${checkpoint_dir}" >/dev/null; then
+      echo "sealed hot checkpoint failed integrity verification: ${checkpoint_dir}" >&2
+      return 2
+    fi
+    return 0
+  fi
   [[ -f "${checkpoint_dir}/trainer_state.json" ]] || return 1
   [[ -f "${checkpoint_dir}/model.safetensors.index.json" ]] && return 0
   [[ -f "${checkpoint_dir}/model.safetensors" ]] && return 0
@@ -134,9 +151,19 @@ remove_hot_checkpoint_if_allowed() {
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] keeping protected hot checkpoint ${OUTPUT_PATH}/${name}"
     return 0
   fi
-  if [[ ! -f "${cold_dir}/.synced_to_cold" ]]; then
-    echo "refusing to remove hot checkpoint without cold marker: ${cold_dir}" >&2
-    return 1
+  if [[ "${CHECKPOINT_INTEGRITY_STRICT}" == "1" ]]; then
+    if [[ ! -f "${cold_dir}/.cold_complete.json" ]]; then
+      echo "refusing to remove hot checkpoint without strong cold receipt: ${cold_dir}" >&2
+      return 1
+    fi
+    python3 "${CHECKPOINT_INTEGRITY_CLI}" verify-receipt \
+      --checkpoint "${cold_dir}" \
+      --receipt "${cold_dir}/.cold_complete.json" \
+      --kind cold \
+      --destination "${cold_dir}" >/dev/null
+  elif [[ ! -f "${cold_dir}/.synced_to_cold" ]]; then
+      echo "refusing to remove hot checkpoint without cold marker: ${cold_dir}" >&2
+      return 1
   fi
 
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] removing synced hot checkpoint ${OUTPUT_PATH}/${name}"
@@ -148,6 +175,72 @@ sync_checkpoint() {
   local hot_dir="${COT_SAFETY_OUTPUT_ROOT}/${OUTPUT_PATH}/${name}"
   local cold_dir="${COT_SAFETY_COLD_ROOT}/outputs/${OUTPUT_PATH}/${name}"
   local marker="${cold_dir}/.synced_to_cold"
+
+  if [[ "${CHECKPOINT_INTEGRITY_STRICT}" == "1" ]]; then
+    marker="${cold_dir}/.cold_complete.json"
+    local hot_manifest_sha cold_manifest_sha partial_dir partial_parent
+    hot_manifest_sha="$(python3 "${CHECKPOINT_INTEGRITY_CLI}" manifest-sha256 "${hot_dir}")"
+
+    if [[ -f "${marker}" ]]; then
+      python3 "${CHECKPOINT_INTEGRITY_CLI}" verify-receipt \
+        --checkpoint "${cold_dir}" \
+        --receipt "${marker}" \
+        --kind cold \
+        --destination "${cold_dir}" >/dev/null
+      cold_manifest_sha="$(python3 "${CHECKPOINT_INTEGRITY_CLI}" manifest-sha256 "${cold_dir}")"
+      if [[ "${hot_manifest_sha}" != "${cold_manifest_sha}" ]]; then
+        echo "refusing mismatched hot/cold checkpoint manifests: ${name}" >&2
+        return 1
+      fi
+      remove_hot_checkpoint_if_allowed "${name}"
+      return 0
+    fi
+
+    if [[ ! -e "${cold_dir}" ]]; then
+      partial_parent="${cold_dir}.partial.$$.${RANDOM}"
+      partial_dir="${partial_parent}/${name}"
+      if [[ -e "${partial_parent}" ]]; then
+        echo "refusing pre-existing cold partial destination: ${partial_parent}" >&2
+        return 1
+      fi
+      mkdir -p "$(dirname "${cold_dir}")" "${partial_dir}"
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] copying via partial ${OUTPUT_PATH}/${name}"
+      if command -v rsync >/dev/null 2>&1; then
+        rsync -a "${hot_dir}/" "${partial_dir}/"
+      else
+        cp -a "${hot_dir}/." "${partial_dir}/"
+      fi
+      python3 "${CHECKPOINT_INTEGRITY_CLI}" verify "${partial_dir}" >/dev/null
+      cold_manifest_sha="$(python3 "${CHECKPOINT_INTEGRITY_CLI}" manifest-sha256 "${partial_dir}")"
+      if [[ "${hot_manifest_sha}" != "${cold_manifest_sha}" ]]; then
+        echo "refusing partial copy with mismatched manifest: ${name}" >&2
+        return 1
+      fi
+      mv "${partial_dir}" "${cold_dir}"
+      rmdir "${partial_parent}"
+    fi
+
+    # Recover safely from a crash after the atomic rename but before receipt.
+    python3 "${CHECKPOINT_INTEGRITY_CLI}" verify "${cold_dir}" >/dev/null
+    cold_manifest_sha="$(python3 "${CHECKPOINT_INTEGRITY_CLI}" manifest-sha256 "${cold_dir}")"
+    if [[ "${hot_manifest_sha}" != "${cold_manifest_sha}" ]]; then
+      echo "refusing existing cold checkpoint with mismatched manifest: ${name}" >&2
+      return 1
+    fi
+    python3 "${CHECKPOINT_INTEGRITY_CLI}" write-receipt \
+      --checkpoint "${cold_dir}" \
+      --kind cold \
+      --destination "${cold_dir}" \
+      --verification-tool local_manifest_rehash_after_atomic_copy \
+      --output "${marker}" >/dev/null
+    python3 "${CHECKPOINT_INTEGRITY_CLI}" verify-receipt \
+      --checkpoint "${cold_dir}" \
+      --receipt "${marker}" \
+      --kind cold \
+      --destination "${cold_dir}" >/dev/null
+    remove_hot_checkpoint_if_allowed "${name}"
+    return 0
+  fi
 
   if [[ -f "${marker}" ]]; then
     remove_hot_checkpoint_if_allowed "${name}"
@@ -170,10 +263,18 @@ sync_complete_checkpoints() {
   local hot_dir="${COT_SAFETY_OUTPUT_ROOT}/${OUTPUT_PATH}"
   [[ -d "${hot_dir}" ]] || return 0
 
-  local checkpoint_dir name
+  local checkpoint_dir name checkpoint_status
   for checkpoint_dir in "${hot_dir}"/checkpoint-*; do
     [[ -d "${checkpoint_dir}" ]] || continue
-    checkpoint_complete "${checkpoint_dir}" || continue
+    if checkpoint_complete "${checkpoint_dir}"; then
+      checkpoint_status=0
+    else
+      checkpoint_status=$?
+    fi
+    [[ "${checkpoint_status}" -eq 0 ]] || {
+      [[ "${checkpoint_status}" -eq 1 ]] && continue
+      return "${checkpoint_status}"
+    }
     name="$(basename "${checkpoint_dir}")"
     sync_checkpoint "${name}"
   done

@@ -1,0 +1,59 @@
+defaults:
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+  - ../runtime/a100_2x.yaml
+
+run:
+  name: stage2_formal_acceptance_8b_2xa100
+  output_dir: ${STAGE2_ACCEPTANCE_RUN_ROOT:-/workspace/cot-safety/runs}/stage2_formal_acceptance_8b_2xa100
+
+model:
+  sft_checkpoint: ${STAGE2_FULL_SFT_CHECKPOINT:-/workspace/outputs/deepseek_8b_intra_pause_cot5_trusted_cot_18k_full_2xa100/checkpoint-1064}
+  tokenizer: ${STAGE2_FULL_SFT_TOKENIZER:-/workspace/outputs/deepseek_8b_intra_pause_cot5_trusted_cot_18k_full_2xa100/checkpoint-1064}
+  stage2_provenance: ${STAGE2_FULL_SFT_PROVENANCE:-/workspace/outputs/deepseek_8b_intra_pause_cot5_trusted_cot_18k_full_2xa100/stage2_full_sft_provenance.json}
+
+stage2_acceptance:
+  protocol_version: stage2_formal_natural_acceptance_v1
+  expected_total: 1970
+  # Keep defaults single-level: cot_safety.config intentionally implements a
+  # small ${NAME:-default} expander and does not evaluate nested shell syntax.
+  stage234_ledger_jsonl: ${STAGE234_LEDGER_JSONL:-/workspace/cot-safety/runs/stage234_formal_8b_2xa100/prompt_family_ledger.jsonl}
+  sources:
+    - name: stage2_test
+      path: ${STAGE2_TEST_JSON:-/workspace/data/pause_sft/trusted_cot_18k_intra_cot5/intra_pause_cot5/test.json}
+      prompt_fields: [input, prompt, question]
+      expected_rows: 500
+    - name: gsm8k
+      path: ${GSM8K_TEST_JSONL:-/workspace/data/eval/gsm8k/test.jsonl}
+      prompt_fields: [question, prompt]
+      expected_rows: 500
+    - name: math500
+      path: ${MATH500_TEST_JSONL:-/workspace/data/eval/math500/test.jsonl}
+      prompt_fields: [problem, question, prompt]
+      expected_rows: 300
+      deterministic_limit: 300
+    - name: xstest_safe
+      path: ${XSTEST_SAFE_JSONL:-/workspace/data/intra_pause_hardsafe_steering_eval/xstest_safe.jsonl}
+      prompt_fields: [prompt, question]
+      expected_rows: 250
+    - name: or_bench_hard_safe
+      path: ${OR_BENCH_HARD_SAFE_JSONL:-/workspace/data/intra_pause_hardsafe_steering_eval/or_bench_hard_safe.jsonl}
+      prompt_fields: [prompt, question, instruction]
+      expected_rows: 300
+    - name: stage3_direction_train
+      from_ledger_split: stage3_train
+      prompt_fields: [prompt]
+      expected_rows: 120
+  selection_seed: 260714
+  generation:
+    backend: vllm
+    natural_unforced: true
+    temperature: 0.0
+    top_p: 1.0
+    max_new_tokens: 2048
+    max_model_len: 4096
+    tensor_parallel_size: 1
+    gpu_memory_utilization: 0.90
+  gate:
+    exact_three_and_location_rate: 1.0
+    off_target_pause_rate: 0.0
+    interval: clopper_pearson_two_sided_95

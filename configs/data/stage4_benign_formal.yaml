@@ -1,0 +1,47 @@
+stage4_benign:
+  seed: 260714
+  semantic_seed: 260713
+  output_root: ${STAGE4_BENIGN_OUTPUT_ROOT:-/workspace/cot-safety/runs/stage4_benign_formal_8b}
+  decontamination_report: ${STAGE2_DECONTAMINATION_REPORT:-/workspace/data/pause_sft/trusted_cot_18k_formal_freeze/decontamination_formal_eval.json}
+  stage2_freeze_manifest: ${STAGE2_FORMAL_FREEZE_MANIFEST:-/workspace/data/pause_sft/trusted_cot_18k_formal_freeze/stage2_freeze_manifest.json}
+  # This exact set (names + bytes) must match both the Stage2 freeze manifest
+  # and decontamination report.  A stale boolean attestation is never accepted.
+  required_decontamination_eval_files:
+    gsm8k_test: ${GSM8K_TEST_JSONL:-/workspace/data/eval/gsm8k/test.jsonl}
+    math500_test: ${MATH500_TEST_JSONL:-/workspace/data/eval/math500/test.jsonl}
+    xstest_safe: ${XSTEST_SAFE_JSONL:-/workspace/data/intra_pause_hardsafe_steering_eval/xstest_safe.jsonl}
+    or_bench_hard_safe: ${OR_BENCH_HARD_SAFE_JSONL:-/workspace/data/intra_pause_hardsafe_steering_eval/or_bench_hard_safe.jsonl}
+    stage234_prompt_family_ledger: ${STAGE234_LEDGER_JSONL:-/workspace/cot-safety/runs/stage234_formal_8b_2xa100/prompt_family_ledger.jsonl}
+  datasets:
+    - task: capability
+      name: gsm8k
+      path: ${GSM8K_TEST_JSONL:-/workspace/data/eval/gsm8k/test.jsonl}
+      count: 500
+      prompt_fields: [question, prompt]
+      answer_fields: [answer, target, reference_answer]
+      id_fields: [id, question_id, row_id]
+      family_fields: [family_id, question_id, problem_id]
+    - task: capability
+      name: math500
+      path: ${MATH500_TEST_JSONL:-/workspace/data/eval/math500/test.jsonl}
+      count: 300
+      prompt_fields: [problem, question, prompt]
+      answer_fields: [answer, solution, target, reference_answer]
+      id_fields: [id, problem_id, row_id]
+      family_fields: [family_id, problem_id]
+    - task: compliance
+      name: xstest_safe
+      path: ${XSTEST_SAFE_JSONL:-/workspace/data/intra_pause_hardsafe_steering_eval/xstest_safe.jsonl}
+      count: 250
+      prompt_fields: [prompt, question]
+      answer_fields: []
+      id_fields: [id, row_id, prompt_id]
+      family_fields: [family_id, prompt_id]
+    - task: compliance
+      name: or_bench_hard_safe
+      path: ${OR_BENCH_HARD_SAFE_JSONL:-/workspace/data/intra_pause_hardsafe_steering_eval/or_bench_hard_safe.jsonl}
+      count: 300
+      prompt_fields: [prompt, question, instruction]
+      answer_fields: []
+      id_fields: [id, row_id, prompt_id]
+      family_fields: [family_id, prompt_id]

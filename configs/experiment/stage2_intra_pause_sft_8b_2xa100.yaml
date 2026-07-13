@@ -1,0 +1,134 @@
+defaults:
+  - stage2_intra_pause_sft.yaml
+  - ../model/deepseek_r1_distill_llama_8b.yaml
+  - ../runtime/a100_2x.yaml
+
+run:
+  name: stage2_intra_pause_sft_deepseek_8b_cot5_full_2xa100
+  output_dir: ${COT_SAFETY_OUTPUT_ROOT:-/workspace/outputs}/deepseek_8b_intra_pause_cot5_trusted_cot_18k_full_2xa100
+
+model:
+  # Training always starts from the frozen base model, never an older Stage2 checkpoint.
+  sft_checkpoint: null
+
+pause:
+  cot_offset: 5
+  n_pause_tokens: 3
+
+data:
+  prepared_root: ${COT_SAFETY_DATA_ROOT:-/workspace/data}/pause_sft/trusted_cot_18k_intra_cot5
+  # The legacy raw 18k file is not a valid formal input: decontamination needs
+  # an over-collected pool so removals can be backfilled within each source.
+  input_jsonl: ${STAGE2_FORMAL_FROZEN_JSONL:-/workspace/data/pause_sft/trusted_cot_18k_formal_freeze/frozen_rows.jsonl}
+  formal_freeze:
+    enabled: true
+    seed: 260615
+    candidate_jsonl: ${STAGE2_FORMAL_CANDIDATE_JSONL:-/workspace/data/pause_sft/trusted_cot_18k/trusted_cot_candidate_pool.jsonl}
+    output_root: ${STAGE2_FORMAL_FREEZE_ROOT:-/workspace/data/pause_sft/trusted_cot_18k_formal_freeze}
+    cosine_audit_json: ${STAGE2_COSINE_AUDIT_JSON:-/workspace/data/pause_sft/trusted_cot_18k/prompt_vector_cosine_audit.json}
+    manual_decisions_json: ${STAGE2_COSINE_MANUAL_DECISIONS_JSON:-/workspace/data/pause_sft/trusted_cot_18k/top_neighbor_manual_decisions.json}
+    source_quotas:
+      sky_t1_17k: 6000
+      bespoke_stratos_17k: 6000
+      openthoughts_114k_metadata: 6000
+    split_counts:
+      train: 17000
+      val: 500
+      test: 500
+    lexical:
+      method: word_5gram_jaccard_v1
+      jaccard_threshold: 0.80
+    cosine:
+      method: external_content_bound_prompt_vector_audit
+      threshold: 0.90
+      require_no_fallback: true
+      require_complete_candidate_candidate: true
+      require_complete_candidate_eval: true
+      require_manual_decision_for_every_reported_neighbor: true
+    formal_eval_files:
+      gsm8k_test: ${GSM8K_TEST_JSONL:-/workspace/data/eval/gsm8k/test.jsonl}
+      math500_test: ${MATH500_TEST_JSONL:-/workspace/data/eval/math500/test.jsonl}
+      xstest_safe: ${XSTEST_SAFE_JSONL:-/workspace/data/intra_pause_hardsafe_steering_eval/xstest_safe.jsonl}
+      or_bench_hard_safe: ${OR_BENCH_HARD_SAFE_JSONL:-/workspace/data/intra_pause_hardsafe_steering_eval/or_bench_hard_safe.jsonl}
+      stage234_prompt_family_ledger: ${STAGE234_LEDGER_JSONL:-/workspace/cot-safety/runs/stage234_formal_8b_2xa100/prompt_family_ledger.jsonl}
+
+sft:
+  enforce_full_sft_contract: true
+  method: full_sft
+  peft: false
+  trainer: trl_sft
+  cot_offset: 5
+  intra_dir_name: intra_pause_cot5
+  tags: [deepseek_8b, intra_pause_cot5, after_cot4_before_cot5, full_sft, a100_2x]
+  seed: 260615
+  num_train_epochs: 2.0
+  # Repeat the inherited value here so the formal recipe is self-auditing.
+  max_seq_length: 4096
+  max_steps: -1
+  learning_rate: 2.0e-5
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  lr_scheduler_type: linear
+  optimizer:
+    name: paged_adamw_8bit
+    betas: [0.9, 0.999]
+    epsilon: 1.0e-8
+  save_steps: 100
+  eval_steps: 100
+  save_total_limit: null
+  load_best_model_at_end: false
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  early_stopping:
+    enabled: false
+    patience: 2
+    threshold: 0.001
+  terminal_checkpoint:
+    enabled: true
+    resumable: true
+    expected_step: 1064
+  storage_capacity_preflight:
+    # A full checkpoint contains BF16 weights plus the paged 8-bit optimizer,
+    # scheduler, RNG, and trainer state.  Require room for one checkpoint being
+    # written while the preceding checkpoint is still being copied, plus the
+    # terminal deployment export and an explicit filesystem reserve.
+    enabled: true
+    require_distinct_hot_cold_filesystems: true
+    checkpoint_snapshot_multiplier: 2.5
+    checkpoint_fixed_overhead_gib: 2.0
+    final_snapshot_multiplier: 1.15
+    final_fixed_overhead_gib: 1.0
+    concurrent_hot_checkpoint_copies: 2
+    concurrent_cold_checkpoint_copies: 2
+    reserve_gib: 8.0
+  hot_checkpoint_sync:
+    enabled: true
+    interval_seconds: 30
+    remove_hot_after_sync: true
+    keep_latest_hot: 0
+    keep_best_hot: false
+    sync_output_after_stop: true
+    remove_hot_output_after_stop: true
+    timeout_seconds: 1800
+  r2_checkpoint_sync:
+    enabled: true
+    r2_root: ${STAGE2_R2_ROOT:-cloudflare_r2_cot_safety:cot-safety/stage2-stage4/20260714-2xa100-8b-full-sft-cot5}
+    interval_seconds: 30
+    strict: 1
+    remove_cold_after_upload: true
+    keep_latest_cold: 0
+    keep_best_cold: false
+    sync_final_after_stop: true
+    sync_output_metadata_after_stop: true
+    remove_cold_output_after_upload: true
+    timeout_seconds: 7200
+
+runtime:
+  sft:
+    per_device_train_batch_size: 1
+    per_device_eval_batch_size: 1
+    gradient_accumulation_steps: 16
+    gradient_checkpointing: true
+    optim: paged_adamw_8bit
+    tf32: true

@@ -8,6 +8,7 @@ reasoning trajectory.  It does not create empty <think></think> wrappers.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -158,8 +159,7 @@ def collect_conversation_source(source_name: str, quota: int, args: argparse.Nam
         final = split_final(output)
         if not ok_row(prompt, output, final, args):
             continue
-        rows.append(
-            {
+        item = {
                 "id": f"{cfg['source']}_{i}",
                 "input": prompt,
                 "output": output,
@@ -168,7 +168,10 @@ def collect_conversation_source(source_name: str, quota: int, args: argparse.Nam
                 "upstream_source": row.get("source") or row.get("dataset"),
                 "has_ground_truth_solution": bool(row.get("solution") or row.get("answer")),
             }
-        )
+        if args.emit_formal_candidate_pool:
+            native_family = row.get("problem_id") or row.get("id") or row.get("uuid") or f"stream_row_{i}"
+            item["source_family_id"] = str(native_family)
+        rows.append(item)
     return rows
 
 
@@ -187,8 +190,7 @@ def collect_openthoughts(quota: int, args: argparse.Namespace) -> list[dict[str,
         final = split_final(output)
         if not ok_row(prompt, output, final, args):
             continue
-        rows.append(
-            {
+        item = {
                 "id": f"openthoughts_{i}",
                 "input": prompt,
                 "output": output,
@@ -198,7 +200,10 @@ def collect_openthoughts(quota: int, args: argparse.Namespace) -> list[dict[str,
                 "has_ground_truth_solution": bool(row.get("ground_truth_solution")),
                 "ground_truth_solution": row.get("ground_truth_solution"),
             }
-        )
+        if args.emit_formal_candidate_pool:
+            native_family = row.get("problem_id") or row.get("id") or row.get("uuid") or f"stream_row_{i}"
+            item["source_family_id"] = str(native_family)
+        rows.append(item)
     return rows
 
 
@@ -219,6 +224,14 @@ def write_json(path: str | Path, obj: Any) -> None:
     with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
     os.replace(tmp_path, path)
+
+
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def parse_source_quotas(text: str | None) -> dict[str, int]:
@@ -258,6 +271,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_final_tokens", type=int, default=700)
     parser.add_argument("--min_reasoning_tokens", type=int, default=32)
     parser.add_argument("--openthoughts_domain", default="math")
+    parser.add_argument(
+        "--emit_formal_candidate_pool",
+        action="store_true",
+        help="Also retain the over-collected rows with source-family IDs for the formal decontamination freeze.",
+    )
+    parser.add_argument("--formal_candidate_pool_jsonl", default=None)
     return parser.parse_args()
 
 
@@ -267,6 +286,7 @@ def main() -> None:
     quotas = parse_source_quotas(args.source_quotas)
     rng = random.Random(args.seed)
     selected = []
+    formal_candidate_pool: list[dict[str, Any]] = []
     seen_inputs = set()
     manifest: dict[str, Any] = {
         "seed": args.seed,
@@ -301,6 +321,8 @@ def main() -> None:
         collect_target = quota + max(args.overcollect_min, int(quota * args.overcollect_ratio))
         rows = collectors[source_name](collect_target, args)
         rng.shuffle(rows)
+        if args.emit_formal_candidate_pool:
+            formal_candidate_pool.extend(dict(row) for row in rows)
         source_selected = []
         duplicates_skipped = 0
         for row in rows:
@@ -339,10 +361,19 @@ def main() -> None:
     manifest["raw_path"] = str(raw_path)
 
     write_jsonl(raw_path, selected)
+    if args.emit_formal_candidate_pool:
+        pool_path = Path(args.formal_candidate_pool_jsonl) if args.formal_candidate_pool_jsonl else out_dir / "trusted_cot_candidate_pool.jsonl"
+        write_jsonl(pool_path, formal_candidate_pool)
+        manifest["formal_candidate_pool"] = {
+            "path": str(pool_path),
+            "sha256": sha256_file(pool_path),
+            "rows": len(formal_candidate_pool),
+            "counts": dict(Counter(row["source"] for row in formal_candidate_pool)),
+            "source_family_ids_present": all(bool(row.get("source_family_id")) for row in formal_candidate_pool),
+        }
     write_json(out_dir / "manifest.json", manifest)
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
     main()
-
