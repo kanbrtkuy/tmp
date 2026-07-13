@@ -1,0 +1,42 @@
+{
+  "schema_version": "safechain.approved_hf_snapshot.v1",
+  "repo_id": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+  "revision": "6a6f4aa4197940add57724a7707d069478df56b1",
+  "files": [
+    {
+      "path": "config.json",
+      "size_bytes": 826,
+      "sha256": "54acfad3cffe057640904ca8a1e83525e6551c70c7a04c641f5a9eda0bbf64bd"
+    },
+    {
+      "path": "generation_config.json",
+      "size_bytes": 181,
+      "sha256": "cd5194726d1e8f7361a8c8425fc11d33ade5e69de1fd7615eb23fae5601af68b"
+    },
+    {
+      "path": "model-00001-of-000002.safetensors",
+      "size_bytes": 8667826246,
+      "sha256": "7e6b24744354ef4ba547547cc758339090f46ba2da917845cfc69f7d4ded9edb"
+    },
+    {
+      "path": "model-00002-of-000002.safetensors",
+      "size_bytes": 7392730108,
+      "sha256": "19fb83b79bd0d06d49b7cf6f86b83f5183cd292aa2c028d633ca4fceac1ae742"
+    },
+    {
+      "path": "model.safetensors.index.json",
+      "size_bytes": 24240,
+      "sha256": "83bdf4be4bb1a054ff315cd804554c48a88036226fdfbc65bee84ff562fea32a"
+    },
+    {
+      "path": "tokenizer.json",
+      "size_bytes": 9084480,
+      "sha256": "b9c9eb63a8e03059914880f918cd28a880dec8b6e15e4461e1ff677e3743dbb8"
+    },
+    {
+      "path": "tokenizer_config.json",
+      "size_bytes": 3071,
+      "sha256": "8ac8c85fb242563c2260baec0909debd69d718af6a0b3d90e6cab62b4d341cd5"
+    }
+  ]
+}

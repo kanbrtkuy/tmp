@@ -19,9 +19,10 @@ def minimal_record() -> dict:
 
 def test_runtime_binding_uses_terminal_manifest_not_base_hash(tmp_path: Path) -> None:
     path = tmp_path / "stage2.json"
-    path.write_text(json.dumps(minimal_record()), encoding="utf-8")
+    record = minimal_record()
+    path.write_text(json.dumps(record), encoding="utf-8")
     binding = provenance_runtime_binding(path)
-    assert binding["base_model_sha256"] == "a" * 64
+    assert binding["base_model_sha256"] == record["model"]["sha256"]
     assert binding["runtime_model_sha256"] == "7" * 64
     assert binding["runtime_model_hash_kind"] == "terminal_checkpoint_manifest_sha256"
     assert binding["storage_r2_root"] == "r2:test/stage2"

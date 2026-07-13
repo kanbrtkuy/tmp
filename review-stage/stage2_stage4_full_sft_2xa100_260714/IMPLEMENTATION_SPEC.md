@@ -10,7 +10,11 @@ E1--E6 amendments, this document wins.
 
 ## 1. Frozen scope
 
-- Model: `deepseek-ai/DeepSeek-R1-Distill-Llama-8B`.
+- Model: `deepseek-ai/DeepSeek-R1-Distill-Llama-8B`, pinned to revision
+  `6a6f4aa4197940add57724a7707d069478df56b1` by a committed, pre-approved
+  seven-file size/SHA-256 manifest. The trainer rehashes those files before
+  model instantiation and rejects any additional top-level loadable model or
+  tokenizer file.
 - Stage2: genuine full-weight completion SFT; no LoRA, rows-only training,
   continuation KL, PPC, FSM, or runtime-forced pause insertion.
 - Stage2 data: decontaminated `trusted_cot_18k`, frozen 17,000/500/500 split.
@@ -60,7 +64,16 @@ and current evaluation files; a stale boolean attestation is insufficient.
 
 ### 2.2 Optimizer and reproducibility
 
-- Canonical optimizer: bitsandbytes `paged_adamw_8bit`.
+- Canonical optimizer: bitsandbytes `paged_adamw_8bit`, with bitsandbytes
+  pinned exactly to `0.46.1` in both project dependency manifests. The Python
+  preflight, runner-exported expectation, shell contract, and provenance
+  validator all reject any other installed/runtime version.
+- Preserve the Transformers 4.52.4 stability override for exactly
+  `model.embed_tokens.weight`: its two Adam moments are FP32 but remain paged.
+  No other parameter, including the untied `lm_head.weight`, may receive a
+  32-bit override. This deliberate exception costs approximately 2.94 GiB per
+  rank relative to quantizing those two moments and must receive an explicit
+  Fable-5 decision in the final executable review.
 - Betas `(0.9, 0.999)`, epsilon `1e-8`, maximum gradient norm `1.0`.
 - Linear schedule with warmup ratio `0.03`, learning rate `2e-5`, weight decay
   `0.0`.
@@ -88,8 +101,16 @@ The launcher fails closed unless all of the following hold:
 - the pause-token input/output rows are trainable and receive finite gradient;
 - a middle-layer checksum changes after an optimizer step.
 
+The configured optimizer is not sufficient evidence. Immediately after the
+first actual optimizer update, every rank audits the allocated `state1` and
+`state2`: exact dtype by threshold/exception, exact parameter shape, distinct
+object identity, quantization metadata, and exactly-once registration of every
+`>=100000`-element moment in the process-global page manager. A failed rank is
+gathered symmetrically and aborts all ranks.
+
 Record exact versions for Python, PyTorch, Transformers, TRL, Accelerate,
-bitsandbytes, tokenizers, safetensors, CUDA runtime/driver, NCCL, and vLLM.
+bitsandbytes (exactly `0.46.1`), tokenizers, safetensors, CUDA runtime/driver,
+NCCL, and vLLM.
 Record base-model revision/hash, tokenizer and chat-template hashes, pause ID,
 resolved config/hash, dataset manifest/hash, Git commit and dirty diff hash,
 parameter counts, optimizer class/config, seed, world size, effective batch,
@@ -111,6 +132,17 @@ Checkpoint transfer is copy--verify--commit--delete, never blind move:
    content manifest, and uploads the remote completion marker last.
 5. Only then may the `/workspace` copy be deleted. Restore always verifies the
    manifest after download.
+
+For a resume, neither watcher may start until Trainer has loaded and verified
+the parent model, trainer state, optimizer, scheduler, and RNG state on every
+rank. Since ordinary optimizer deserialization does not recreate bnb UVM
+objects, every large moment is reallocated with the same raw bnb optimizer,
+copied and SHA-256 checked in 16 MiB chunks, swapped into the state, and
+verified as exactly-once paged. Rank 0 then atomically writes a unique
+launch-nonce readiness record outside the managed checkpoint tree; only that
+record authorizes the launcher to start both watchers. Parent provenance is
+compared against the current immutable lineage and bound to the checkpoint
+manifest and completion-marker hashes.
 
 No marker is reusable across a different R2 root, run ID, config hash, or
 checkpoint manifest hash.
@@ -223,6 +255,11 @@ of its rollouts and labels. Rollouts and safe-by-unsafe pairs are never treated
 as independent experimental units. If only the old 10/source liveness floor is
 met, report reduced-power/exploratory status; do not declare the confirmatory
 gate passed.
+
+The `10/source` number is therefore never the paper test sample size. The
+frozen ledger supplies 70 sealed candidates/source (280 total), the analysis
+reports every actual eligible prompt, and the confirmatory claim is withheld
+below the separate `30/source`, `120 total` sealed adequacy floor.
 
 Text/length/content baselines and the delta nuisance audit are diagnostics, not
 hidden-superiority gates. Prompt/pre-CoT unsafe-propensity prediction is an

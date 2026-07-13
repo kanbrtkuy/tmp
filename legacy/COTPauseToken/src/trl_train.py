@@ -41,15 +41,81 @@ from src.utils.trainer_utils import encode_response_template
 log = RankedLogger(__name__)
 
 
-def add_special_tokens(tokenizer, model, token_names: list[str]) -> None:
+def _embedding_rows(model) -> tuple[int | None, int | None]:
+    input_embeddings = model.get_input_embeddings()
+    output_embeddings = model.get_output_embeddings()
+    input_rows = (
+        int(input_embeddings.weight.shape[0])
+        if input_embeddings is not None and hasattr(input_embeddings, "weight")
+        else None
+    )
+    output_rows = (
+        int(output_embeddings.weight.shape[0])
+        if output_embeddings is not None and hasattr(output_embeddings, "weight")
+        else None
+    )
+    return input_rows, output_rows
+
+
+def _unique_parameter_count(model) -> int:
+    return sum(int(item["parameter"].numel()) for item in unique_named_parameters(model))
+
+
+def _token_is_registered_special(tokenizer, token_id: int) -> bool:
+    if int(token_id) in {int(value) for value in getattr(tokenizer, "all_special_ids", [])}:
+        return True
+    added_decoder = getattr(tokenizer, "added_tokens_decoder", {}) or {}
+    added = added_decoder.get(int(token_id))
+    return bool(getattr(added, "special", False))
+
+
+def add_special_tokens(
+    tokenizer,
+    model,
+    token_names: list[str],
+    *,
+    canonical: bool = False,
+) -> dict[str, Any]:
+    """Add requested tokens and return the exact tokenizer/model transition."""
+
+    if canonical:
+        from cot_safety.training.full_sft_contract import (
+            CANONICAL_PAUSE_TOKEN,
+            CANONICAL_PAUSE_TOKEN_ID,
+        )
+
+        if token_names != [CANONICAL_PAUSE_TOKEN]:
+            raise ValueError(
+                "canonical full-SFT requires exactly one configured pause token: "
+                f"{CANONICAL_PAUSE_TOKEN!r}"
+            )
+        expected_from_environment = int(
+            required_environment("FULL_SFT_EXPECTED_PAUSE_TOKEN_ID")
+        )
+        if expected_from_environment != CANONICAL_PAUSE_TOKEN_ID:
+            raise ValueError(
+                "FULL_SFT_EXPECTED_PAUSE_TOKEN_ID drifted from the reviewed contract"
+            )
+
+    before_vocab = dict(tokenizer.get_vocab() or {})
+    before_length = int(len(tokenizer))
+    input_rows_before, output_rows_before = _embedding_rows(model)
+    parameters_before = _unique_parameter_count(model)
     if not token_names:
-        return
+        return {
+            "mode": "no_tokens_requested",
+            "n_added": 0,
+            "tokenizer_length_before": before_length,
+            "tokenizer_length_after": before_length,
+            "unique_parameter_count_before": parameters_before,
+            "unique_parameter_count_after": parameters_before,
+        }
 
     added_tokens = [
         AddedToken(token_name, single_word=False, lstrip=False, rstrip=False)
         for token_name in token_names
     ]
-    n_added = tokenizer.add_tokens(added_tokens, special_tokens=True)
+    n_added = int(tokenizer.add_tokens(added_tokens, special_tokens=True))
     if n_added:
         try:
             model.resize_token_embeddings(len(tokenizer), mean_resizing=False)
@@ -57,6 +123,62 @@ def add_special_tokens(tokenizer, model, token_names: list[str]) -> None:
             model.resize_token_embeddings(len(tokenizer))
         initialize_added_token_embeddings_mean_rescaled(model, tokenizer, token_names)
         log.info(f"Added {n_added} special token(s): {token_names}")
+
+    after_vocab = dict(tokenizer.get_vocab() or {})
+    after_length = int(len(tokenizer))
+    input_rows_after, output_rows_after = _embedding_rows(model)
+    parameters_after = _unique_parameter_count(model)
+    token = str(token_names[0]) if len(token_names) == 1 else None
+    token_was_present_before = token in before_vocab if token is not None else False
+    token_id_before = int(before_vocab[token]) if token_was_present_before else None
+    token_id_after = (
+        int(after_vocab[token]) if token is not None and token in after_vocab else None
+    )
+    encoded_after = (
+        [int(value) for value in tokenizer.encode(token, add_special_tokens=False)]
+        if token is not None
+        else []
+    )
+    audit = {
+        "token": token,
+        "expected_token_id": (
+            int(required_environment("FULL_SFT_EXPECTED_PAUSE_TOKEN_ID"))
+            if canonical
+            else token_id_after
+        ),
+        "mode": (
+            "preexisting_exact_id"
+            if n_added == 0 and token_was_present_before
+            else "added_exactly_one"
+            if n_added == 1 and not token_was_present_before
+            else "invalid_transition"
+        ),
+        "n_added": n_added,
+        "token_was_present_before": token_was_present_before,
+        "token_id_before": token_id_before,
+        "token_id_after": token_id_after,
+        "encoded_ids_after": encoded_after,
+        "is_special_after": (
+            _token_is_registered_special(tokenizer, token_id_after)
+            if token_id_after is not None
+            else False
+        ),
+        "tokenizer_length_before": before_length,
+        "tokenizer_length_after": after_length,
+        "input_embedding_rows_before": input_rows_before,
+        "output_embedding_rows_before": output_rows_before,
+        "input_embedding_rows_after": input_rows_after,
+        "output_embedding_rows_after": output_rows_after,
+        "unique_parameter_count_before": parameters_before,
+        "unique_parameter_count_after": parameters_after,
+    }
+    if canonical:
+        from cot_safety.training.full_sft_contract import (
+            assert_canonical_pause_token_addition,
+        )
+
+        audit = assert_canonical_pause_token_addition(audit)
+    return audit
 
 
 def initialize_added_token_embeddings_mean_rescaled(model, tokenizer, token_names: list[str]) -> None:
@@ -287,19 +409,23 @@ def required_environment(name: str) -> str:
 
 def canonical_package_preflight() -> dict[str, str]:
     from cot_safety.training.full_sft_contract import (
+        CANONICAL_BNB_VERSION,
         CANONICAL_TRANSFORMERS_VERSION,
         CANONICAL_TRL_VERSION,
     )
 
     actual = {
+        "bitsandbytes": importlib.metadata.version("bitsandbytes"),
         "transformers": importlib.metadata.version("transformers"),
         "trl": importlib.metadata.version("trl"),
     }
     expected = {
+        "bitsandbytes": required_environment("FULL_SFT_BITSANDBYTES_VERSION"),
         "transformers": required_environment("FULL_SFT_TRANSFORMERS_VERSION"),
         "trl": required_environment("FULL_SFT_TRL_VERSION"),
     }
     if expected != {
+        "bitsandbytes": CANONICAL_BNB_VERSION,
         "transformers": CANONICAL_TRANSFORMERS_VERSION,
         "trl": CANONICAL_TRL_VERSION,
     }:
@@ -387,11 +513,152 @@ def unique_named_parameters(model) -> list[dict[str, Any]]:
     return list(by_identity.values())
 
 
-def tensor_group_sha256(parameters: list[Any]) -> str:
+def _resolved_snapshot_path(value: Any, *, label: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError(f"canonical model identity requires {label}")
+    path = Path(raw).expanduser()
+    if not path.is_dir():
+        raise ValueError(f"canonical {label} is not a local snapshot directory: {path}")
+    return str(path.resolve())
+
+
+def canonical_model_identity_audit(
+    *,
+    cfg: DictConfig,
+    model,
+    tokenizer,
+    pause_token_addition: dict[str, Any],
+) -> dict[str, Any]:
+    from cot_safety.training.full_sft_contract import (
+        CANONICAL_MODEL_ID,
+        assert_canonical_model_identity,
+        canonical_json_sha256,
+    )
+
+    expected_snapshot = _resolved_snapshot_path(
+        required_environment("FULL_SFT_BASE_MODEL_PATH"),
+        label="provenance base-model path",
+    )
+    expected_tokenizer = _resolved_snapshot_path(
+        required_environment("FULL_SFT_TOKENIZER_PATH"),
+        label="provenance tokenizer path",
+    )
+    hydra_model = _resolved_snapshot_path(
+        cfg.rl_algorithm.policy.model.language_model.pretrained_model_name_or_path,
+        label="Hydra language-model path",
+    )
+    hydra_tokenizer = _resolved_snapshot_path(
+        cfg.rl_algorithm.policy.model.tokenizer.pretrained_model_name_or_path,
+        label="Hydra tokenizer path",
+    )
+    config_name_or_path = _resolved_snapshot_path(
+        getattr(model.config, "_name_or_path", None),
+        label="instantiated model config _name_or_path",
+    )
+    tokenizer_name_or_path = _resolved_snapshot_path(
+        getattr(tokenizer, "name_or_path", None),
+        label="instantiated tokenizer name_or_path",
+    )
+
+    parameters = unique_named_parameters(model)
+    dtype_counts: dict[str, int] = {}
+    trainable_tensors = 0
+    trainable_parameters = 0
+    parameter_manifest: list[dict[str, Any]] = []
+    for item in parameters:
+        parameter = item["parameter"]
+        dtype = str(parameter.dtype)
+        dtype_counts[dtype] = dtype_counts.get(dtype, 0) + 1
+        if bool(parameter.requires_grad):
+            trainable_tensors += 1
+            trainable_parameters += int(parameter.numel())
+        parameter_manifest.append(
+            {
+                "names": sorted(item["names"]),
+                "shape": [int(value) for value in parameter.shape],
+                "dtype": dtype,
+                "numel": int(parameter.numel()),
+            }
+        )
+    parameter_manifest.sort(key=lambda item: item["names"])
+    total_parameters = sum(int(item["parameter"].numel()) for item in parameters)
+    input_embeddings = model.get_input_embeddings()
+    output_embeddings = model.get_output_embeddings()
+    if (
+        input_embeddings is None
+        or output_embeddings is None
+        or not hasattr(input_embeddings, "weight")
+        or not hasattr(output_embeddings, "weight")
+    ):
+        raise ValueError("canonical model must expose input and output embedding weights")
+
+    identity = {
+        "schema_version": "safechain.stage2.instantiated_model_identity.v1",
+        "canonical_model_id": CANONICAL_MODEL_ID,
+        "paths": {
+            "provenance_snapshot": expected_snapshot,
+            "provenance_tokenizer": expected_tokenizer,
+            "hydra_language_model": hydra_model,
+            "hydra_tokenizer": hydra_tokenizer,
+            "model_config_name_or_path": config_name_or_path,
+            "tokenizer_name_or_path": tokenizer_name_or_path,
+        },
+        "model_class": f"{type(model).__module__}.{type(model).__name__}",
+        "tokenizer_class": f"{type(tokenizer).__module__}.{type(tokenizer).__name__}",
+        "tokenizer_length": int(len(tokenizer)),
+        "config": {
+            "model_type": getattr(model.config, "model_type", None),
+            "architectures": list(getattr(model.config, "architectures", None) or []),
+            "num_hidden_layers": getattr(model.config, "num_hidden_layers", None),
+            "hidden_size": getattr(model.config, "hidden_size", None),
+            "intermediate_size": getattr(model.config, "intermediate_size", None),
+            "num_attention_heads": getattr(model.config, "num_attention_heads", None),
+            "num_key_value_heads": getattr(model.config, "num_key_value_heads", None),
+            "vocab_size": getattr(model.config, "vocab_size", None),
+            "tie_word_embeddings": getattr(model.config, "tie_word_embeddings", None),
+            "attention_bias": getattr(model.config, "attention_bias", None),
+            "mlp_bias": getattr(model.config, "mlp_bias", None),
+        },
+        "parameters": {
+            "unique_total_parameter_tensors": len(parameters),
+            "unique_trainable_parameter_tensors": trainable_tensors,
+            "unique_total_parameter_count": total_parameters,
+            "unique_trainable_parameter_count": trainable_parameters,
+            "dtype_counts": dict(sorted(dtype_counts.items())),
+            "name_shape_sha256": canonical_json_sha256(parameter_manifest),
+        },
+        "embeddings": {
+            "input_rows": int(input_embeddings.weight.shape[0]),
+            "output_rows": int(output_embeddings.weight.shape[0]),
+            "input_width": int(input_embeddings.weight.shape[1]),
+            "output_width": int(output_embeddings.weight.shape[1]),
+            "weights_tied": input_embeddings.weight is output_embeddings.weight,
+        },
+        "pause_token_addition": dict(pause_token_addition),
+    }
+    return assert_canonical_model_identity(identity)
+
+
+def tensor_group_sha256(
+    parameters: list[Any], *, chunk_bytes: int = 16 * 1024 * 1024
+) -> str:
+    """Hash parameters with bounded CUDA->CPU chunks."""
+
     digest = hashlib.sha256()
     for parameter in parameters:
-        tensor = parameter.detach().contiguous().view(torch.uint8).cpu()
-        digest.update(tensor.numpy().tobytes())
+        flat = parameter.detach().reshape(-1)
+        element_size = int(flat.element_size())
+        chunk_elements = max(1, int(chunk_bytes) // element_size)
+        for start in range(0, int(flat.numel()), chunk_elements):
+            chunk = (
+                flat[start : start + chunk_elements]
+                .contiguous()
+                .view(torch.uint8)
+                .cpu()
+            )
+            digest.update(chunk.numpy().tobytes(order="C"))
+            del chunk
     return digest.hexdigest()
 
 
@@ -404,6 +671,41 @@ def distributed_rank() -> int:
 def distributed_barrier() -> None:
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         torch.distributed.barrier()
+
+
+def distributed_all_gather_objects(value: Any) -> list[Any]:
+    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return [value]
+    gathered: list[Any] = [None] * int(torch.distributed.get_world_size())
+    torch.distributed.all_gather_object(gathered, value)
+    return gathered
+
+
+def unwrap_canonical_optimizer(observed: Any, expected: Any) -> dict[str, Any]:
+    """Unwrap Accelerate without accepting an arbitrary nested optimizer."""
+
+    chain: list[dict[str, Any]] = []
+    current = observed
+    seen: set[int] = set()
+    for _ in range(8):
+        if current is None or id(current) in seen:
+            break
+        seen.add(id(current))
+        chain.append(
+            {
+                "type": f"{type(current).__module__}.{type(current).__name__}",
+                "identity": id(current),
+            }
+        )
+        if current is expected:
+            return {"ok": True, "optimizer": current, "wrapper_chain": chain}
+        current = getattr(current, "optimizer", None)
+    return {
+        "ok": False,
+        "optimizer": None,
+        "wrapper_chain": chain,
+        "error": "callback optimizer does not unwrap to the preflight bnb AdamW instance",
+    }
 
 
 def distributed_rank_zero_call(function, *, description: str):
@@ -429,6 +731,8 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
         *,
         model,
         tokenizer,
+        optimizer,
+        model_identity_audit: dict[str, Any],
         output_dir: str,
         expected_terminal_step: int,
         provenance_path: str,
@@ -436,19 +740,105 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
+        self.optimizer = optimizer
+        self.optimizer_identity = id(optimizer)
+        self.model_identity_audit = dict(model_identity_audit)
         self.output_dir = Path(output_dir)
         self.expected_terminal_step = int(expected_terminal_step)
         self.provenance_path = Path(provenance_path)
         self.provenance_record = provenance_record
         self.gradient_audit_path = self.output_dir / "stage2_first_step_gradient_audit.json"
+        self.optimizer_state_audit_path = (
+            self.output_dir / "stage2_first_step_optimizer_state_audit.json"
+        )
+        self.resume_rehydration_audit_path = (
+            self.output_dir / "stage2_resume_paged_state_rehydration_audit.json"
+        )
+        self.resume_readiness_audit_path = (
+            self.output_dir / "stage2_resume_restore_readiness_audit.json"
+        )
+        self.resume_post_restore_audit_path = (
+            self.output_dir / "stage2_resume_post_restore_checkpoint_audit.json"
+        )
+        self.pretrain_runtime_audit_path = (
+            self.output_dir / "stage2_pretrain_runtime_audit.json"
+        )
         self.state_audit_path = self.output_dir / "stage2_trainer_state_audit.json"
         self.gradient_audited = False
         self.optimizer_step_audited = False
         self.gradient_audit_record: dict[str, Any] | None = None
         self.expected_resume_step: int | None = None
+        self.expected_resume_checkpoint: str | None = None
+        self.resume_verification_audit: dict[str, Any] | None = None
+        self.resume_rehydration_audit: dict[str, Any] | None = None
+        self.resume_train_begin_audit: dict[str, Any] | None = None
+        self.resume_ready_written = False
+        self.resume_post_restore_audit: dict[str, Any] | None = None
+        self.restore_observers = {
+            "model": {"observed": False, "count": 0, "checkpoint": None},
+            "optimizer_scheduler": {
+                "observed": False,
+                "count": 0,
+                "checkpoint": None,
+            },
+            "rng": {"observed": False, "count": 0, "checkpoint": None},
+        }
         self.first_observed_global_step: int | None = None
         self.middle_layer_index, self.middle_parameters = self._select_middle_layer()
         self.middle_checksum_before: str | None = None
+
+    def install_resume_restore_observers(self, trainer, checkpoint: str | Path) -> None:
+        """Observe the three pinned HF restore APIs without changing semantics."""
+
+        expected = str(Path(checkpoint).expanduser().resolve())
+        if self.expected_resume_checkpoint != expected:
+            raise ValueError(
+                "resume observer checkpoint differs from verified checkpoint: "
+                f"{expected} != {self.expected_resume_checkpoint}"
+            )
+        targets = {
+            "model": "_load_from_checkpoint",
+            "optimizer_scheduler": "_load_optimizer_and_scheduler",
+            "rng": "_load_rng_state",
+        }
+        for observer_name, attribute in targets.items():
+            original = getattr(trainer, attribute, None)
+            if not callable(original):
+                raise ValueError(f"Trainer.{attribute} is unavailable for resume audit")
+
+            @functools.wraps(original)
+            def observed(*args, __original=original, __name=observer_name, **kwargs):
+                from cot_safety.training.full_sft_runtime import (
+                    resolve_resume_restore_checkpoint_argument,
+                )
+
+                try:
+                    candidate = resolve_resume_restore_checkpoint_argument(
+                        args, kwargs
+                    )
+                except Exception as exc:
+                    audit = self.restore_observers[__name]
+                    audit["count"] = int(audit["count"]) + 1
+                    audit["checkpoint"] = None
+                    audit["observed"] = False
+                    raise ValueError(
+                        f"Trainer restore API {__name} supplied no checkpoint"
+                    ) from exc
+                resolved = str(Path(candidate).expanduser().resolve())
+                audit = self.restore_observers[__name]
+                audit["count"] = int(audit["count"]) + 1
+                audit["checkpoint"] = resolved
+                if resolved != expected:
+                    audit["observed"] = False
+                    raise ValueError(
+                        f"Trainer restore API {__name} used unverified checkpoint "
+                        f"{resolved} != {expected}"
+                    )
+                result = __original(*args, **kwargs)
+                audit["observed"] = True
+                return result
+
+            setattr(trainer, attribute, observed)
 
     def _select_middle_layer(self) -> tuple[int, list[Any]]:
         layer_parameters: dict[int, list[Any]] = {}
@@ -464,6 +854,14 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
         if not layer_parameters:
             raise ValueError("cannot identify decoder-layer parameters for middle-layer checksum")
         layer_ids = sorted(layer_parameters)
+        from cot_safety.training.full_sft_contract import CANONICAL_DECODER_LAYERS
+
+        expected_layer_ids = list(range(CANONICAL_DECODER_LAYERS))
+        if layer_ids != expected_layer_ids:
+            raise ValueError(
+                "instantiated decoder-layer parameter ids drifted: "
+                f"{layer_ids} != {expected_layer_ids}"
+            )
         middle = layer_ids[len(layer_ids) // 2]
         return middle, layer_parameters[middle]
 
@@ -492,40 +890,409 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
             description=f"provenance update {key}",
         )
 
+    def _update_runtime_audit_distributed(
+        self, key: str, value: dict[str, Any]
+    ) -> None:
+        def update_on_rank_zero():
+            from cot_safety.training.full_sft_runtime import (
+                update_pretrain_runtime_audit,
+            )
+
+            update_pretrain_runtime_audit(
+                self.pretrain_runtime_audit_path,
+                key=key,
+                value=value,
+            )
+            return True
+
+        distributed_rank_zero_call(
+            update_on_rank_zero,
+            description=f"pretrain runtime audit update {key}",
+        )
+
+    def _gather_rank_audit(
+        self,
+        *,
+        local_audit: dict[str, Any],
+        detail_stem: str,
+        success_status: str = "pass",
+    ) -> dict[str, Any]:
+        """Persist full rank-local evidence and gather compact summaries."""
+
+        from cot_safety.training.checkpoint_integrity import (
+            atomic_write_json,
+            sha256_file,
+        )
+        from cot_safety.training.full_sft_contract import canonical_json_sha256
+
+        rank = distributed_rank()
+        local_record = dict(local_audit)
+        local_record["rank"] = rank
+        local_record["world_size"] = (
+            int(torch.distributed.get_world_size())
+            if torch.distributed.is_available() and torch.distributed.is_initialized()
+            else 1
+        )
+        detail_path = self.output_dir / f"{detail_stem}.rank{rank}.json"
+        try:
+            atomic_write_json(detail_path, local_record)
+            detail_write_ok = True
+            detail_file_sha256 = sha256_file(detail_path)
+        except Exception as exc:  # noqa: BLE001 - gather before all-rank abort.
+            detail_write_ok = False
+            detail_file_sha256 = None
+            local_record["ok"] = False
+            local_record["status"] = "fail"
+            local_record.setdefault("errors", []).append(
+                f"rank-local audit write failed: {type(exc).__name__}: {exc}"
+            )
+        local_digest = canonical_json_sha256(local_record)
+        compact = {
+            key: value
+            for key, value in local_record.items()
+            if key
+            not in {
+                "parameter_records",
+                "records",
+                "missing_gradient_tensors",
+                "nonfinite_gradient_tensors",
+            }
+        }
+        compact["rank"] = rank
+        compact["detail_file"] = detail_path.name
+        compact["detail_write_ok"] = detail_write_ok
+        compact["detail_sha256"] = detail_file_sha256
+        compact["record_canonical_sha256"] = local_digest
+        compact["error_count"] = len(local_record.get("errors", []) or [])
+        compact["errors"] = list(local_record.get("errors", []) or [])[:50]
+        gathered = distributed_all_gather_objects(compact)
+        gathered = sorted(gathered, key=lambda item: int(item["rank"]))
+        all_ok = all(item.get("ok") is True for item in gathered)
+        aggregate_errors = [
+            f"rank{item['rank']}: {message}"
+            for item in gathered
+            for message in item.get("errors", [])
+        ]
+        return {
+            "schema_version": f"safechain.stage2.{detail_stem}.distributed.v1",
+            "status": success_status if all_ok else "fail",
+            "ok": all_ok,
+            "errors": aggregate_errors,
+            "world_size": len(gathered),
+            "all_ranks_checked": len(gathered)
+            == (
+                int(torch.distributed.get_world_size())
+                if torch.distributed.is_available() and torch.distributed.is_initialized()
+                else 1
+            ),
+            "per_rank": gathered,
+        }
+
     def on_train_begin(self, args, state, control, **kwargs):
+        local_errors: list[str] = []
         actual_max_steps = int(state.max_steps)
         initial_global_step = int(state.global_step)
-        optimizer = kwargs.get("optimizer")
+        unwrapped_optimizer: dict[str, Any] = {
+            "ok": False,
+            "optimizer": None,
+            "wrapper_chain": [],
+            "error": "optimizer unwrap not attempted",
+        }
+        optimizer = None
+        optimizer_state_entries = 0
         scheduler = kwargs.get("lr_scheduler")
-        optimizer_state_entries = len(getattr(optimizer, "state", {}) or {})
         scheduler_last_epoch = getattr(scheduler, "last_epoch", None)
-        resume_restore_ok = True
-        if self.expected_resume_step is not None:
-            try:
-                scheduler_matches = int(scheduler_last_epoch) == self.expected_resume_step
-            except (TypeError, ValueError):
-                scheduler_matches = False
-            resume_restore_ok = (
-                initial_global_step == self.expected_resume_step
-                and optimizer_state_entries > 0
-                and scheduler_matches
+        resume_restore_ok = self.expected_resume_step is None
+        try:
+            unwrapped_optimizer = unwrap_canonical_optimizer(
+                kwargs.get("optimizer"), self.optimizer
             )
-        audit = {
-            "ok": actual_max_steps == self.expected_terminal_step and resume_restore_ok,
-            "phase": "train_begin",
+            if unwrapped_optimizer["ok"] is not True:
+                raise ValueError(unwrapped_optimizer["error"])
+            optimizer = unwrapped_optimizer["optimizer"]
+            optimizer_state_entries = len(getattr(optimizer, "state", {}) or {})
+            if self.expected_resume_step is not None:
+                try:
+                    scheduler_matches = (
+                        int(scheduler_last_epoch) == self.expected_resume_step
+                    )
+                except (TypeError, ValueError):
+                    scheduler_matches = False
+                restore_calls_ok = all(
+                    self.restore_observers[key]["observed"] is True
+                    for key in ("model", "optimizer_scheduler")
+                )
+                resume_restore_ok = (
+                    initial_global_step == self.expected_resume_step
+                    and optimizer_state_entries > 0
+                    and scheduler_matches
+                    and restore_calls_ok
+                )
+                if not resume_restore_ok:
+                    raise ValueError(
+                        "model/optimizer/scheduler/Trainer state restore evidence is incomplete"
+                    )
+            self.middle_checksum_before = tensor_group_sha256(
+                self.middle_parameters
+            )
+        except Exception as exc:  # noqa: BLE001 - all ranks must reach collectives.
+            local_errors.append(f"{type(exc).__name__}: {exc}")
+
+        local_audit = {
+            "status": "pass" if not local_errors else "fail",
+            "ok": not local_errors
+            and actual_max_steps == self.expected_terminal_step
+            and resume_restore_ok,
+            "errors": local_errors,
+            "phase": "train_begin_after_model_optimizer_scheduler_restore",
             "expected_max_steps": self.expected_terminal_step,
             "actual_max_steps": actual_max_steps,
             "initial_global_step": initial_global_step,
             "expected_resume_step": self.expected_resume_step,
             "resume_optimizer_state_entries": optimizer_state_entries,
+            "optimizer_wrapper_chain": unwrapped_optimizer["wrapper_chain"],
+            "preflight_optimizer_identity": self.optimizer_identity,
+            "optimizer_binding_ok": unwrapped_optimizer["ok"] is True,
             "resume_scheduler_last_epoch": scheduler_last_epoch,
             "resume_restore_ok": resume_restore_ok,
+            "restore_observers": self.restore_observers,
+            "middle_checksum_before": self.middle_checksum_before,
         }
-        self.middle_checksum_before = tensor_group_sha256(self.middle_parameters)
+        if actual_max_steps != self.expected_terminal_step:
+            local_audit["ok"] = False
+            local_audit["status"] = "fail"
+            local_audit["errors"].append(
+                f"max_steps={actual_max_steps}, expected {self.expected_terminal_step}"
+            )
+        audit = self._gather_rank_audit(
+            local_audit=local_audit,
+            detail_stem="stage2_train_begin_audit",
+        )
+        self.resume_train_begin_audit = audit
         self._write_json_distributed(self.state_audit_path, audit)
         self._update_provenance_distributed("trainer_state_begin", audit)
+
+        if self.expected_resume_step is not None:
+            if optimizer is None:
+                local_rehydration = {
+                    "schema_version": (
+                        "safechain.stage2.resume_paged_state_rehydration.v1"
+                    ),
+                    "status": "fail",
+                    "ok": False,
+                    "errors": ["raw optimizer unavailable after restore"],
+                    "mode": "resume",
+                }
+            else:
+                try:
+                    from bitsandbytes.functional import GlobalPageManager
+                    from cot_safety.training.full_sft_runtime import (
+                        rehydrate_paged_optimizer_state,
+                    )
+
+                    page_manager = GlobalPageManager.get_instance()
+                    try:
+                        named_parameters = list(
+                            self.model.named_parameters(remove_duplicate=False)
+                        )
+                    except TypeError:
+                        named_parameters = list(self.model.named_parameters())
+                    local_rehydration = rehydrate_paged_optimizer_state(
+                        named_parameters,
+                        optimizer,
+                        page_manager=page_manager,
+                    )
+                except Exception as exc:  # noqa: BLE001 - gather before abort.
+                    local_rehydration = {
+                        "schema_version": (
+                            "safechain.stage2.resume_paged_state_rehydration.v1"
+                        ),
+                        "status": "fail",
+                        "ok": False,
+                        "errors": [f"{type(exc).__name__}: {exc}"],
+                        "mode": "resume",
+                    }
+            rehydration = self._gather_rank_audit(
+                local_audit=local_rehydration,
+                detail_stem="stage2_resume_paged_state_rehydration_audit",
+            )
+            self.resume_rehydration_audit = rehydration
+            self._write_json_distributed(
+                self.resume_rehydration_audit_path, rehydration
+            )
+            self._update_runtime_audit_distributed(
+                "resume_paged_state_rehydration_audit", rehydration
+            )
+            self._update_provenance_distributed(
+                "resume_paged_state_rehydration_audit", rehydration
+            )
+            if not rehydration["ok"]:
+                audit["ok"] = False
         if not audit["ok"]:
-            raise ValueError(f"Trainer train-begin state failed canonical contract: {audit}")
+            raise ValueError(
+                "Trainer train-begin state failed canonical contract: "
+                + "; ".join(audit["errors"])
+            )
+        return control
+
+    def on_step_begin(self, args, state, control, **kwargs):
+        """Release resume GC only after HF has actually restored rank RNG."""
+
+        if self.expected_resume_step is None or self.resume_ready_written:
+            return control
+        local_errors: list[str] = []
+        def post_restore_rehash_on_rank_zero():
+            from cot_safety.training.full_sft_runtime import (
+                verify_post_restore_checkpoint_identity,
+            )
+
+            try:
+                return verify_post_restore_checkpoint_identity(
+                    self.expected_resume_checkpoint,
+                    self.resume_verification_audit or {},
+                )
+            except Exception as exc:  # noqa: BLE001 - broadcast fail evidence.
+                return {
+                    "schema_version": (
+                        "safechain.stage2.resume_post_restore_rehash.v1"
+                    ),
+                    "status": "fail",
+                    "ok": False,
+                    "checkpoint": self.expected_resume_checkpoint,
+                    "errors": [f"{type(exc).__name__}: {exc}"],
+                }
+
+        post_restore_audit = distributed_rank_zero_call(
+            post_restore_rehash_on_rank_zero,
+            description="post-restore sealed checkpoint full rehash",
+        )
+        self.resume_post_restore_audit = post_restore_audit
+        self._write_json_distributed(
+            self.resume_post_restore_audit_path, post_restore_audit
+        )
+        self._update_provenance_distributed(
+            "resume_post_restore_checkpoint_audit", post_restore_audit
+        )
+        if post_restore_audit.get("ok") is not True:
+            local_errors.extend(post_restore_audit.get("errors", []))
+        if self.resume_verification_audit is None:
+            local_errors.append("resume checkpoint verification audit is absent")
+        if not self.resume_train_begin_audit or not self.resume_train_begin_audit.get(
+            "ok"
+        ):
+            local_errors.append("model/optimizer/scheduler/Trainer restore audit failed")
+        if not self.resume_rehydration_audit or not self.resume_rehydration_audit.get(
+            "ok"
+        ):
+            local_errors.append("paged optimizer-state rehydration audit failed")
+        rng_observer = self.restore_observers["rng"]
+        if rng_observer.get("observed") is not True:
+            local_errors.append("Trainer RNG restore API was not observed")
+        if int(state.global_step) != self.expected_resume_step:
+            local_errors.append(
+                f"on_step_begin global_step={state.global_step}, expected "
+                f"{self.expected_resume_step}"
+            )
+        local = {
+            "schema_version": "safechain.stage2.resume_restore_readiness.v1",
+            "status": "pass" if not local_errors else "fail",
+            "ok": not local_errors,
+            "errors": local_errors,
+            "resume_step": self.expected_resume_step,
+            "resume_checkpoint": self.expected_resume_checkpoint,
+            "restore_observers": self.restore_observers,
+            "rehydration_ok": bool(
+                self.resume_rehydration_audit
+                and self.resume_rehydration_audit.get("ok")
+            ),
+            "post_restore_checkpoint_ok": post_restore_audit.get("ok") is True,
+        }
+        readiness = self._gather_rank_audit(
+            local_audit=local,
+            detail_stem="stage2_resume_restore_readiness_audit",
+        )
+        self._write_json_distributed(self.resume_readiness_audit_path, readiness)
+        self._update_provenance_distributed(
+            "resume_restore_readiness_audit", readiness
+        )
+        if not readiness["ok"]:
+            raise ValueError(
+                "resume restore readiness hard gate failed: "
+                + "; ".join(readiness["errors"])
+            )
+
+        def write_ready_on_rank_zero():
+            from cot_safety.training.checkpoint_integrity import (
+                atomic_write_json,
+                sha256_file,
+            )
+
+            ready_path = Path(required_environment("FULL_SFT_RESUME_READY_PATH"))
+            nonce = required_environment("FULL_SFT_LAUNCH_NONCE")
+            if not re.fullmatch(r"[0-9a-f]{32}", nonce):
+                raise ValueError("FULL_SFT_LAUNCH_NONCE must be 128 random bits")
+            if nonce not in ready_path.name:
+                raise ValueError("resume readiness filename must contain launch nonce")
+            ready_resolved = ready_path.expanduser().resolve()
+            output_resolved = self.output_dir.expanduser().resolve()
+            try:
+                ready_resolved.relative_to(output_resolved)
+            except ValueError:
+                pass
+            else:
+                raise ValueError(
+                    "resume readiness sentinel must be outside watcher-managed output"
+                )
+            if ready_resolved.exists():
+                raise ValueError(
+                    f"refusing pre-existing resume readiness sentinel: {ready_resolved}"
+                )
+            ready_resolved.parent.mkdir(parents=True, exist_ok=True)
+            verification = self.resume_verification_audit or {}
+            lineage = verification.get("lineage", {})
+            record = {
+                "schema_version": "safechain.stage2.resume_restore_complete.v1",
+                "status": "pass",
+                "ok": True,
+                "launch_nonce": nonce,
+                "resume_checkpoint": self.expected_resume_checkpoint,
+                "resume_step": self.expected_resume_step,
+                "checkpoint_manifest_sha256": verification.get(
+                    "manifest_sha256"
+                ),
+                "checkpoint_completion_marker_sha256": verification.get(
+                    "completion_marker_sha256"
+                ),
+                "checkpoint_provenance_sha256": (
+                    lineage.get("checkpoint_provenance") or {}
+                ).get("sha256"),
+                "rehydration_audit_sha256": sha256_file(
+                    self.resume_rehydration_audit_path
+                ),
+                "readiness_audit_sha256": sha256_file(
+                    self.resume_readiness_audit_path
+                ),
+                "post_restore_audit_sha256": sha256_file(
+                    self.resume_post_restore_audit_path
+                ),
+                "post_restore_checkpoint_identity_sha256": (
+                    self.resume_post_restore_audit or {}
+                ).get("identity_sha256"),
+                "all_ranks_ready": readiness.get("all_ranks_checked") is True,
+                "parent_run_id": lineage.get("parent_run_id"),
+                "current_run_id": lineage.get("current_run_id"),
+                "parent_r2_root": lineage.get("parent_r2_root"),
+                "current_r2_root": lineage.get("current_r2_root"),
+                "lineage_sha256": lineage.get("current_lineage_sha256"),
+            }
+            atomic_write_json(ready_resolved, record)
+            return record
+
+        distributed_rank_zero_call(
+            write_ready_on_rank_zero,
+            description="nonce-bound resume readiness sentinel",
+        )
+        self.resume_ready_written = True
         return control
 
     @staticmethod
@@ -551,7 +1318,14 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
         }
 
     def _audit_gradients(self, state) -> dict[str, Any]:
-        from cot_safety.training.full_sft_contract import audit_gradient_tensor_records
+        from cot_safety.training.full_sft_contract import (
+            CANONICAL_DECODER_LAYERS,
+            CANONICAL_PARAMETER_TENSOR_COUNT,
+            CANONICAL_PAUSE_TOKEN_ID,
+            CANONICAL_RESIZED_PARAMETER_COUNT,
+            audit_gradient_tensor_records,
+            canonical_json_sha256,
+        )
 
         tensor_records: list[dict[str, Any]] = []
         trainable_tensors = 0
@@ -593,8 +1367,28 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
             )
 
         expected_layers = int(getattr(self.model.config, "num_hidden_layers", 0))
+        identity_errors: list[str] = []
+        if expected_layers != CANONICAL_DECODER_LAYERS:
+            identity_errors.append(
+                f"gradient model decoder layers={expected_layers}, expected "
+                f"{CANONICAL_DECODER_LAYERS}"
+            )
+        if trainable_tensors != CANONICAL_PARAMETER_TENSOR_COUNT:
+            identity_errors.append(
+                f"gradient trainable tensor count={trainable_tensors}, expected "
+                f"{CANONICAL_PARAMETER_TENSOR_COUNT}"
+            )
+        if trainable_parameters != CANONICAL_RESIZED_PARAMETER_COUNT:
+            identity_errors.append(
+                f"gradient trainable parameter count={trainable_parameters}, expected "
+                f"{CANONICAL_RESIZED_PARAMETER_COUNT}"
+            )
         pause_token = required_environment("FULL_SFT_PAUSE_TOKEN")
         pause_token_id = int(self.tokenizer.convert_tokens_to_ids(pause_token))
+        if pause_token_id != CANONICAL_PAUSE_TOKEN_ID:
+            identity_errors.append(
+                f"gradient pause token id={pause_token_id}, expected {CANONICAL_PAUSE_TOKEN_ID}"
+            )
         input_audit = self._embedding_row_audit(
             self.model.get_input_embeddings(), pause_token_id, "input"
         )
@@ -607,11 +1401,22 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
             input_pause_row=input_audit,
             output_pause_row=output_audit,
         )
+        summary["errors"].extend(identity_errors)
+        summary["ok"] = not summary["errors"]
         return {
             **summary,
+            "status": "pass" if summary["ok"] else "fail",
             "first_observed_global_step": int(state.global_step),
+            "event": "on_pre_optimizer_step_after_gradient_accumulation",
+            "expected_gradient_accumulation_steps": 16,
             "unique_trainable_tensor_count": trainable_tensors,
             "unique_trainable_parameter_count": trainable_parameters,
+            "model_identity_sha256": canonical_json_sha256(
+                self.model_identity_audit
+            ),
+            "model_parameter_manifest_sha256": self.model_identity_audit[
+                "parameters"
+            ]["name_shape_sha256"],
             "input_pause_row": input_audit,
             "output_pause_row": output_audit,
             "middle_layer_index": self.middle_layer_index,
@@ -621,10 +1426,25 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
     def on_pre_optimizer_step(self, args, state, control, **kwargs):
         if self.gradient_audited:
             return control
-        audit = self._audit_gradients(state)
+        try:
+            local_audit = self._audit_gradients(state)
+        except Exception as exc:  # noqa: BLE001 - gather every rank before aborting.
+            local_audit = {
+                "status": "fail",
+                "ok": False,
+                "errors": [f"{type(exc).__name__}: {exc}"],
+                "first_observed_global_step": int(state.global_step),
+            }
+        audit = self._gather_rank_audit(
+            local_audit=local_audit,
+            detail_stem="stage2_first_step_gradient_audit",
+            success_status="pending",
+        )
         self.first_observed_global_step = int(state.global_step)
-        self.gradient_audit_record = audit
+        self.gradient_audit_record = local_audit
         self._write_json_distributed(self.gradient_audit_path, audit)
+        self._update_runtime_audit_distributed("first_step_gradient_audit", audit)
+        self._update_provenance_distributed("first_step_gradient_audit", audit)
         if not audit["ok"]:
             raise ValueError("first-step gradient audit failed: " + "; ".join(audit["errors"]))
         self.gradient_audited = True
@@ -633,26 +1453,144 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
     def on_optimizer_step(self, args, state, control, **kwargs):
         if self.optimizer_step_audited:
             return control
-        if not self.gradient_audited or self.middle_checksum_before is None:
-            raise ValueError("optimizer stepped before the canonical gradient audit")
         if self.gradient_audit_record is None:
-            raise ValueError("first-step gradient audit record is unavailable")
-        after = tensor_group_sha256(self.middle_parameters)
-        changed = after != self.middle_checksum_before
-        self.gradient_audit_record.update(
-            {
-                "optimizer_step_applied": True,
-                "middle_layer_checksum_after": after,
-                "middle_layer_checksum_changed": changed,
+            self.gradient_audit_record = {
+                "status": "fail",
+                "ok": False,
+                "errors": ["first-step gradient audit record is unavailable"],
             }
+        try:
+            if not self.gradient_audited or self.middle_checksum_before is None:
+                raise ValueError(
+                    "optimizer stepped before the canonical gradient audit"
+                )
+            after = tensor_group_sha256(self.middle_parameters)
+            changed = after != self.middle_checksum_before
+            self.gradient_audit_record.update(
+                {
+                    "status": "pass" if changed else "fail",
+                    "ok": bool(self.gradient_audit_record.get("ok")) and changed,
+                    "optimizer_step_applied": True,
+                    "middle_layer_checksum_after": after,
+                    "middle_layer_checksum_changed": changed,
+                }
+            )
+            if not changed:
+                self.gradient_audit_record.setdefault("errors", []).append(
+                    "middle-layer checksum did not change after the first optimizer step"
+                )
+        except Exception as exc:  # noqa: BLE001 - all ranks must reach all_gather.
+            self.gradient_audit_record["status"] = "fail"
+            self.gradient_audit_record["ok"] = False
+            self.gradient_audit_record.setdefault("errors", []).append(
+                f"post-step checksum failed: {type(exc).__name__}: {exc}"
+            )
+        gradient_audit = self._gather_rank_audit(
+            local_audit=self.gradient_audit_record,
+            detail_stem="stage2_first_step_gradient_audit",
         )
-        self._write_json_distributed(self.gradient_audit_path, self.gradient_audit_record)
+        self._write_json_distributed(self.gradient_audit_path, gradient_audit)
+        self._update_runtime_audit_distributed(
+            "first_step_gradient_audit", gradient_audit
+        )
         self._update_provenance_distributed(
             "first_step_gradient_audit",
-            self.gradient_audit_record,
+            gradient_audit,
         )
-        if not changed:
-            raise ValueError("middle-layer checksum did not change after the first optimizer step")
+
+        from cot_safety.training.full_sft_contract import (
+            audit_first_optimizer_step_state,
+            canonical_json_sha256,
+        )
+
+        observed_optimizer = kwargs.get("optimizer")
+        unwrapped = unwrap_canonical_optimizer(observed_optimizer, self.optimizer)
+        if not unwrapped["ok"]:
+            local_state_audit = {
+                "schema_version": "safechain.stage2.first_optimizer_step_state.v1",
+                "status": "fail",
+                "ok": False,
+                "errors": [unwrapped["error"]],
+                "optimizer_wrapper_chain": unwrapped["wrapper_chain"],
+                "preflight_optimizer_identity": self.optimizer_identity,
+                "callback_event": "on_optimizer_step_after_real_optimizer_step",
+                "observed_global_step_before_increment": int(state.global_step),
+            }
+        else:
+            try:
+                from bitsandbytes.functional import GlobalPageManager
+
+                page_manager = GlobalPageManager.get_instance()
+                manager_import_error = None
+            except Exception as exc:  # noqa: BLE001 - recorded as a hard-gate failure.
+                page_manager = None
+                manager_import_error = f"{type(exc).__name__}: {exc}"
+            try:
+                named_parameters = list(
+                    self.model.named_parameters(remove_duplicate=False)
+                )
+            except TypeError:
+                named_parameters = list(self.model.named_parameters())
+            try:
+                local_state_audit = audit_first_optimizer_step_state(
+                    named_parameters,
+                    unwrapped["optimizer"],
+                    page_manager=page_manager,
+                    expected_state_step=int(state.global_step) + 1,
+                    manager_import_error=manager_import_error,
+                )
+            except Exception as exc:  # noqa: BLE001 - gather every rank before aborting.
+                local_state_audit = {
+                    "schema_version": "safechain.stage2.first_optimizer_step_state.v1",
+                    "status": "fail",
+                    "ok": False,
+                    "errors": [f"{type(exc).__name__}: {exc}"],
+                }
+            local_state_audit.update(
+                {
+                    "optimizer_wrapper_chain": unwrapped["wrapper_chain"],
+                    "preflight_optimizer_identity": self.optimizer_identity,
+                    "raw_optimizer_identity_matches_preflight": (
+                        id(unwrapped["optimizer"]) == self.optimizer_identity
+                    ),
+                    "callback_event": "on_optimizer_step_after_real_optimizer_step",
+                    "observed_global_step_before_increment": int(state.global_step),
+                    "expected_update_ordinal": int(state.global_step) + 1,
+                    "model_identity_sha256": canonical_json_sha256(
+                        self.model_identity_audit
+                    ),
+                    "model_parameter_manifest_sha256": self.model_identity_audit[
+                        "parameters"
+                    ]["name_shape_sha256"],
+                }
+            )
+            if not local_state_audit["raw_optimizer_identity_matches_preflight"]:
+                local_state_audit["ok"] = False
+                local_state_audit["status"] = "fail"
+                local_state_audit.setdefault("errors", []).append(
+                    "raw optimizer identity differs from the preflight instance"
+                )
+        optimizer_state_audit = self._gather_rank_audit(
+            local_audit=local_state_audit,
+            detail_stem="stage2_first_step_optimizer_state_audit",
+        )
+        self._write_json_distributed(
+            self.optimizer_state_audit_path,
+            optimizer_state_audit,
+        )
+        self._update_runtime_audit_distributed(
+            "first_step_optimizer_state_audit",
+            optimizer_state_audit,
+        )
+        self._update_provenance_distributed(
+            "first_step_optimizer_state_audit",
+            optimizer_state_audit,
+        )
+        if not gradient_audit["ok"] or not optimizer_state_audit["ok"]:
+            messages = list(gradient_audit["errors"]) + list(
+                optimizer_state_audit["errors"]
+            )
+            raise ValueError("first optimizer-step hard gate failed: " + "; ".join(messages))
         self.optimizer_step_audited = True
         return control
 
@@ -668,11 +1606,43 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
             )
 
             copy_provenance_payload(self.provenance_path, checkpoint_dir)
-            for source in (
+            required_audits = [
                 self.output_dir / "stage2_pretrain_runtime_audit.json",
                 self.gradient_audit_path,
+                self.optimizer_state_audit_path,
                 self.state_audit_path,
+            ]
+            for stem in (
+                "stage2_first_step_gradient_audit",
+                "stage2_first_step_optimizer_state_audit",
             ):
+                rank_files = sorted(self.output_dir.glob(f"{stem}.rank*.json"))
+                if len(rank_files) != 2:
+                    raise ValueError(
+                        f"required two-rank canonical audit files for {stem}, got "
+                        f"{[path.name for path in rank_files]}"
+                    )
+                required_audits.extend(rank_files)
+            if self.expected_resume_step is not None:
+                required_audits.extend(
+                    [
+                        self.resume_rehydration_audit_path,
+                        self.resume_readiness_audit_path,
+                        self.resume_post_restore_audit_path,
+                    ]
+                )
+                for stem in (
+                    "stage2_resume_paged_state_rehydration_audit",
+                    "stage2_resume_restore_readiness_audit",
+                ):
+                    rank_files = sorted(self.output_dir.glob(f"{stem}.rank*.json"))
+                    if len(rank_files) != 2:
+                        raise ValueError(
+                            f"required two-rank resume audit files for {stem}, got "
+                            f"{[path.name for path in rank_files]}"
+                        )
+                    required_audits.extend(rank_files)
+            for source in required_audits:
                 if not source.is_file():
                     raise ValueError(
                         f"required canonical audit is missing before checkpoint seal: {source}"
@@ -699,21 +1669,47 @@ class CanonicalFullSFTAuditCallback(TrainerCallback):
 
         def verify_on_rank_zero():
             from cot_safety.training.checkpoint_integrity import verify_sealed_checkpoint
+            from cot_safety.training.full_sft_runtime import (
+                verify_resume_provenance_lineage,
+            )
 
             verified = verify_sealed_checkpoint(checkpoint_path)
+            verified_files = verified.pop("verified_manifest_files", None)
+            if not isinstance(verified_files, list):
+                raise ValueError("sealed-checkpoint verifier returned no manifest files")
+            provenance_entries = [
+                entry
+                for entry in verified_files
+                if isinstance(entry, dict)
+                and entry.get("path") == "stage2_full_sft_provenance.json"
+            ]
+            if len(provenance_entries) != 1:
+                raise ValueError(
+                    "verified checkpoint manifest must contain exactly one embedded "
+                    "Stage2 provenance entry"
+                )
             step = int(verified["global_step"])
             if step <= 0 or step >= self.expected_terminal_step:
                 raise ValueError(
                     f"resume checkpoint step must be in [1, {self.expected_terminal_step - 1}], "
                     f"got {step}"
                 )
-            return verified
+            lineage = verify_resume_provenance_lineage(
+                checkpoint_path / "stage2_full_sft_provenance.json",
+                self.provenance_record,
+                verified_manifest_entry=provenance_entries[0],
+            )
+            return {**verified, "lineage": lineage}
 
         audit = distributed_rank_zero_call(
             verify_on_rank_zero,
             description="resume checkpoint SHA256 verification",
         )
         self.expected_resume_step = int(audit["global_step"])
+        self.expected_resume_checkpoint = str(
+            checkpoint_path.expanduser().resolve()
+        )
+        self.resume_verification_audit = audit
         self._update_provenance_distributed(
             "resume_verification",
             {
@@ -764,6 +1760,8 @@ def configure_canonical_full_sft_runtime(
     model,
     trainer,
     compatibility_shim: dict[str, Any],
+    pause_token_addition: dict[str, Any],
+    approved_model_snapshot: dict[str, Any],
 ) -> CanonicalFullSFTAuditCallback:
     from cot_safety.training.checkpoint_integrity import atomic_write_json
     from cot_safety.training.full_sft_contract import (
@@ -780,7 +1778,6 @@ def configure_canonical_full_sft_runtime(
         collect_runtime_versions,
         config_provenance,
         dataset_provenance,
-        directory_content_manifest,
         git_provenance,
         required_file_record,
         tokenizer_provenance,
@@ -789,6 +1786,44 @@ def configure_canonical_full_sft_runtime(
 
     if str(required_environment("FULL_SFT_MODEL_ID")) != CANONICAL_MODEL_ID:
         raise ValueError("canonical model identifier drifted")
+    model_identity = canonical_model_identity_audit(
+        cfg=cfg,
+        model=model,
+        tokenizer=tokenizer,
+        pause_token_addition=pause_token_addition,
+    )
+    from cot_safety.training.full_sft_contract import canonical_json_sha256
+
+    approval_rank_records = distributed_all_gather_objects(
+        {
+            "rank": distributed_rank(),
+            "approval_sha256": canonical_json_sha256(approved_model_snapshot),
+            "runtime_files_sha256": approved_model_snapshot.get(
+                "runtime_files_sha256"
+            ),
+            "approved_manifest_sha256": (
+                approved_model_snapshot.get("approved_manifest") or {}
+            ).get("sha256"),
+        }
+    )
+    approval_rank_records = sorted(
+        approval_rank_records, key=lambda item: int(item["rank"])
+    )
+    if len(approval_rank_records) != 2 or len(
+        {item["approval_sha256"] for item in approval_rank_records}
+    ) != 1:
+        raise ValueError(
+            "two-rank pre-instantiation approved-model verification disagreed: "
+            f"{approval_rank_records}"
+        )
+    approved_model_snapshot = {
+        **approved_model_snapshot,
+        "distributed_verification": {
+            "status": "pass",
+            "all_ranks_checked": True,
+            "per_rank": approval_rank_records,
+        },
+    }
     actual_split_rows = {
         split: len(dataset[split]) for split in ("train", "val", "test")
     }
@@ -847,6 +1882,7 @@ def configure_canonical_full_sft_runtime(
     optimizer_audit = assert_canonical_optimizer(trainer.optimizer)
     versions = collect_runtime_versions(torch)
     package_versions = {
+        "bitsandbytes": versions["bitsandbytes"],
         "transformers": versions["transformers"],
         "trl": versions["trl"],
     }
@@ -859,6 +1895,10 @@ def configure_canonical_full_sft_runtime(
     def build_on_rank_zero():
         output_dir.mkdir(parents=True, exist_ok=True)
         audit_bundle = {
+            "schema_version": "safechain.stage2.pretrain_runtime_audit.v2",
+            "model_identity": model_identity,
+            "approved_model_snapshot": approved_model_snapshot,
+            "pause_token_addition": pause_token_addition,
             "training_arguments": training_arguments_audit,
             "trainer_step_compatibility": step_audit,
             "parameter_coverage": parameter_audit,
@@ -867,15 +1907,20 @@ def configure_canonical_full_sft_runtime(
         }
         atomic_write_json(output_dir / "stage2_pretrain_runtime_audit.json", audit_bundle)
 
-        model_manifest = directory_content_manifest(
-            required_environment("FULL_SFT_BASE_MODEL_PATH")
-        )
+        from cot_safety.training.full_sft_contract import CANONICAL_MODEL_REVISION
+
+        model_manifest = dict(approved_model_snapshot["snapshot"])
         model_revision = str(getattr(model.config, "_commit_hash", "") or "").strip()
-        if not model_revision:
-            model_revision = "sha256:" + str(model_manifest["sha256"])
+        if model_revision and model_revision != CANONICAL_MODEL_REVISION:
+            raise ValueError(
+                "instantiated model _commit_hash differs from the pre-approved revision: "
+                f"{model_revision} != {CANONICAL_MODEL_REVISION}"
+            )
+        model_revision = CANONICAL_MODEL_REVISION
         tokenizer_record = tokenizer_provenance(
             tokenizer,
             required_environment("FULL_SFT_PAUSE_TOKEN"),
+            pause_token_addition=pause_token_addition,
         )
         resolved_config = config_provenance(
             required_environment("FULL_SFT_RESOLVED_CONFIG_PATH"),
@@ -884,6 +1929,26 @@ def configure_canonical_full_sft_runtime(
         resolved_config["source"] = required_file_record(
             required_environment("FULL_SFT_SOURCE_CONFIG_PATH")
         )
+        semantic_config_path = Path(
+            required_environment("FULL_SFT_SEMANTIC_CONFIG_PATH")
+        )
+        semantic_config_file = required_file_record(semantic_config_path)
+        expected_semantic_sha = required_environment(
+            "FULL_SFT_SEMANTIC_CONFIG_SHA256"
+        )
+        if semantic_config_file["sha256"] != expected_semantic_sha:
+            raise ValueError(
+                "semantic config projection hash mismatch: "
+                f"{semantic_config_file['sha256']} != {expected_semantic_sha}"
+            )
+        semantic_projection = json.loads(
+            semantic_config_path.read_text(encoding="utf-8")
+        )
+        if not isinstance(semantic_projection, dict):
+            raise ValueError("semantic config projection must be an object")
+        resolved_config["semantic_projection"] = semantic_projection
+        resolved_config["semantic_sha256"] = expected_semantic_sha
+        resolved_config["semantic_file"] = semantic_config_file
         dataset_record = dataset_provenance(
             required_environment("FULL_SFT_DATA_DIR"),
             required_environment("FULL_SFT_DATASET_MANIFEST"),
@@ -920,6 +1985,8 @@ def configure_canonical_full_sft_runtime(
             resume_parent=os.environ.get("RESUME_FROM_CHECKPOINT") or None,
             model_revision=model_revision,
             model_manifest=model_manifest,
+            model_approval=approved_model_snapshot,
+            model_identity=model_identity,
             tokenizer_record=tokenizer_record,
             config_record=resolved_config,
             dataset_record=dataset_record,
@@ -945,6 +2012,8 @@ def configure_canonical_full_sft_runtime(
     callback = CanonicalFullSFTAuditCallback(
         model=model,
         tokenizer=tokenizer,
+        optimizer=trainer.optimizer,
+        model_identity_audit=model_identity,
         output_dir=str(output_dir),
         expected_terminal_step=int(required_environment("FULL_SFT_EXPECTED_TERMINAL_STEP")),
         provenance_path=str(provenance_path),
@@ -978,8 +2047,17 @@ def save_terminal_resumable_checkpoint(
 @task_wrapper
 def trl_train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     canonical = canonical_full_sft_enabled(cfg)
+    approved_model_snapshot = None
     if canonical:
         canonical_package_preflight()
+        from cot_safety.training.full_sft_runtime import (
+            verify_approved_model_snapshot,
+        )
+
+        approved_model_snapshot = verify_approved_model_snapshot(
+            required_environment("FULL_SFT_BASE_MODEL_PATH"),
+            required_environment("FULL_SFT_APPROVED_BASE_MANIFEST_PATH"),
+        )
     if cfg.get("seed") is not None:
         set_seed(int(cfg.seed))
 
@@ -995,10 +2073,11 @@ def trl_train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     log.info(f"Instantiating language model <{cfg.rl_algorithm.policy.model.language_model._target_}>")
     model = instantiate_model(cfg.rl_algorithm.policy.model.language_model)
-    add_special_tokens(
+    pause_token_addition = add_special_tokens(
         tokenizer,
         model,
         list(cfg.rl_algorithm.policy.model.get("special_tokens_to_add", [])),
+        canonical=canonical,
     )
     configure_format_only_training(model, tokenizer, cfg)
 
@@ -1023,6 +2102,8 @@ def trl_train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     add_early_stopping_callback(trainer, cfg)
     canonical_callback = None
     if canonical:
+        if approved_model_snapshot is None:
+            raise RuntimeError("approved model snapshot audit was not constructed")
         canonical_callback = configure_canonical_full_sft_runtime(
             cfg=cfg,
             dataset=dataset,
@@ -1030,6 +2111,8 @@ def trl_train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             model=model,
             trainer=trainer,
             compatibility_shim=compatibility_shim,
+            pause_token_addition=pause_token_addition,
+            approved_model_snapshot=approved_model_snapshot,
         )
     log.info(f"Model parameters: {make_trainable_params_summary(trainer.model)}")
 
@@ -1051,6 +2134,9 @@ def trl_train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
                     raise RuntimeError("canonical callback was not configured")
                 resume_audit = canonical_callback.verify_resume_checkpoint(
                     str(resume_from_checkpoint)
+                )
+                canonical_callback.install_resume_restore_observers(
+                    trainer, str(resume_from_checkpoint)
                 )
                 log.info(
                     "Verified sealed resume checkpoint before Trainer restore: "

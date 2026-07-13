@@ -17,6 +17,8 @@ SYNC_OUTPUT_AFTER_STOP=0
 REMOVE_HOT_OUTPUT_AFTER_STOP=0
 CHECKPOINT_INTEGRITY_STRICT="${CHECKPOINT_INTEGRITY_STRICT:-0}"
 CHECKPOINT_INTEGRITY_CLI="${CHECKPOINT_INTEGRITY_CLI:-${ROOT}/scripts/checkpoint_integrity.py}"
+COLD_PARTIAL_GC_CLI="${COLD_PARTIAL_GC_CLI:-${ROOT}/scripts/gc_stage2_cold_partials.py}"
+COLD_PARTIAL_GC_MIN_AGE_SECONDS="${COLD_PARTIAL_GC_MIN_AGE_SECONDS:-86400}"
 
 usage() {
   cat <<'USAGE'
@@ -52,6 +54,9 @@ Environment:
                       sealed with .checkpoint_complete.json, copy through a
                       cold-side partial directory, rehash every payload file,
                       and commit .cold_complete.json last.
+  COLD_PARTIAL_GC_MIN_AGE_SECONDS=86400
+                      Minimum age for a bound cold-side partial whose owner PID
+                      is dead before recovery/GC. Values below 3600 are refused.
 
 The script persists complete hot checkpoints to /workspace/outputs/PATH.
 Legacy mode uses trainer_state.json plus one weight artifact. Strict mode
@@ -83,7 +88,7 @@ protected_hot_checkpoints() {
   [[ -d "${hot_dir}" ]] || return 0
 
   if [[ "${KEEP_LATEST_HOT}" -gt 0 ]]; then
-    python - "$hot_dir" "$KEEP_LATEST_HOT" <<'PY'
+    python3 - "$hot_dir" "$KEEP_LATEST_HOT" <<'PY'
 from __future__ import annotations
 
 import re
@@ -105,7 +110,7 @@ PY
   fi
 
   if [[ "${KEEP_BEST_HOT}" == "1" ]]; then
-    python - "$hot_dir" <<'PY'
+    python3 - "$hot_dir" <<'PY'
 from __future__ import annotations
 
 import json
@@ -204,6 +209,16 @@ sync_checkpoint() {
         return 1
       fi
       mkdir -p "$(dirname "${cold_dir}")" "${partial_dir}"
+      if ! python3 "${COLD_PARTIAL_GC_CLI}" bind \
+          --partial-parent "${partial_parent}" \
+          --cold-output-root "$(dirname "${cold_dir}")" \
+          --output-path "${OUTPUT_PATH}" \
+          --checkpoint-name "${name}" \
+          --owner-pid "$$" \
+          --source-manifest-sha256 "${hot_manifest_sha}" >/dev/null; then
+        rmdir "${partial_dir}" "${partial_parent}" 2>/dev/null || true
+        return 1
+      fi
       echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] copying via partial ${OUTPUT_PATH}/${name}"
       if command -v rsync >/dev/null 2>&1; then
         rsync -a "${hot_dir}/" "${partial_dir}/"
@@ -217,6 +232,7 @@ sync_checkpoint() {
         return 1
       fi
       mv "${partial_dir}" "${cold_dir}"
+      rm -f -- "${partial_parent}/.safechain_cold_partial_binding.json"
       rmdir "${partial_parent}"
     fi
 
@@ -259,8 +275,19 @@ sync_checkpoint() {
   remove_hot_checkpoint_if_allowed "${name}"
 }
 
+gc_stale_cold_partials() {
+  [[ "${CHECKPOINT_INTEGRITY_STRICT}" == "1" ]] || return 0
+  local cold_output_root="${COT_SAFETY_COLD_ROOT}/outputs/${OUTPUT_PATH}"
+  [[ -d "${cold_output_root}" ]] || return 0
+  python3 "${COLD_PARTIAL_GC_CLI}" gc \
+    --cold-output-root "${cold_output_root}" \
+    --output-path "${OUTPUT_PATH}" \
+    --min-age-seconds "${COLD_PARTIAL_GC_MIN_AGE_SECONDS}"
+}
+
 sync_complete_checkpoints() {
   local hot_dir="${COT_SAFETY_OUTPUT_ROOT}/${OUTPUT_PATH}"
+  gc_stale_cold_partials
   [[ -d "${hot_dir}" ]] || return 0
 
   local checkpoint_dir name checkpoint_status
@@ -339,6 +366,12 @@ done
 if [[ -z "${OUTPUT_PATH}" ]]; then
   echo "missing --output" >&2
   usage >&2
+  exit 2
+fi
+
+if [[ ! "${COLD_PARTIAL_GC_MIN_AGE_SECONDS}" =~ ^[0-9]+$ ]] ||
+   [[ "${COLD_PARTIAL_GC_MIN_AGE_SECONDS}" -lt 3600 ]]; then
+  echo "COLD_PARTIAL_GC_MIN_AGE_SECONDS must be an integer >= 3600" >&2
   exit 2
 fi
 

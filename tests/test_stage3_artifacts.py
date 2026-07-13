@@ -22,13 +22,24 @@ from cot_safety.probes.stage3_formal import (
 )
 from cot_safety.probes.stage3_replay import FORMAL_POSITION_NAMES
 from cot_safety.training.full_sft_contract import (
+    CANONICAL_APPROVED_MODEL_MANIFEST_SHA256,
+    CANONICAL_APPROVED_MODEL_RUNTIME_FILES,
+    CANONICAL_BNB_VERSION,
+    CANONICAL_MODEL_CLASS,
     CANONICAL_MODEL_ID,
+    CANONICAL_MODEL_REVISION,
+    CANONICAL_MODEL_PARAMETER_DTYPE,
+    CANONICAL_PARAMETER_TENSOR_COUNT,
+    CANONICAL_RESIZED_PARAMETER_COUNT,
+    CANONICAL_RESIZED_VOCAB_SIZE,
+    CANONICAL_TOKENIZER_CLASS,
     CANONICAL_TOKENIZER_COMPAT_SHIM,
     CANONICAL_TRANSFER_PROTOCOL,
     CANONICAL_TRANSFORMERS_VERSION,
     CANONICAL_TRL_VERSION,
     PROVENANCE_SCHEMA_VERSION,
     REQUIRED_VERSION_KEYS,
+    canonical_json_sha256,
 )
 
 
@@ -328,17 +339,118 @@ def test_artifacts_bind_hashes_metadata_and_fixed_orthogonal_control(tmp_path: P
 
 
 def valid_stage2_provenance() -> dict:
+    pause_addition = {
+        "mode": "added_exactly_one",
+        "token": "<|pause|>",
+        "expected_token_id": 128256,
+        "n_added": 1,
+        "token_was_present_before": False,
+        "token_id_before": None,
+        "token_id_after": 128256,
+        "encoded_ids_after": [128256],
+        "is_special_after": True,
+        "tokenizer_length_before": 128256,
+        "tokenizer_length_after": CANONICAL_RESIZED_VOCAB_SIZE,
+        "input_embedding_rows_before": 128256,
+        "output_embedding_rows_before": 128256,
+        "input_embedding_rows_after": CANONICAL_RESIZED_VOCAB_SIZE,
+        "output_embedding_rows_after": CANONICAL_RESIZED_VOCAB_SIZE,
+        "unique_parameter_count_before": 8_030_261_248,
+        "unique_parameter_count_after": CANONICAL_RESIZED_PARAMETER_COUNT,
+    }
+    snapshot = "/workspace/models/DeepSeek-R1-Distill-Llama-8B"
+    identity = {
+        "schema_version": "safechain.stage2.instantiated_model_identity.v1",
+        "canonical_model_id": CANONICAL_MODEL_ID,
+        "paths": {
+            "provenance_snapshot": snapshot,
+            "provenance_tokenizer": snapshot,
+            "hydra_language_model": snapshot,
+            "hydra_tokenizer": snapshot,
+            "model_config_name_or_path": snapshot,
+            "tokenizer_name_or_path": snapshot,
+        },
+        "model_class": CANONICAL_MODEL_CLASS,
+        "tokenizer_class": CANONICAL_TOKENIZER_CLASS,
+        "tokenizer_length": CANONICAL_RESIZED_VOCAB_SIZE,
+        "config": {
+            "model_type": "llama",
+            "architectures": ["LlamaForCausalLM"],
+            "num_hidden_layers": 32,
+            "hidden_size": 4096,
+            "intermediate_size": 14336,
+            "num_attention_heads": 32,
+            "num_key_value_heads": 8,
+            "vocab_size": CANONICAL_RESIZED_VOCAB_SIZE,
+            "tie_word_embeddings": False,
+            "attention_bias": False,
+            "mlp_bias": False,
+        },
+        "parameters": {
+            "unique_total_parameter_tensors": CANONICAL_PARAMETER_TENSOR_COUNT,
+            "unique_trainable_parameter_tensors": CANONICAL_PARAMETER_TENSOR_COUNT,
+            "unique_total_parameter_count": CANONICAL_RESIZED_PARAMETER_COUNT,
+            "unique_trainable_parameter_count": CANONICAL_RESIZED_PARAMETER_COUNT,
+            "dtype_counts": {
+                CANONICAL_MODEL_PARAMETER_DTYPE: CANONICAL_PARAMETER_TENSOR_COUNT
+            },
+            "name_shape_sha256": "4" * 64,
+        },
+        "embeddings": {
+            "input_rows": CANONICAL_RESIZED_VOCAB_SIZE,
+            "output_rows": CANONICAL_RESIZED_VOCAB_SIZE,
+            "input_width": 4096,
+            "output_width": 4096,
+            "weights_tied": False,
+        },
+        "pause_token_addition": pause_addition,
+    }
+    approved_files = [
+        {"path": path, "size_bytes": 1, "sha256": "a" * 64}
+        for path in CANONICAL_APPROVED_MODEL_RUNTIME_FILES
+    ]
+    approved_snapshot_sha = canonical_json_sha256(approved_files)
     return {
         "schema_version": PROVENANCE_SCHEMA_VERSION,
         "run": {"id": "run", "created_at": "now", "resume_parent": "none"},
-        "model": {"id": CANONICAL_MODEL_ID, "revision": "rev", "sha256": "a" * 64},
+        "model": {
+            "id": CANONICAL_MODEL_ID,
+            "revision": CANONICAL_MODEL_REVISION,
+            "sha256": approved_snapshot_sha,
+            "snapshot": {"root": snapshot, "sha256": approved_snapshot_sha},
+            "approval": {
+                "schema_version": "safechain.stage2.approved_model_snapshot.v1",
+                "status": "pass",
+                "ok": True,
+                "repo_id": CANONICAL_MODEL_ID,
+                "revision": CANONICAL_MODEL_REVISION,
+                "root": snapshot,
+                "approved_manifest": {
+                    "path": "/workspace/cot-safety/configs/provenance/approved.json",
+                    "size_bytes": 1000,
+                    "sha256": CANONICAL_APPROVED_MODEL_MANIFEST_SHA256,
+                },
+                "runtime_file_count": 7,
+                "runtime_total_bytes": 1,
+                "runtime_files_sha256": approved_snapshot_sha,
+                "runtime_files": approved_files,
+                "unexpected_top_level_loadable_files": [],
+            },
+            "identity": identity,
+        },
         "tokenizer": {
             "sha256": "b" * 64,
             "chat_template_sha256": "c" * 64,
             "pause_token": "<|pause|>",
-            "pause_token_id": 1,
+            "pause_token_id": 128256,
+            "pause_token_addition": pause_addition,
         },
-        "config": {"path": "config.yaml", "resolved_sha256": "d" * 64},
+        "config": {
+            "path": "config.yaml",
+            "resolved_sha256": "d" * 64,
+            "semantic_sha256": canonical_json_sha256({"seed": 260615}),
+            "semantic_projection": {"seed": 260615},
+        },
         "dataset": {
             "manifest_path": "data.json",
             "manifest_sha256": "e" * 64,
@@ -349,6 +461,7 @@ def valid_stage2_provenance() -> dict:
         "code": {"git_commit": "f" * 40, "dirty_diff_sha256": "0" * 64},
         "versions": {
             **{key: "exact" for key in REQUIRED_VERSION_KEYS},
+            "bitsandbytes": CANONICAL_BNB_VERSION,
             "transformers": CANONICAL_TRANSFORMERS_VERSION,
             "trl": CANONICAL_TRL_VERSION,
         },
@@ -364,7 +477,16 @@ def valid_stage2_provenance() -> dict:
                 "ok": True,
                 "sft_trainer_max_seq_length": 4096,
             },
-            "parameter_audit": {"ok": True},
+            "parameter_audit": {
+                "ok": True,
+                "unique_total_parameter_tensors": CANONICAL_PARAMETER_TENSOR_COUNT,
+                "unique_trainable_parameter_tensors": CANONICAL_PARAMETER_TENSOR_COUNT,
+                "unique_total_parameter_count": CANONICAL_RESIZED_PARAMETER_COUNT,
+                "unique_trainable_parameter_count": CANONICAL_RESIZED_PARAMETER_COUNT,
+                "unique_optimizer_parameter_tensors": CANONICAL_PARAMETER_TENSOR_COUNT,
+                "optimizer_parameter_assignments": CANONICAL_PARAMETER_TENSOR_COUNT,
+                "all_model_parameters_trainable": True,
+            },
             "optimizer": {
                 "ok": True,
                 "module": "bitsandbytes.optim.adamw",
@@ -383,6 +505,8 @@ def valid_stage2_provenance() -> dict:
                 "name": CANONICAL_TOKENIZER_COMPAT_SHIM,
                 "code_sha256": "9" * 64,
             },
+            "first_step_gradient_audit": {"status": "pass", "ok": True},
+            "first_step_optimizer_state_audit": {"status": "pass", "ok": True},
         },
         "storage": {
             "checkpoint_integrity_strict": 1,
@@ -443,10 +567,11 @@ def valid_stage2_provenance() -> dict:
 def test_stage2_provenance_is_the_model_and_tokenizer_hash_authority(tmp_path: Path) -> None:
     path = tmp_path / "stage2.json"
     payload = valid_stage2_provenance()
+    expected_base_sha = payload["model"]["sha256"]
     write_json(path, payload)
     binding = load_stage2_provenance(path)
     assert binding["model"]["sha256"] == "7" * 64
-    assert binding["model"]["base_model_sha256"] == "a" * 64
+    assert binding["model"]["base_model_sha256"] == expected_base_sha
     assert binding["terminal_checkpoint"]["step"] == 1064
     assert binding["tokenizer"]["sha256"] == "b" * 64
 

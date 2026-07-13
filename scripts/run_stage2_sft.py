@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -22,6 +24,8 @@ from cot_safety.data.stage2_formal_freeze import (
     validate_freeze_report_binding,
 )
 from cot_safety.training.full_sft_contract import (
+    CANONICAL_BNB_VERSION,
+    CANONICAL_PAUSE_TOKEN_ID,
     CANONICAL_TOKENIZER_COMPAT_SHIM,
     CANONICAL_TRANSFORMERS_VERSION,
     CANONICAL_TRL_VERSION,
@@ -32,6 +36,41 @@ from cot_safety.training.full_sft_contract import (
 
 ENV_DEFAULT_RE = re.compile(r"\$\{([^}:]+):-([^}]*)\}")
 GIB = 1024**3
+CANONICAL_RESUME_READY_TIMEOUT_SECONDS = 1800
+
+
+def canonical_lineage_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove only the transport location of a formal resume parent."""
+
+    normalized = copy.deepcopy(config)
+    sft = normalized.get("sft")
+    if isinstance(sft, dict):
+        sft.pop("resume_from_checkpoint", None)
+    return normalized
+
+
+def semantic_config_projection(config: dict[str, Any]) -> dict[str, Any]:
+    """Preserve every setting while abstracting machine-local absolute paths."""
+
+    def project(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {str(key): project(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [project(item) for item in value]
+        if isinstance(value, str) and os.path.isabs(value):
+            return "<ABSOLUTE_TRANSPORT_PATH>"
+        return value
+
+    projected = project(canonical_lineage_config(config))
+    if not isinstance(projected, dict):
+        raise TypeError("semantic config projection must remain an object")
+    return projected
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def json_compact(value: Any) -> str:
@@ -67,6 +106,121 @@ def tokenizer_path(model: dict[str, Any], selected_model: str) -> str:
     return str(resolve_value(tokenizer)) if tokenizer else selected_model
 
 
+def wait_for_resume_restore_readiness(
+    process: Any,
+    env: dict[str, str],
+    *,
+    timeout_seconds: float,
+    poll_seconds: float = 0.05,
+) -> dict[str, Any]:
+    """Wait for the nonce-bound post-restore sentinel before starting GC."""
+
+    if not env.get("RESUME_FROM_CHECKPOINT"):
+        return {"status": "not_applicable", "ok": True}
+    ready_raw = env.get("FULL_SFT_RESUME_READY_PATH", "").strip()
+    nonce = env.get("FULL_SFT_LAUNCH_NONCE", "").strip()
+    if not ready_raw or not nonce:
+        raise RuntimeError("canonical resume readiness path and launch nonce are required")
+    ready_path = Path(ready_raw)
+    expected_resume = str(Path(env["RESUME_FROM_CHECKPOINT"]).expanduser().resolve())
+    deadline = time.monotonic() + float(timeout_seconds)
+    while True:
+        return_code = process.poll()
+        if return_code is not None:
+            raise RuntimeError(
+                "training exited before resume restore readiness "
+                f"(exit code {return_code})"
+            )
+        if ready_path.is_file():
+            try:
+                record = json.loads(ready_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError("resume readiness sentinel is unreadable") from exc
+            if not isinstance(record, dict):
+                raise RuntimeError("resume readiness sentinel root must be an object")
+            required = {
+                "schema_version": "safechain.stage2.resume_restore_complete.v1",
+                "status": "pass",
+                "ok": True,
+                "launch_nonce": nonce,
+                "resume_checkpoint": expected_resume,
+                "all_ranks_ready": True,
+                "parent_run_id": env.get("FULL_SFT_RUN_ID"),
+                "current_run_id": env.get("FULL_SFT_RUN_ID"),
+                "parent_r2_root": env.get("FULL_SFT_R2_ROOT"),
+                "current_r2_root": env.get("FULL_SFT_R2_ROOT"),
+            }
+            drift = {
+                key: {"actual": record.get(key), "expected": value}
+                for key, value in required.items()
+                if record.get(key) != value
+            }
+            if drift:
+                raise RuntimeError(
+                    "resume readiness sentinel identity/status mismatch: "
+                    + json.dumps(drift, sort_keys=True)
+                )
+            if not isinstance(record.get("resume_step"), int) or int(
+                record["resume_step"]
+            ) <= 0:
+                raise RuntimeError("resume readiness sentinel has invalid resume_step")
+            for key in (
+                "checkpoint_manifest_sha256",
+                "checkpoint_completion_marker_sha256",
+                "checkpoint_provenance_sha256",
+                "rehydration_audit_sha256",
+                "readiness_audit_sha256",
+                "post_restore_audit_sha256",
+                "post_restore_checkpoint_identity_sha256",
+                "lineage_sha256",
+            ):
+                value = str(record.get(key) or "")
+                if not re.fullmatch(r"[0-9a-f]{64}", value):
+                    raise RuntimeError(f"resume readiness sentinel has invalid {key}")
+            return record
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "timed out waiting for nonce-bound resume restore readiness: "
+                f"{ready_path}"
+            )
+        time.sleep(max(0.001, float(poll_seconds)))
+
+
+def preflight_resume_readiness_path(env: dict[str, str]) -> dict[str, Any]:
+    """Reject stale/preplanted readiness before the training process exists."""
+
+    if not env.get("RESUME_FROM_CHECKPOINT"):
+        return {"status": "not_applicable", "ok": True}
+    nonce = env.get("FULL_SFT_LAUNCH_NONCE", "").strip()
+    ready_raw = env.get("FULL_SFT_RESUME_READY_PATH", "").strip()
+    if not re.fullmatch(r"[0-9a-f]{32}", nonce):
+        raise RuntimeError("canonical resume launch nonce must be 128-bit lowercase hex")
+    if not ready_raw:
+        raise RuntimeError("canonical resume readiness path is required")
+    ready_path = Path(ready_raw).expanduser()
+    if nonce not in ready_path.name:
+        raise RuntimeError("canonical resume readiness filename must contain nonce")
+    provenance_raw = env.get("FULL_SFT_PROVENANCE_PATH", "").strip()
+    if not provenance_raw:
+        raise RuntimeError("canonical resume provenance path is required")
+    managed_output = Path(provenance_raw).expanduser().resolve().parent
+    ready_resolved = ready_path.resolve()
+    try:
+        ready_resolved.relative_to(managed_output)
+    except ValueError:
+        pass
+    else:
+        raise RuntimeError(
+            "resume readiness path must be outside watcher-managed output"
+        )
+    ready_path.parent.mkdir(parents=True, exist_ok=True)
+    if ready_path.exists():
+        raise RuntimeError(
+            f"refusing pre-existing resume readiness sentinel: {ready_path}"
+        )
+    return {"status": "pass", "ok": True, "path": str(ready_resolved)}
+
+
 def run_logged(
     cmd: list[str],
     *,
@@ -81,6 +235,7 @@ def run_logged(
     r2_watcher_cmd: list[str] | None = None,
     r2_watcher_log: Path | None = None,
     r2_watcher_timeout_seconds: int = 7200,
+    resume_ready_timeout_seconds: float = CANONICAL_RESUME_READY_TIMEOUT_SECONDS,
 ) -> int:
     print("$ " + " ".join(cmd))
     for name in (
@@ -140,12 +295,17 @@ def run_logged(
         "MAX_STEPS",
         "FULL_SFT_CANONICAL",
         "FULL_SFT_EXPECTED_TERMINAL_STEP",
+        "FULL_SFT_BITSANDBYTES_VERSION",
         "FULL_SFT_TRANSFORMERS_VERSION",
         "FULL_SFT_TRL_VERSION",
         "FULL_SFT_COMPAT_SHIM",
+        "FULL_SFT_EXPECTED_PAUSE_TOKEN_ID",
+        "FULL_SFT_APPROVED_BASE_MANIFEST_PATH",
         "FULL_SFT_RESOLVED_CONFIG_PATH",
         "FULL_SFT_DATASET_MANIFEST",
         "FULL_SFT_PROVENANCE_PATH",
+        "FULL_SFT_RESUME_READY_PATH",
+        "FULL_SFT_LAUNCH_NONCE",
         "STAGE2_R2_ROOT",
         "FULL_SFT_R2_ROOT",
         "CHECKPOINT_INTEGRITY_STRICT",
@@ -165,6 +325,7 @@ def run_logged(
         raise ValueError("hot checkpoint watcher requires a training PID file")
     if r2_watcher_cmd and (not watcher_cmd or hot_watcher_pid_file is None):
         raise ValueError("R2 checkpoint watcher requires a managed hot-watcher PID file")
+    preflight_resume_readiness_path(env)
 
     proc = None
     watcher_proc = None
@@ -180,6 +341,16 @@ def run_logged(
             r2_watcher_log_handle = r2_watcher_log.open("a", encoding="utf-8")
 
         proc = subprocess.Popen(cmd, cwd=cwd, env=env)
+        resume_ready = wait_for_resume_restore_readiness(
+            proc,
+            env,
+            timeout_seconds=resume_ready_timeout_seconds,
+        )
+        if resume_ready.get("status") == "pass":
+            print(
+                "[stage2] resume restore is complete; storage watchers may start: "
+                f"step={resume_ready['resume_step']}"
+            )
         if watcher_cmd and watcher_pid_file:
             watcher_pid_file.parent.mkdir(parents=True, exist_ok=True)
             watcher_pid_file.write_text(str(proc.pid), encoding="utf-8")
@@ -736,8 +907,14 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
                 )
             )
         )
-        resolved_config = dump_config(config)
+        resolved_config = dump_config(canonical_lineage_config(config))
         resolved_path = repo_root / "runs" / f"{run_name}_resolved.yaml"
+        semantic_config_bytes = canonical_json_bytes(
+            semantic_config_projection(config)
+        )
+        semantic_config_path = (
+            repo_root / "runs" / f"{run_name}_semantic_config.json"
+        )
         source_config_path = (
             repo_root
             / getattr(
@@ -755,6 +932,7 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
             repo_root / "scripts/run_stage2_sft.py",
             repo_root / "scripts/build_stage2_formal_freeze.py",
             repo_root / "scripts/checkpoint_integrity.py",
+            repo_root / "scripts/gc_stage2_cold_partials.py",
             repo_root / "scripts/restore_stage2_terminal_from_r2.py",
             repo_root / "pipelines/runpod_watch_hot_checkpoints.sh",
             repo_root / "pipelines/runpod_watch_cold_checkpoints_to_r2.sh",
@@ -765,6 +943,7 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
             repo_root / "src/cot_safety/training/full_sft_contract.py",
             repo_root / "src/cot_safety/training/full_sft_runtime.py",
             repo_root / "src/cot_safety/training/checkpoint_integrity.py",
+            repo_root / "src/cot_safety/training/cold_partial_gc.py",
             repo_root / "src/cot_safety/training/stage2_model_binding.py",
             repo_root / "src/cot_safety/data/stage2_formal_freeze.py",
             repo_root / "legacy/COTPauseToken/scripts/data_generation/pause_sft/build_intra_think_pause_sft_splits.py",
@@ -772,18 +951,28 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
             repo_root / "docs/stage2_formal_decontamination.md",
             repo_root / "pyproject.toml",
             repo_root / "legacy/COTPauseToken/pyproject.toml",
+            repo_root
+            / "configs/provenance/deepseek_r1_distill_llama_8b_6a6f4aa_runtime_files.json",
         ]
         env.update(
             {
                 "FULL_SFT_EXPECTED_TERMINAL_STEP": str(
                     (sft.get("terminal_checkpoint", {}) or {}).get("expected_step", 1064)
                 ),
+                "FULL_SFT_BITSANDBYTES_VERSION": CANONICAL_BNB_VERSION,
                 "FULL_SFT_TRANSFORMERS_VERSION": CANONICAL_TRANSFORMERS_VERSION,
                 "FULL_SFT_TRL_VERSION": CANONICAL_TRL_VERSION,
                 "FULL_SFT_COMPAT_SHIM": CANONICAL_TOKENIZER_COMPAT_SHIM,
                 "FULL_SFT_MODEL_ID": str(config.get("model", {}).get("base_model", "")),
+                "FULL_SFT_APPROVED_BASE_MANIFEST_PATH": str(
+                    repo_root
+                    / "configs/provenance/deepseek_r1_distill_llama_8b_6a6f4aa_runtime_files.json"
+                ),
                 "FULL_SFT_BASE_MODEL_PATH": selected_model,
                 "FULL_SFT_TOKENIZER_PATH": selected_tokenizer,
+                "FULL_SFT_EXPECTED_PAUSE_TOKEN_ID": str(
+                    CANONICAL_PAUSE_TOKEN_ID
+                ),
                 "FULL_SFT_DATA_DIR": paths["train_dir"],
                 "FULL_SFT_DATASET_MANIFEST": str(Path(paths["prepared_root"]) / "manifest.json"),
                 "FULL_SFT_TRAIN_ROWS": str(config.get("data", {}).get("train_rows", 0)),
@@ -792,6 +981,10 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
                 "FULL_SFT_RESOLVED_CONFIG_PATH": str(resolved_path),
                 "FULL_SFT_RESOLVED_CONFIG_SHA256": hashlib.sha256(
                     resolved_config.encode("utf-8")
+                ).hexdigest(),
+                "FULL_SFT_SEMANTIC_CONFIG_PATH": str(semantic_config_path),
+                "FULL_SFT_SEMANTIC_CONFIG_SHA256": hashlib.sha256(
+                    semantic_config_bytes
                 ).hexdigest(),
                 "FULL_SFT_SOURCE_CONFIG_PATH": str(source_config_path),
                 "FULL_SFT_GIT_ROOT": str(repo_root),
@@ -810,6 +1003,15 @@ def train_env(config: dict[str, Any], args: argparse.Namespace, intra_dir_name: 
                 ),
             }
         )
+        resume_checkpoint = env.get("RESUME_FROM_CHECKPOINT", "").strip()
+        if resume_checkpoint:
+            launch_nonce = secrets.token_hex(16)
+            env["FULL_SFT_LAUNCH_NONCE"] = launch_nonce
+            env["FULL_SFT_RESUME_READY_PATH"] = str(
+                repo_root
+                / "runs/.stage2_resume_readiness"
+                / f"{run_name}.{launch_nonce}.json"
+            )
     env.setdefault("NCCL_DEBUG", "WARN")
     env.setdefault("NCCL_P2P_DISABLE", "0")
     env.setdefault("NCCL_IB_DISABLE", "0")
@@ -1254,7 +1456,12 @@ def main() -> None:
     runs_dir.mkdir(parents=True, exist_ok=True)
     run_name = str(config.get("run", {}).get("name", "stage2_intra_pause_sft"))
     if not args.dry_run:
-        (runs_dir / f"{run_name}_resolved.yaml").write_text(dump_config(config), encoding="utf-8")
+        (runs_dir / f"{run_name}_resolved.yaml").write_text(
+            dump_config(canonical_lineage_config(config)), encoding="utf-8"
+        )
+        (runs_dir / f"{run_name}_semantic_config.json").write_bytes(
+            canonical_json_bytes(semantic_config_projection(config))
+        )
 
     prep_done = Path(paths["train_dir"], "train.json").exists() and Path(paths["prepared_root"], "manifest.json").exists()
     if prep_done and bool((config.get("data", {}).get("formal_freeze") or {}).get("enabled", False)):

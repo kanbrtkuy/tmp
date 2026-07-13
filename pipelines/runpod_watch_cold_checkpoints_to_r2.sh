@@ -70,7 +70,7 @@ log() {
 }
 
 json_escape() {
-  python - "$1" <<'PY'
+  python3 - "$1" <<'PY'
 import json
 import sys
 print(json.dumps(sys.argv[1]))
@@ -141,7 +141,7 @@ protected_cold_checkpoints() {
   [[ -d "${cold_dir}" ]] || return 0
 
   if [[ "${KEEP_LATEST_COLD}" -gt 0 ]]; then
-    python - "$cold_dir" "$KEEP_LATEST_COLD" <<'PY'
+    python3 - "$cold_dir" "$KEEP_LATEST_COLD" <<'PY'
 from __future__ import annotations
 
 import re
@@ -163,7 +163,7 @@ PY
   fi
 
   if [[ "${KEEP_BEST_COLD}" == "1" ]]; then
-    python - "$cold_dir" <<'PY'
+    python3 - "$cold_dir" <<'PY'
 from __future__ import annotations
 
 import json

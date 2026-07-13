@@ -374,6 +374,7 @@ def verify_sealed_checkpoint(checkpoint_dir: str | Path) -> dict[str, Any]:
         "completion_marker_sha256": sha256_file(completion_path),
         "file_count": manifest["file_count"],
         "payload_bytes": manifest["payload_bytes"],
+        "verified_manifest_files": [dict(entry) for entry in manifest["files"]],
     }
 
 
