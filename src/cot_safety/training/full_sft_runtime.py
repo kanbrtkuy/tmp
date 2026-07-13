@@ -42,6 +42,7 @@ _LOADABLE_MODEL_SUFFIXES = (
     ".bin",
     ".ckpt",
     ".h5",
+    ".jinja",
     ".model",
     ".msgpack",
     ".onnx",
@@ -324,6 +325,12 @@ def verify_approved_model_snapshot(
         if path.name in approved_names:
             continue
         if path.is_symlink():
+            unexpected_loadable.append(path.name)
+        elif path.is_dir():
+            # A local HF snapshot can load behavior-bearing assets from
+            # directories (for example ``additional_chat_templates``).  The
+            # formal snapshot is a flat, seven-file allowlist, so no
+            # unapproved top-level directory is admissible.
             unexpected_loadable.append(path.name)
         elif path.is_file() and _is_top_level_loadable_model_file(path):
             unexpected_loadable.append(path.name)

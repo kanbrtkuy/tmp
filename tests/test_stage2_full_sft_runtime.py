@@ -171,6 +171,15 @@ def test_approved_snapshot_rehash_rejects_tamper_and_extra_loadable_file(
     assert verified["ok"] is True
     assert verified["runtime_file_count"] == 2
 
+    (snapshot / "chat_template.jinja").write_text("{{ messages }}", encoding="utf-8")
+    with pytest.raises(FullSFTRuntimeError, match="unapproved top-level loadable"):
+        verify_approved_model_snapshot(snapshot, approval)
+    (snapshot / "chat_template.jinja").unlink()
+    (snapshot / "additional_chat_templates").mkdir()
+    with pytest.raises(FullSFTRuntimeError, match="unapproved top-level loadable"):
+        verify_approved_model_snapshot(snapshot, approval)
+    (snapshot / "additional_chat_templates").rmdir()
+
     (snapshot / "adapter_config.json").write_text("{}", encoding="utf-8")
     with pytest.raises(FullSFTRuntimeError, match="unapproved top-level loadable"):
         verify_approved_model_snapshot(snapshot, approval)
